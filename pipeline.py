@@ -1,0 +1,211 @@
+"""
+GPR Bridge Deck Inspection Pipeline
+SDNET2021 dataset — ASTM D6087-inspired A/A0 classification
+
+Data notes for this dataset:
+  - DC offset: amplitudes stored as 16-bit unsigned centered at 32768
+  - Surface reflection: ~2.5 ns
+  - Class-1 (sound) rebar reflection: ~7.5–8.5 ns  [within 3-8 ns window]
+  - Class-2 delamination reflection:  ~5.9–7.0 ns  [earlier than Class-1 rebar]
+  → Class-2 A/A0 is LOWER than Class-1 because the (t_rebar/t_surface)²
+    geometric-spreading correction is smaller for the shallower delamination
+    reflector. D6087 flags signals with A/A0 BELOW the Class-1 reference.
+
+Usage:
+    python pipeline.py            # single test file
+    python pipeline.py --all      # all files across all bridges
+"""
+
+import sys
+import warnings
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+from scipy.signal import find_peaks
+
+warnings.filterwarnings("ignore", category=UserWarning)
+
+DATA_PATH = Path("~/Desktop/verus/gpr_data").expanduser()
+
+# ── Time windows (ns) ──────────────────────────────────────────────────────
+SURF_WIN  = (0.0, 3.0)   # first surface reflection
+REBAR_WIN = (3.0, 8.0)   # rebar / delamination reflection window
+
+# ── D6087 thresholds relative to Class-1 median A/A0 ──────────────────────
+# Low A/A0 → delaminated (delamination reflector is shallower → smaller
+# geometric-spreading correction → smaller corrected ratio).
+THRESH_SUSPECT      = 0.75   # A/A0 < 0.75 × median_class1 → suspect
+THRESH_DETERIORATED = 0.50   # A/A0 < 0.50 × median_class1 → deteriorated
+
+DC_OFFSET = 32768   # 16-bit GPR data centred at 2^15
+
+
+# ── Peak detection ──────────────────────────────────────────────────────────
+
+def _find_peak_in_window(time_ns: np.ndarray, signal: np.ndarray,
+                         t_lo: float, t_hi: float) -> tuple[float, float]:
+    """
+    Return (peak_time, |peak_amplitude|) for the largest absolute peak in
+    [t_lo, t_hi].  Falls back to argmax when find_peaks finds nothing.
+    """
+    mask = (time_ns >= t_lo) & (time_ns <= t_hi)
+    if not mask.any():
+        return np.nan, np.nan
+
+    region   = signal[mask]
+    region_t = time_ns[mask]
+    abs_r    = np.abs(region)
+
+    # Skip NaN-only windows
+    if np.all(np.isnan(abs_r)):
+        return np.nan, np.nan
+
+    prom_threshold = 0.05 * np.nanmax(abs_r)
+    peaks, _ = find_peaks(np.nan_to_num(abs_r), prominence=prom_threshold)
+
+    best = peaks[np.argmax(abs_r[peaks])] if len(peaks) > 0 else np.nanargmax(abs_r)
+    return float(region_t[best]), float(abs_r[best])
+
+
+# ── A/A0 formula ────────────────────────────────────────────────────────────
+
+def _compute_ratio(t_surf: float, a_surf: float,
+                   t_reb:  float, a_reb:  float) -> float:
+    """A/A0 = |A_rebar / A_surface| × (t_rebar / t_surface)²"""
+    if np.any(np.isnan([t_surf, a_surf, t_reb, a_reb])):
+        return np.nan
+    if a_surf == 0 or t_surf == 0:
+        return np.nan
+    return (a_reb / a_surf) * (t_reb / t_surf) ** 2
+
+
+# ── Core file processor ─────────────────────────────────────────────────────
+
+def process_file(filepath: Path) -> dict | None:
+    filepath = Path(filepath)
+
+    # 1. Load raw Excel (no header — all rows as-is)
+    try:
+        raw = pd.read_excel(filepath, header=None, engine="openpyxl")
+    except Exception as e:
+        print(f"ERROR reading {filepath.name}: {e}")
+        return None
+
+    # 2. Metadata (0-indexed rows)
+    #    Row 0 col E → total signal count
+    #    Row 5  → X positions, Row 6  → Y positions, Row 7  → class labels
+    n_signals = int(raw.iloc[0, 4])
+    labels    = raw.iloc[7, 1:n_signals + 1].values.astype(int)
+
+    # 3. Amplitude block: rows 10–521, col 0 = time_ns, cols 1+ = signals
+    amp_block = raw.iloc[10:522, 0:n_signals + 1].values.astype(float)
+    time_ns   = amp_block[:, 0]
+    amps      = amp_block[:, 1:] - DC_OFFSET   # shape (512, n_signals)
+
+    # 4. Compute per-signal A/A0
+    ratios = np.empty(n_signals, dtype=float)
+    for i in range(n_signals):
+        sig = amps[:, i]
+        t_s, a_s = _find_peak_in_window(time_ns, sig, *SURF_WIN)
+        t_r, a_r = _find_peak_in_window(time_ns, sig, *REBAR_WIN)
+        ratios[i] = _compute_ratio(t_s, a_s, t_r, a_r)
+
+    # 5. D6087 classification
+    #    Reference = median A/A0 of in-file Class-1 (sound) signals.
+    #    Signals with LOW A/A0 are flagged as delaminated per D6087.
+    class1_mask = labels == 1
+    median_ref  = float(np.nanmedian(ratios[class1_mask]))
+
+    thresh_susp = THRESH_SUSPECT      * median_ref   # below → suspect
+    thresh_det  = THRESH_DETERIORATED * median_ref   # below → deteriorated
+
+    predicted = np.where(
+        ratios <= thresh_det,  "deteriorated",
+        np.where(ratios <= thresh_susp, "suspect", "sound")
+    )
+
+    # 6. Evaluation
+    gt_delaminated = labels >= 2          # class 2 or 3
+    pred_flagged   = predicted != "sound"
+
+    n_gt_del            = int(gt_delaminated.sum())
+    n_correctly_flagged = int((gt_delaminated & pred_flagged).sum())
+    n_missed            = int((gt_delaminated & ~pred_flagged).sum())
+
+    tn       = int((~gt_delaminated & ~pred_flagged).sum())
+    accuracy = (n_correctly_flagged + tn) / n_signals * 100
+    fnr      = (n_missed / n_gt_del * 100) if n_gt_del > 0 else 0.0
+
+    return dict(
+        filename=filepath.name,
+        bridge=filepath.parent.name,
+        n_signals=n_signals,
+        n_gt_del=n_gt_del,
+        n_correctly_flagged=n_correctly_flagged,
+        n_missed=n_missed,
+        accuracy=accuracy,
+        fnr=fnr,
+        median_ref=median_ref,
+        thresh_susp=thresh_susp,
+        thresh_det=thresh_det,
+    )
+
+
+def print_result(r: dict) -> None:
+    print(
+        f"{r['filename']} | "
+        f"Signals: {r['n_signals']} | "
+        f"GT Delaminated: {r['n_gt_del']} | "
+        f"Correctly Flagged: {r['n_correctly_flagged']} | "
+        f"Missed: {r['n_missed']} | "
+        f"Accuracy: {r['accuracy']:.1f}% | "
+        f"FNR: {r['fnr']:.1f}%"
+    )
+
+
+# ── Entry points ────────────────────────────────────────────────────────────
+
+def run_single():
+    test_file = DATA_PATH / "forest_river_north_bound" / "FILE____050.xlsx"
+    print(f"Processing single file: {test_file.name}\n")
+    result = process_file(test_file)
+    if result:
+        print_result(result)
+        print(
+            f"\n  [debug] Class-1 median A/A0 : {result['median_ref']:.4f}\n"
+            f"          Suspect threshold    : <{THRESH_SUSPECT:.2f}× = {result['thresh_susp']:.4f}\n"
+            f"          Deteriorated thresh  : <{THRESH_DETERIORATED:.2f}× = {result['thresh_det']:.4f}"
+        )
+
+
+def run_all():
+    all_results = []
+    for bridge_dir in sorted(DATA_PATH.iterdir()):
+        if not bridge_dir.is_dir():
+            continue
+        files = sorted(bridge_dir.glob("*.xlsx"))
+        print(f"\n--- {bridge_dir.name} ({len(files)} files) ---")
+        for f in files:
+            r = process_file(f)
+            if r:
+                print_result(r)
+                all_results.append(r)
+
+    if all_results:
+        df = pd.DataFrame(all_results)
+        print("\n=== Aggregate Summary ===")
+        print(f"Total files    : {len(df)}")
+        print(f"Total signals  : {df['n_signals'].sum():,}")
+        print(f"Total GT delam : {df['n_gt_del'].sum():,}")
+        print(f"Total flagged  : {df['n_correctly_flagged'].sum():,}")
+        print(f"Total missed   : {df['n_missed'].sum():,}")
+        print(f"Mean accuracy  : {df['accuracy'].mean():.1f}%")
+        print(f"Mean FNR       : {df['fnr'].mean():.1f}%")
+
+
+if __name__ == "__main__":
+    if "--all" in sys.argv:
+        run_all()
+    else:
+        run_single()
