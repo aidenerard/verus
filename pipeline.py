@@ -5,11 +5,13 @@ SDNET2021 dataset — ASTM D6087-inspired A/A0 classification
 Data notes for this dataset:
   - DC offset: amplitudes stored as 16-bit unsigned centered at 32768
   - Surface reflection: ~2.5 ns
-  - Class-1 (sound) rebar reflection: ~7.5–8.5 ns  [within 3-8 ns window]
+  - Class-1 (sound) rebar reflection: ~7.5–8.5 ns
   - Class-2 delamination reflection:  ~5.9–7.0 ns  [earlier than Class-1 rebar]
-  → Class-2 A/A0 is LOWER than Class-1 because the (t_rebar/t_surface)²
-    geometric-spreading correction is smaller for the shallower delamination
-    reflector. D6087 flags signals with A/A0 BELOW the Class-1 reference.
+  → Rebar window widened to 3-11 ns; the FIRST significant peak (> 20% of
+    surface amplitude) is used rather than the largest, so delamination
+    reflectors at 5-7 ns are found before the deeper rebar in sound signals.
+  → Class-2 A/A0 is LOWER than Class-1 (shallower reflector → smaller
+    geometric-spreading correction). D6087 flags LOW A/A0 as delaminated.
 
 Usage:
     python pipeline.py            # single test file
@@ -30,7 +32,7 @@ DATA_PATH = Path("~/Desktop/verus/gpr_data").expanduser()
 
 # ── Time windows (ns) ──────────────────────────────────────────────────────
 SURF_WIN  = (0.0, 3.0)   # first surface reflection
-REBAR_WIN = (3.0, 8.0)   # rebar / delamination reflection window
+REBAR_WIN = (3.0, 11.0)  # rebar / delamination reflection window
 
 # ── D6087 thresholds relative to Class-1 median A/A0 ──────────────────────
 # Low A/A0 → delaminated (delamination reflector is shallower → smaller
@@ -48,6 +50,7 @@ def _find_peak_in_window(time_ns: np.ndarray, signal: np.ndarray,
     """
     Return (peak_time, |peak_amplitude|) for the largest absolute peak in
     [t_lo, t_hi].  Falls back to argmax when find_peaks finds nothing.
+    Used for the surface window.
     """
     mask = (time_ns >= t_lo) & (time_ns <= t_hi)
     if not mask.any():
@@ -57,7 +60,6 @@ def _find_peak_in_window(time_ns: np.ndarray, signal: np.ndarray,
     region_t = time_ns[mask]
     abs_r    = np.abs(region)
 
-    # Skip NaN-only windows
     if np.all(np.isnan(abs_r)):
         return np.nan, np.nan
 
@@ -65,6 +67,37 @@ def _find_peak_in_window(time_ns: np.ndarray, signal: np.ndarray,
     peaks, _ = find_peaks(np.nan_to_num(abs_r), prominence=prom_threshold)
 
     best = peaks[np.argmax(abs_r[peaks])] if len(peaks) > 0 else np.nanargmax(abs_r)
+    return float(region_t[best]), float(abs_r[best])
+
+
+def _find_first_significant_rebar_peak(time_ns: np.ndarray, signal: np.ndarray,
+                                       t_lo: float, t_hi: float,
+                                       min_amp: float) -> tuple[float, float]:
+    """
+    Return (peak_time, |peak_amplitude|) for the FIRST local maximum in
+    [t_lo, t_hi] whose absolute amplitude exceeds min_amp (20% of the surface
+    reflection amplitude).  Falls back to the largest peak if none qualify.
+    """
+    mask = (time_ns >= t_lo) & (time_ns <= t_hi)
+    if not mask.any():
+        return np.nan, np.nan
+
+    region   = signal[mask]
+    region_t = time_ns[mask]
+    abs_r    = np.abs(region)
+
+    if np.all(np.isnan(abs_r)):
+        return np.nan, np.nan
+
+    prom_threshold = 0.05 * np.nanmax(abs_r)
+    peaks, _ = find_peaks(np.nan_to_num(abs_r), prominence=prom_threshold)
+
+    if len(peaks) == 0:
+        peaks = np.array([np.nanargmax(abs_r)])
+
+    # First peak (lowest index = earliest time) that exceeds the amplitude threshold
+    significant = peaks[abs_r[peaks] >= min_amp]
+    best = significant[0] if len(significant) > 0 else peaks[np.argmax(abs_r[peaks])]
     return float(region_t[best]), float(abs_r[best])
 
 
@@ -108,7 +141,9 @@ def process_file(filepath: Path) -> dict | None:
     for i in range(n_signals):
         sig = amps[:, i]
         t_s, a_s = _find_peak_in_window(time_ns, sig, *SURF_WIN)
-        t_r, a_r = _find_peak_in_window(time_ns, sig, *REBAR_WIN)
+        t_r, a_r = _find_first_significant_rebar_peak(
+            time_ns, sig, *REBAR_WIN, min_amp=0.20 * a_s
+        )
         ratios[i] = _compute_ratio(t_s, a_s, t_r, a_r)
 
     # 5. D6087 classification
