@@ -1,0 +1,6 @@
+gpr_data/
+.DS_Store
+__pycache__/
+*.pyc
+*.pyo
+.env
