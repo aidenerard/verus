@@ -25,7 +25,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from scipy.stats import pearsonr
-from scipy.signal import find_peaks
+from scipy.signal import find_peaks, hilbert
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -114,6 +114,34 @@ def _compute_ratio(t_surf: float, a_surf: float,
     return (a_reb / a_surf) * (t_reb / t_surf) ** 2
 
 
+# ── Hilbert envelope FWHM ───────────────────────────────────────────────────
+
+def _compute_fwhm_ns(env_window: np.ndarray, dt: float) -> float:
+    """
+    Given a 1-D envelope array (absolute Hilbert values) covering a time
+    window, find the peak and return its FWHM in nanoseconds.
+
+    FWHM is measured by walking left and right from the peak index until the
+    envelope drops below 50% of the peak value, then converting the sample
+    count to ns via dt (sample interval in ns).
+    """
+    if len(env_window) == 0 or np.all(np.isnan(env_window)):
+        return np.nan
+
+    peak_idx  = int(np.nanargmax(env_window))
+    half_max  = 0.5 * env_window[peak_idx]
+
+    left = peak_idx
+    while left > 0 and env_window[left - 1] >= half_max:
+        left -= 1
+
+    right = peak_idx
+    while right < len(env_window) - 1 and env_window[right + 1] >= half_max:
+        right += 1
+
+    return (right - left) * dt
+
+
 # ── Core file processor ─────────────────────────────────────────────────────
 
 def process_file(filepath: Path) -> dict | None:
@@ -168,7 +196,14 @@ def process_file(filepath: Path) -> dict | None:
     deep_energy    = np.nansum(amps[deep_mask,    :] ** 2, axis=0)
     band_ratios    = shallow_energy / (deep_energy + 1e-9)
 
-    # 7. Evaluation
+    # 7. Hilbert envelope FWHM (diagnostic feature)
+    dt           = float(time_ns[1] - time_ns[0])          # ~0.0234 ns/sample
+    rebar_mask   = (time_ns >= 3.0) & (time_ns <= 11.0)
+    envelope     = np.abs(hilbert(amps, axis=0))            # shape (512, n_signals)
+    env_rebar    = envelope[rebar_mask, :]                  # shape (n_rebar_samples, n_signals)
+    fwhm_ns      = np.array([_compute_fwhm_ns(env_rebar[:, i], dt) for i in range(n_signals)])
+
+    # 8. Evaluation
     gt_delaminated = labels >= 2          # class 2 or 3
     pred_flagged   = predicted != "sound"
 
@@ -195,6 +230,7 @@ def process_file(filepath: Path) -> dict | None:
         labels=labels,
         ratios=ratios,
         band_ratios=band_ratios,
+        fwhm_ns=fwhm_ns,
     )
 
 
@@ -243,6 +279,24 @@ def run_single():
         print(f"\n  Class-2 signals with band_ratio > Class-1 median ({c1_median:.4f}): "
               f"{(c2 > c1_median).sum()} / {len(c2)} ({(c2 > c1_median).mean()*100:.1f}%)")
         print(f"  Pearson r(band_ratio, A/A0) : {corr:.4f}")
+
+        # ── Hilbert envelope FWHM diagnostics ─────────────────────────────
+        fwhm_ns   = result["fwhm_ns"]
+
+        fw1 = fwhm_ns[labels == 1]
+        fw2 = fwhm_ns[labels >= 2]
+        fw1_median = float(np.median(fw1))
+
+        valid_fw = ~(np.isnan(fwhm_ns) | np.isnan(ratios))
+        corr_fw, _ = pearsonr(fwhm_ns[valid_fw], ratios[valid_fw])
+
+        print("\n  [Hilbert envelope FWHM]")
+        print(f"  {'':20s} {'Median (ns)':>12} {'P5 (ns)':>10} {'P95 (ns)':>10}")
+        print(f"  {'Class-1 (sound)':20s} {np.median(fw1):>12.4f} {np.percentile(fw1, 5):>10.4f} {np.percentile(fw1, 95):>10.4f}")
+        print(f"  {'Class-2 (delaminated)':20s} {np.median(fw2):>12.4f} {np.percentile(fw2, 5):>10.4f} {np.percentile(fw2, 95):>10.4f}")
+        print(f"\n  Class-2 signals with FWHM > Class-1 median ({fw1_median:.4f} ns): "
+              f"{(fw2 > fw1_median).sum()} / {len(fw2)} ({(fw2 > fw1_median).mean()*100:.1f}%)")
+        print(f"  Pearson r(FWHM, A/A0)       : {corr_fw:.4f}")
 
 
 def run_all():
