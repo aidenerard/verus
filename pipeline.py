@@ -26,6 +26,9 @@ import numpy as np
 import pandas as pd
 from scipy.stats import pearsonr
 from scipy.signal import find_peaks, hilbert
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import StratifiedKFold
+from sklearn.preprocessing import StandardScaler
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -404,6 +407,100 @@ def run_single():
             print(f"    New catches vs A/A0 alone: {b['new_catches']} signals")
         else:
             print("\n  No combined threshold achieved FPR < 15%.")
+
+        # ── Logistic regression: A/A0 + FWHM ──────────────────────────────
+        gt_del       = labels >= 2
+        pred_flagged = result["pred_flagged"]
+
+        # Feature matrix — drop any signal where either feature is NaN
+        X_raw  = np.column_stack([ratios, fwhm_ns])
+        y      = gt_del.astype(int)
+        valid  = ~np.isnan(X_raw).any(axis=1)
+        X_raw, y, orig_idx = X_raw[valid], y[valid], np.where(valid)[0]
+
+        scaler   = StandardScaler()
+        X_scaled = scaler.fit_transform(X_raw)
+
+        n_pos = y.sum()
+        n_neg = (y == 0).sum()
+
+        # 5-fold stratified CV — collect OOF probabilities and per-fold metrics
+        skf       = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+        oof_probs = np.zeros(len(y))
+        cv_rows   = []
+
+        for train_idx, val_idx in skf.split(X_scaled, y):
+            clf = LogisticRegression(class_weight="balanced", max_iter=1000)
+            clf.fit(X_scaled[train_idx], y[train_idx])
+            probs = clf.predict_proba(X_scaled[val_idx])[:, 1]
+            oof_probs[val_idx] = probs
+
+            pred  = (probs >= 0.5).astype(int)
+            yv    = y[val_idx]
+            np_   = yv.sum();  nn_ = (yv == 0).sum()
+            tp = ((pred == 1) & (yv == 1)).sum()
+            tn = ((pred == 0) & (yv == 0)).sum()
+            fp = ((pred == 1) & (yv == 0)).sum()
+            fn = ((pred == 0) & (yv == 1)).sum()
+            cv_rows.append([tp/np_, fp/nn_, fn/np_, (tp+tn)/len(yv)])
+
+        cv = np.array(cv_rows)
+        print("\n  [logistic regression — 5-fold CV at threshold 0.5]")
+        print(f"  {'Metric':<10} {'Mean':>8} {'Std':>8}")
+        for i, name in enumerate(["TPR", "FPR", "FNR", "Accuracy"]):
+            print(f"  {name:<10} {cv[:, i].mean()*100:>7.1f}% {cv[:, i].std()*100:>7.1f}%")
+
+        # Threshold sweep on OOF probabilities
+        print(f"\n  [threshold sweep on OOF probabilities]")
+        print(f"  {'Threshold':>10} {'TPR':>8} {'FPR':>8} {'FNR':>8} {'Acc':>8}")
+        print(f"  {'-'*44}")
+
+        best_lr = None
+        for thresh in np.round(np.arange(0.1, 0.91, 0.05), 2):
+            pred = (oof_probs >= thresh).astype(int)
+            tp = ((pred == 1) & (y == 1)).sum()
+            tn = ((pred == 0) & (y == 0)).sum()
+            fp = ((pred == 1) & (y == 0)).sum()
+            fn = ((pred == 0) & (y == 1)).sum()
+            tpr = tp / n_pos;  fpr = fp / n_neg
+            fnr = fn / n_pos;  acc = (tp + tn) / len(y) * 100
+            marker = " <--" if fpr < 0.15 and (best_lr is None or fnr < best_lr["fnr"]) else \
+                     " <"   if fpr < 0.15 else ""
+            if fpr < 0.15 and (best_lr is None or fnr < best_lr["fnr"]):
+                best_lr = dict(thresh=thresh, tp=tp, tn=tn, fp=fp, fn=fn,
+                               tpr=tpr, fpr=fpr, fnr=fnr, acc=acc, pred=pred)
+            print(f"  {thresh:>10.2f} {tpr*100:>7.1f}% {fpr*100:>7.1f}% {fnr*100:>7.1f}% {acc:>7.1f}%{marker}")
+
+        # Full model for coefficients
+        clf_full = LogisticRegression(class_weight="balanced", max_iter=1000)
+        clf_full.fit(X_scaled, y)
+        coef_ao, coef_fw = clf_full.coef_[0]
+
+        print(f"\n  Learned coefficients (standardised features):")
+        print(f"  A/A0  coef : {coef_ao:>+.4f}  ({'↑ higher A/A0 → delaminated' if coef_ao > 0 else '↓ lower A/A0 → delaminated'})")
+        print(f"  FWHM  coef : {coef_fw:>+.4f}  ({'↑ higher FWHM → delaminated' if coef_fw > 0 else '↓ lower FWHM → delaminated'})")
+        print(f"  Intercept  : {clf_full.intercept_[0]:>+.4f}")
+
+        if best_lr:
+            b = best_lr
+            # New catches vs V3: LR catches & GT delaminated & V3 missed
+            v3_missed_mask = (~pred_flagged[orig_idx].astype(bool)) & (y == 1)
+            lr_new_catches = int(((b["pred"] == 1) & v3_missed_mask).sum())
+            v3_total_missed = int(v3_missed_mask.sum())
+
+            print(f"\n  [best LR threshold: {b['thresh']:.2f}]")
+            print(f"  Confusion matrix:")
+            print(f"  {'':22} Pred Sound   Pred Delam")
+            print(f"  {'GT Sound':22} {b['tn']:>10}   {b['fp']:>10}")
+            print(f"  {'GT Delaminated':22} {b['fn']:>10}   {b['tp']:>10}")
+            print(f"\n  TPR {b['tpr']*100:.1f}%  FPR {b['fpr']*100:.1f}%  "
+                  f"FNR {b['fnr']*100:.1f}%  Acc {b['acc']:.1f}%")
+            print(f"\n  V3 baseline:  TPR {v3_tpr*100:.1f}%  FPR {v3_fpr*100:.1f}%  "
+                  f"FNR {v3_fnr*100:.1f}%  Acc {v3_acc:.1f}%")
+            print(f"  FNR improvement over V3: {(v3_fnr - b['fnr'])*100:+.1f} pp")
+            print(f"  New catches (LR finds, V3 missed): {lr_new_catches} / {v3_total_missed}")
+        else:
+            print("\n  No LR threshold achieved FPR < 15%.")
 
 
 def run_all():
