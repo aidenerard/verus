@@ -231,6 +231,7 @@ def process_file(filepath: Path) -> dict | None:
         ratios=ratios,
         band_ratios=band_ratios,
         fwhm_ns=fwhm_ns,
+        pred_flagged=pred_flagged,
     )
 
 
@@ -343,6 +344,66 @@ def run_single():
             print(f"  No threshold achieved FPR < 15% with meaningful TPR.")
             print(f"  Best tradeoff (nearest ROC top-left): {thresh:.4f} ns (P{pct:.0f})")
             print(f"    TPR: {tpr*100:.1f}%  FPR: {fpr*100:.1f}%  FNR: {(1-tpr)*100:.1f}%")
+
+        # ── Combined A/A0 + FWHM classifier sweep ─────────────────────────
+        gt_del       = labels >= 2
+        n_pos        = gt_del.sum()
+        n_neg        = (~gt_del).sum()
+        pred_flagged = result["pred_flagged"]
+
+        # V3 baseline stats (recomputed from stored flags)
+        v3_tpr = pred_flagged[ gt_del].sum() / n_pos
+        v3_fpr = pred_flagged[~gt_del].sum() / n_neg
+        v3_fnr = 1.0 - v3_tpr
+        v3_acc = ((pred_flagged & gt_del).sum() + (~pred_flagged & ~gt_del).sum()) / len(labels) * 100
+
+        t1_pcts  = [25, 35, 50]
+        t2_pcts  = [65, 75, 85]
+        t1_vals  = np.percentile(ratios[labels == 1], t1_pcts)   # Class-1 A/A0 percentiles
+        t2_vals  = np.percentile(fwhm_ns,             t2_pcts)   # full FWHM percentiles
+
+        print("\n  [combined A/A0 + FWHM sweep]  flag if (A/A0 < t1) OR (FWHM > t2)")
+        print(f"  {'t1 (A/A0)':>10} {'t1%':>5} {'t2 (FWHM ns)':>13} {'t2%':>5} "
+              f"{'TPR':>7} {'FPR':>7} {'FNR':>7} {'Acc':>7} {'New':>6}")
+        print(f"  {'-'*73}")
+
+        best_combined = None
+
+        for t1, p1 in zip(t1_vals, t1_pcts):
+            for t2, p2 in zip(t2_vals, t2_pcts):
+                ao_flag   = ratios   < t1
+                fw_flag   = fwhm_ns  > t2
+                combined  = ao_flag | fw_flag
+
+                tpr = combined[ gt_del].sum() / n_pos
+                fpr = combined[~gt_del].sum() / n_neg
+                fnr = 1.0 - tpr
+                acc = (( combined &  gt_del).sum() + (~combined & ~gt_del).sum()) / len(labels) * 100
+                new_catches = int((fw_flag & ~ao_flag & gt_del).sum())  # caught by FWHM, not A/A0
+
+                marker = " <" if fpr < 0.15 else ""
+                print(f"  {t1:>10.4f} {p1:>4}% {t2:>13.4f} {p2:>4}% "
+                      f"{tpr*100:>6.1f}% {fpr*100:>6.1f}% {fnr*100:>6.1f}% {acc:>6.1f}% {new_catches:>5}{marker}")
+
+                if fpr < 0.15 and (best_combined is None or fnr < best_combined["fnr"]):
+                    best_combined = dict(t1=t1, p1=p1, t2=t2, p2=p2,
+                                        tpr=tpr, fpr=fpr, fnr=fnr, acc=acc,
+                                        new_catches=new_catches)
+
+        print(f"\n  V3 baseline:  TPR {v3_tpr*100:.1f}%  FPR {v3_fpr*100:.1f}%  "
+              f"FNR {v3_fnr*100:.1f}%  Acc {v3_acc:.1f}%")
+
+        if best_combined:
+            b = best_combined
+            fnr_delta = (v3_fnr - b["fnr"]) * 100
+            print(f"\n  Best combined (FPR < 15%): A/A0 < {b['t1']:.4f} (P{b['p1']}) "
+                  f"OR FWHM > {b['t2']:.4f} ns (P{b['p2']})")
+            print(f"    TPR {b['tpr']*100:.1f}%  FPR {b['fpr']*100:.1f}%  "
+                  f"FNR {b['fnr']*100:.1f}%  Acc {b['acc']:.1f}%")
+            print(f"    FNR improvement over V3: {fnr_delta:+.1f} pp")
+            print(f"    New catches vs A/A0 alone: {b['new_catches']} signals")
+        else:
+            print("\n  No combined threshold achieved FPR < 15%.")
 
 
 def run_all():
