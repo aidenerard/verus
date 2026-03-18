@@ -24,6 +24,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from scipy.stats import pearsonr
 from scipy.signal import find_peaks
 
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -160,7 +161,14 @@ def process_file(filepath: Path) -> dict | None:
         np.where(ratios <= thresh_susp, "suspect", "sound")
     )
 
-    # 6. Evaluation
+    # 6. Band energy ratio (diagnostic feature)
+    shallow_mask = (time_ns >= 5.0) & (time_ns <= 7.0)
+    deep_mask    = (time_ns >= 7.0) & (time_ns <= 9.0)
+    shallow_energy = np.nansum(amps[shallow_mask, :] ** 2, axis=0)  # shape (n_signals,)
+    deep_energy    = np.nansum(amps[deep_mask,    :] ** 2, axis=0)
+    band_ratios    = shallow_energy / (deep_energy + 1e-9)
+
+    # 7. Evaluation
     gt_delaminated = labels >= 2          # class 2 or 3
     pred_flagged   = predicted != "sound"
 
@@ -184,6 +192,9 @@ def process_file(filepath: Path) -> dict | None:
         median_ref=median_ref,
         thresh_susp=thresh_susp,
         thresh_det=thresh_det,
+        labels=labels,
+        ratios=ratios,
+        band_ratios=band_ratios,
     )
 
 
@@ -212,6 +223,26 @@ def run_single():
             f"          Suspect threshold    : <{THRESH_SUSPECT:.2f}× = {result['thresh_susp']:.4f}\n"
             f"          Deteriorated thresh  : <{THRESH_DETERIORATED:.2f}× = {result['thresh_det']:.4f}"
         )
+
+        # ── Band energy ratio diagnostics ──────────────────────────────────
+        labels      = result["labels"]
+        band_ratios = result["band_ratios"]
+        ratios      = result["ratios"]
+
+        c1 = band_ratios[labels == 1]
+        c2 = band_ratios[labels >= 2]
+        c1_median = float(np.median(c1))
+
+        valid = ~(np.isnan(band_ratios) | np.isnan(ratios))
+        corr, _ = pearsonr(band_ratios[valid], ratios[valid])
+
+        print("\n  [band energy ratio]")
+        print(f"  {'':20s} {'Median':>10} {'P5':>10} {'P95':>10}")
+        print(f"  {'Class-1 (sound)':20s} {np.median(c1):>10.4f} {np.percentile(c1, 5):>10.4f} {np.percentile(c1, 95):>10.4f}")
+        print(f"  {'Class-2 (delaminated)':20s} {np.median(c2):>10.4f} {np.percentile(c2, 5):>10.4f} {np.percentile(c2, 95):>10.4f}")
+        print(f"\n  Class-2 signals with band_ratio > Class-1 median ({c1_median:.4f}): "
+              f"{(c2 > c1_median).sum()} / {len(c2)} ({(c2 > c1_median).mean()*100:.1f}%)")
+        print(f"  Pearson r(band_ratio, A/A0) : {corr:.4f}")
 
 
 def run_all():
