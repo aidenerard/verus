@@ -298,6 +298,52 @@ def run_single():
               f"{(fw2 > fw1_median).sum()} / {len(fw2)} ({(fw2 > fw1_median).mean()*100:.1f}%)")
         print(f"  Pearson r(FWHM, A/A0)       : {corr_fw:.4f}")
 
+        # ── FWHM threshold sweep ───────────────────────────────────────────
+        gt_del = labels >= 2
+        n_pos  = gt_del.sum()           # total Class-2
+        n_neg  = (~gt_del).sum()        # total Class-1
+
+        thresholds = np.percentile(fwhm_ns, np.arange(10, 91, 5))  # P10..P90
+
+        print("\n  [FWHM threshold sweep]  flag if FWHM > threshold")
+        print(f"  {'Threshold (ns)':>15} {'Percentile':>10} {'TPR':>8} {'FPR':>8} {'FNR':>8}")
+        print(f"  {'-'*52}")
+
+        best_thresh = None
+        best_tpr    = 0.0
+        best_row    = None
+
+        for pct, thresh in zip(np.arange(10, 91, 5), thresholds):
+            flagged = fwhm_ns > thresh
+            tpr = flagged[ gt_del].sum() / n_pos
+            fpr = flagged[~gt_del].sum() / n_neg
+            fnr = 1.0 - tpr
+            marker = " <--" if fpr < 0.15 and tpr > best_tpr else ""
+            if fpr < 0.15 and tpr > best_tpr:
+                best_tpr    = tpr
+                best_thresh = thresh
+                best_row    = (pct, thresh, tpr, fpr, fnr)
+            print(f"  {thresh:>15.4f} {pct:>9.0f}% {tpr*100:>7.1f}% {fpr*100:>7.1f}% {fnr*100:>7.1f}%{marker}")
+
+        print()
+        if best_row is not None:
+            pct, thresh, tpr, fpr, fnr = best_row
+            print(f"  Best threshold with FPR < 15%: {thresh:.4f} ns (P{pct:.0f})")
+            print(f"    TPR: {tpr*100:.1f}%  FPR: {fpr*100:.1f}%  FNR: {fnr*100:.1f}%")
+        else:
+            # Find overall best tradeoff (closest to top-left of ROC)
+            rows = []
+            for pct, thresh in zip(np.arange(10, 91, 5), thresholds):
+                flagged = fwhm_ns > thresh
+                tpr = flagged[ gt_del].sum() / n_pos
+                fpr = flagged[~gt_del].sum() / n_neg
+                rows.append((pct, thresh, tpr, fpr))
+            best = min(rows, key=lambda x: (x[3] - 0.0)**2 + (x[2] - 1.0)**2)  # nearest (0,1)
+            pct, thresh, tpr, fpr = best
+            print(f"  No threshold achieved FPR < 15% with meaningful TPR.")
+            print(f"  Best tradeoff (nearest ROC top-left): {thresh:.4f} ns (P{pct:.0f})")
+            print(f"    TPR: {tpr*100:.1f}%  FPR: {fpr*100:.1f}%  FNR: {(1-tpr)*100:.1f}%")
+
 
 def run_all():
     all_results = []
