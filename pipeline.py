@@ -169,14 +169,16 @@ def process_file(filepath: Path) -> dict | None:
     amps      = amp_block[:, 1:] - DC_OFFSET   # shape (512, n_signals)
 
     # 4. Compute per-signal A/A0
-    ratios = np.empty(n_signals, dtype=float)
+    ratios      = np.empty(n_signals, dtype=float)
+    rebar_times = np.empty(n_signals, dtype=float)   # t_rebar in ns, for ε
     for i in range(n_signals):
         sig = amps[:, i]
         t_s, a_s = _find_peak_in_window(time_ns, sig, *SURF_WIN)
         t_r, a_r = _find_first_significant_rebar_peak(
             time_ns, sig, *REBAR_WIN, min_amp=0.20 * a_s
         )
-        ratios[i] = _compute_ratio(t_s, a_s, t_r, a_r)
+        rebar_times[i] = t_r
+        ratios[i]      = _compute_ratio(t_s, a_s, t_r, a_r)
 
     # 5. D6087 classification
     #    Reference = median A/A0 of in-file Class-1 (sound) signals.
@@ -232,6 +234,7 @@ def process_file(filepath: Path) -> dict | None:
         thresh_det=thresh_det,
         labels=labels,
         ratios=ratios,
+        rebar_times=rebar_times,
         band_ratios=band_ratios,
         fwhm_ns=fwhm_ns,
         pred_flagged=pred_flagged,
@@ -501,6 +504,47 @@ def run_single():
             print(f"  New catches (LR finds, V3 missed): {lr_new_catches} / {v3_total_missed}")
         else:
             print("\n  No LR threshold achieved FPR < 15%.")
+
+        # ── Dielectric constant ε ──────────────────────────────────────────
+        rebar_times = result["rebar_times"]
+
+        C          = 3e8          # speed of light, m/s
+        EPS_START  = 7.0          # assumed ε for sound concrete
+
+        # Anchor depth from Class-1 median t_rebar
+        t_ref_ns   = float(np.nanmedian(rebar_times[labels == 1]))
+        t_ref_s    = t_ref_ns * 1e-9
+        d_ref      = (C * t_ref_s) / (2.0 * np.sqrt(EPS_START))  # metres
+
+        # Per-signal ε: ε_i = (c · t_i / (2·d_ref))²  ≡  EPS_START·(t_i/t_ref)²
+        t_s_arr = rebar_times * 1e-9
+        eps     = (C * t_s_arr / (2.0 * d_ref)) ** 2
+
+        eps_c1     = eps[labels == 1]
+        eps_c2     = eps[labels >= 2]
+        c1_med_eps = float(np.nanmedian(eps_c1))
+
+        valid_ao = ~(np.isnan(eps) | np.isnan(ratios))
+        valid_fw = ~(np.isnan(eps) | np.isnan(fwhm_ns))
+        corr_eps_ao, _ = pearsonr(eps[valid_ao], ratios[valid_ao])
+        corr_eps_fw, _ = pearsonr(eps[valid_fw], fwhm_ns[valid_fw])
+
+        n_nan_rebar = int(np.isnan(rebar_times).sum())
+
+        print("\n  [dielectric constant ε  (anchored to Class-1 median rebar depth)]")
+        print(f"  t_ref (Class-1 median t_rebar) : {t_ref_ns:.4f} ns")
+        print(f"  d_ref (anchor depth, ε=7.0)    : {d_ref*100:.2f} cm")
+        print(f"\n  {'':22} {'Median ε':>10} {'P5 ε':>10} {'P95 ε':>10}")
+        print(f"  {'Class-1 (sound)':22} {np.nanmedian(eps_c1):>10.4f} "
+              f"{np.nanpercentile(eps_c1, 5):>10.4f} {np.nanpercentile(eps_c1, 95):>10.4f}")
+        print(f"  {'Class-2 (delaminated)':22} {np.nanmedian(eps_c2):>10.4f} "
+              f"{np.nanpercentile(eps_c2, 5):>10.4f} {np.nanpercentile(eps_c2, 95):>10.4f}")
+        print(f"\n  Class-2 signals with ε > Class-1 median ({c1_med_eps:.4f}): "
+              f"{(eps_c2 > c1_med_eps).sum()} / {len(eps_c2)} "
+              f"({(eps_c2 > c1_med_eps).mean()*100:.1f}%)")
+        print(f"  Pearson r(ε, A/A0)  : {corr_eps_ao:.4f}")
+        print(f"  Pearson r(ε, FWHM)  : {corr_eps_fw:.4f}")
+        print(f"  Signals with NaN t_rebar: {n_nan_rebar}")
 
 
 def run_all():
