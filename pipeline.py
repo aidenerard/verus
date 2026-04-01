@@ -26,6 +26,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import pearsonr
 from scipy.signal import find_peaks, hilbert
+from scipy.optimize import curve_fit
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import StandardScaler
@@ -145,6 +146,13 @@ def _compute_fwhm_ns(env_window: np.ndarray, dt: float) -> float:
     return (right - left) * dt
 
 
+# ── Attenuation model ───────────────────────────────────────────────────────
+
+def _exp_decay(t: np.ndarray, A: float, alpha: float) -> np.ndarray:
+    """Exponential decay model: A × e^(−α×t)"""
+    return A * np.exp(-alpha * t)
+
+
 # ── Core file processor ─────────────────────────────────────────────────────
 
 def process_file(filepath: Path) -> dict | None:
@@ -208,7 +216,30 @@ def process_file(filepath: Path) -> dict | None:
     env_rebar    = envelope[rebar_mask, :]                  # shape (n_rebar_samples, n_signals)
     fwhm_ns      = np.array([_compute_fwhm_ns(env_rebar[:, i], dt) for i in range(n_signals)])
 
-    # 8. Evaluation
+    # 8. Signal attenuation coefficient α (diagnostic feature)
+    #    Fit A×e^(−α×t) to the Hilbert envelope in the 2–10 ns window.
+    #    Uses the same envelope matrix already computed for FWHM (step 7).
+    attn_mask = (time_ns >= 2.0) & (time_ns <= 10.0)
+    t_attn    = time_ns[attn_mask]                   # 1-D time axis for the window
+    env_attn  = envelope[attn_mask, :]               # shape (n_attn, n_signals)
+
+    alpha_arr = np.full(n_signals, np.nan)
+    for i in range(n_signals):
+        env_i = env_attn[:, i]
+        if np.all(np.isnan(env_i)) or env_i.max() == 0:
+            continue
+        try:
+            popt, _ = curve_fit(
+                _exp_decay, t_attn, env_i,
+                p0=[float(env_i.max()), 0.3],
+                bounds=([0.0, 0.0], [np.inf, np.inf]),
+                maxfev=800,
+            )
+            alpha_arr[i] = popt[1]   # negative α already excluded by lower bound=0
+        except (RuntimeError, ValueError):
+            pass  # remains NaN
+
+    # 9. Evaluation
     gt_delaminated = labels >= 2          # class 2 or 3
     pred_flagged   = predicted != "sound"
 
@@ -237,6 +268,7 @@ def process_file(filepath: Path) -> dict | None:
         rebar_times=rebar_times,
         band_ratios=band_ratios,
         fwhm_ns=fwhm_ns,
+        alpha_arr=alpha_arr,
         pred_flagged=pred_flagged,
     )
 
@@ -584,6 +616,35 @@ def run_single():
         print(f"  Pearson r(ε, A/A0)  : {corr_eps_ao:.4f}")
         print(f"  Pearson r(ε, FWHM)  : {corr_eps_fw:.4f}")
         print(f"  Signals with NaN t_rebar: {n_nan_rebar}")
+
+        # ── Signal attenuation coefficient α ───────────────────────────────
+        alpha_arr = result["alpha_arr"]
+
+        a1 = alpha_arr[c1_mask]
+        a2 = alpha_arr[c2_mask]
+        c1_med_alpha = float(np.nanmedian(a1))
+
+        nan_a1 = int(np.isnan(a1).sum())
+        nan_a2 = int(np.isnan(a2).sum())
+
+        valid_ao = ~(np.isnan(alpha_arr) | np.isnan(ratios))
+        valid_fw = ~(np.isnan(alpha_arr) | np.isnan(fwhm_ns))
+        corr_a_ao, _ = pearsonr(alpha_arr[valid_ao], ratios[valid_ao])
+        corr_a_fw, _ = pearsonr(alpha_arr[valid_fw], fwhm_ns[valid_fw])
+
+        c2_above = int((~np.isnan(a2) & (a2 > c1_med_alpha)).sum())
+        c2_valid = int((~np.isnan(a2)).sum())  # non-NaN Class-2 count
+
+        print("\n  [signal attenuation coefficient α  (ns⁻¹)]")
+        print(f"  {'':22} {'Median α':>10} {'P5 α':>10} {'P95 α':>10} {'NaN':>6}")
+        print(f"  {'Class-1 (sound)':22} {np.nanmedian(a1):>10.4f} "
+              f"{np.nanpercentile(a1,  5):>10.4f} {np.nanpercentile(a1, 95):>10.4f} {nan_a1:>6}")
+        print(f"  {'Class-2 (delaminated)':22} {np.nanmedian(a2):>10.4f} "
+              f"{np.nanpercentile(a2,  5):>10.4f} {np.nanpercentile(a2, 95):>10.4f} {nan_a2:>6}")
+        print(f"\n  Class-2 signals with α > Class-1 median ({c1_med_alpha:.4f}): "
+              f"{c2_above} / {c2_valid} ({c2_above / max(c2_valid, 1) * 100:.1f}%)")
+        print(f"  Pearson r(α, A/A0) : {corr_a_ao:.4f}")
+        print(f"  Pearson r(α, FWHM) : {corr_a_fw:.4f}")
 
 
 def run_all():
