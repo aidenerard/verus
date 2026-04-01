@@ -36,7 +36,7 @@ DATA_PATH = Path("~/Desktop/verus/gpr_data").expanduser()
 
 # ── Time windows (ns) ──────────────────────────────────────────────────────
 SURF_WIN  = (0.0, 3.0)   # first surface reflection
-REBAR_WIN = (3.0, 11.0)  # rebar / delamination reflection window
+REBAR_WIN = (6.0, 11.0)  # rebar / delamination reflection window (physically valid: 4–7 cm at ε=7)
 
 # ── D6087 thresholds relative to Class-1 median A/A0 ──────────────────────
 # Low A/A0 → delaminated (delamination reflector is shallower → smaller
@@ -267,13 +267,52 @@ def run_single():
             f"          Deteriorated thresh  : <{THRESH_DETERIORATED:.2f}× = {result['thresh_det']:.4f}"
         )
 
-        # ── Band energy ratio diagnostics ──────────────────────────────────
-        labels      = result["labels"]
-        band_ratios = result["band_ratios"]
-        ratios      = result["ratios"]
+        # ── Rebar window validation ────────────────────────────────────────
+        labels       = result["labels"]
+        ratios       = result["ratios"]
+        rebar_times  = result["rebar_times"]
+        pred_flagged = result["pred_flagged"]
 
-        c1 = band_ratios[labels == 1]
-        c2 = band_ratios[labels >= 2]
+        c1_mask = labels == 1
+        c2_mask = labels >= 2
+        gt_del  = c2_mask
+        n_pos   = gt_del.sum();  n_neg = (~gt_del).sum()
+
+        # t_rebar and derived depth
+        t_ref_ns = float(np.nanmedian(rebar_times[c1_mask]))
+        d_ref_cm = (3e8 * t_ref_ns * 1e-9) / (2.0 * np.sqrt(7.0)) * 100
+
+        # A/A0 distributions by class
+        r1 = ratios[c1_mask];  r2 = ratios[c2_mask]
+        c1_med_ao = float(np.nanmedian(r1))
+
+        # NaN counts
+        nan_r1 = int(np.isnan(r1).sum());  nan_r2 = int(np.isnan(r2).sum())
+        nan_t1 = int(np.isnan(rebar_times[c1_mask]).sum())
+        nan_t2 = int(np.isnan(rebar_times[c2_mask]).sum())
+
+        # FNR and FPR from D6087 result
+        fnr_d6 = result["fnr"]
+        fpr_d6 = pred_flagged[~gt_del].sum() / n_neg * 100
+
+        print("\n  [rebar window validation — 6–11 ns]")
+        print(f"  Class-1 median t_rebar : {t_ref_ns:.4f} ns  →  depth {d_ref_cm:.2f} cm at ε=7.0")
+        print(f"  Class-1 median A/A0    : {c1_med_ao:.4f}")
+        print(f"\n  {'':22} {'Median A/A0':>12} {'P5':>8} {'P95':>8} {'NaN':>6}")
+        print(f"  {'Class-1 (sound)':22} {np.nanmedian(r1):>12.4f} "
+              f"{np.nanpercentile(r1,5):>8.4f} {np.nanpercentile(r1,95):>8.4f} {nan_r1:>6}")
+        print(f"  {'Class-2 (delaminated)':22} {np.nanmedian(r2):>12.4f} "
+              f"{np.nanpercentile(r2,5):>8.4f} {np.nanpercentile(r2,95):>8.4f} {nan_r2:>6}")
+        print(f"\n  Class-2 signals with A/A0 > Class-1 median ({c1_med_ao:.4f}): "
+              f"{(r2 > c1_med_ao).sum()} / {len(r2)} ({(~np.isnan(r2) & (r2 > c1_med_ao)).sum() / (~np.isnan(r2)).sum() * 100:.1f}%)")
+        print(f"  NaN t_rebar — Class-1: {nan_t1}  Class-2: {nan_t2}")
+        print(f"\n  D6087 at <0.75× Class-1 median:  FNR {fnr_d6:.1f}%  FPR {fpr_d6:.1f}%")
+        print(f"  V3 baseline (3–11 ns window):     FNR 60.2%  FPR 10.3%")
+
+        # ── Band energy ratio diagnostics ──────────────────────────────────
+        band_ratios = result["band_ratios"]
+        c1 = band_ratios[c1_mask]
+        c2 = band_ratios[c2_mask]
         c1_median = float(np.median(c1))
 
         valid = ~(np.isnan(band_ratios) | np.isnan(ratios))
@@ -290,8 +329,8 @@ def run_single():
         # ── Hilbert envelope FWHM diagnostics ─────────────────────────────
         fwhm_ns   = result["fwhm_ns"]
 
-        fw1 = fwhm_ns[labels == 1]
-        fw2 = fwhm_ns[labels >= 2]
+        fw1 = fwhm_ns[c1_mask]
+        fw2 = fwhm_ns[c2_mask]
         fw1_median = float(np.median(fw1))
 
         valid_fw = ~(np.isnan(fwhm_ns) | np.isnan(ratios))
