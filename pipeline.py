@@ -25,7 +25,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from scipy.stats import pearsonr
-from scipy.signal import find_peaks, hilbert
+from scipy.signal import find_peaks, hilbert, windows
 from scipy.optimize import curve_fit
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import StratifiedKFold
@@ -37,7 +37,7 @@ DATA_PATH = Path("~/Desktop/verus/gpr_data").expanduser()
 
 # ── Time windows (ns) ──────────────────────────────────────────────────────
 SURF_WIN  = (0.0, 3.0)   # first surface reflection
-REBAR_WIN = (6.0, 11.0)  # rebar / delamination reflection window (physically valid: 4–7 cm at ε=7)
+REBAR_WIN = (6.0, 9.0)   # rebar / delamination reflection window — confirmed 6.5–8.0 ns from diagnostic
 
 # ── D6087 thresholds relative to Class-1 median A/A0 ──────────────────────
 # Low A/A0 → delaminated (delamination reflector is shallower → smaller
@@ -176,19 +176,35 @@ def process_file(filepath: Path) -> dict | None:
     time_ns   = amp_block[:, 0]
     amps      = amp_block[:, 1:] - DC_OFFSET   # shape (512, n_signals)
 
-    # 4. Compute per-signal A/A0
+    # 4. Tapered Hilbert envelope — computed once, used for both rebar peak
+    #    detection (step 4) and FWHM (step 7).
+    #    Hann taper on samples 410–512 suppresses the FFT periodicity artifact
+    #    that inflated the envelope at ~11.97 ns in un-tapered signals.
+    dt           = float(time_ns[1] - time_ns[0])          # ~0.0234 ns/sample
+    _taper       = np.ones(512)
+    _taper[410:] = windows.hann(204)[102:]                  # falling half: 1 → 0 over last 102 samples
+    envelope     = np.abs(hilbert(amps * _taper[:, np.newaxis], axis=0))   # shape (512, n_signals)
+
+    rebar_mask   = (time_ns >= REBAR_WIN[0]) & (time_ns <= REBAR_WIN[1])
+    env_rebar    = envelope[rebar_mask, :]     # shape (n_rebar_samples, n_signals)
+    t_rebar_win  = time_ns[rebar_mask]
+
+    # 5. Compute per-signal A/A0
+    #    Surface peak: largest absolute peak in raw signal (0–3 ns, no artifact).
+    #    Rebar peak:   largest peak on the tapered Hilbert envelope in 6–9 ns.
+    #                  Argmax is safe now that the 11.97 ns artifact is gone.
     ratios      = np.empty(n_signals, dtype=float)
-    rebar_times = np.empty(n_signals, dtype=float)   # t_rebar in ns, for ε
+    rebar_times = np.empty(n_signals, dtype=float)
     for i in range(n_signals):
         sig = amps[:, i]
         t_s, a_s = _find_peak_in_window(time_ns, sig, *SURF_WIN)
-        t_r, a_r = _find_first_significant_rebar_peak(
-            time_ns, sig, *REBAR_WIN, min_amp=0.20 * a_s
-        )
+        best      = int(np.argmax(env_rebar[:, i]))
+        t_r       = float(t_rebar_win[best])
+        a_r       = float(env_rebar[best, i])
         rebar_times[i] = t_r
         ratios[i]      = _compute_ratio(t_s, a_s, t_r, a_r)
 
-    # 5. D6087 classification
+    # 6. D6087 classification
     #    Reference = median A/A0 of in-file Class-1 (sound) signals.
     #    Signals with LOW A/A0 are flagged as delaminated per D6087.
     class1_mask = labels == 1
@@ -202,21 +218,17 @@ def process_file(filepath: Path) -> dict | None:
         np.where(ratios <= thresh_susp, "suspect", "sound")
     )
 
-    # 6. Band energy ratio (diagnostic feature)
+    # 7. Band energy ratio (diagnostic feature)
     shallow_mask = (time_ns >= 5.0) & (time_ns <= 7.0)
     deep_mask    = (time_ns >= 7.0) & (time_ns <= 9.0)
     shallow_energy = np.nansum(amps[shallow_mask, :] ** 2, axis=0)  # shape (n_signals,)
     deep_energy    = np.nansum(amps[deep_mask,    :] ** 2, axis=0)
     band_ratios    = shallow_energy / (deep_energy + 1e-9)
 
-    # 7. Hilbert envelope FWHM (diagnostic feature)
-    dt           = float(time_ns[1] - time_ns[0])          # ~0.0234 ns/sample
-    rebar_mask   = (time_ns >= 3.0) & (time_ns <= 11.0)
-    envelope     = np.abs(hilbert(amps, axis=0))            # shape (512, n_signals)
-    env_rebar    = envelope[rebar_mask, :]                  # shape (n_rebar_samples, n_signals)
+    # 8. Hilbert envelope FWHM — reuses env_rebar sliced in step 4.
     fwhm_ns      = np.array([_compute_fwhm_ns(env_rebar[:, i], dt) for i in range(n_signals)])
 
-    # 8. Signal attenuation coefficient α (diagnostic feature)
+    # 9. Signal attenuation coefficient α (diagnostic feature)
     #    Fit A×e^(−α×t) to the Hilbert envelope in the 2–10 ns window.
     #    Uses the same envelope matrix already computed for FWHM (step 7).
     attn_mask = (time_ns >= 2.0) & (time_ns <= 10.0)
@@ -239,7 +251,7 @@ def process_file(filepath: Path) -> dict | None:
         except (RuntimeError, ValueError):
             pass  # remains NaN
 
-    # 9. Evaluation
+    # 10. Evaluation
     gt_delaminated = labels >= 2          # class 2 or 3
     pred_flagged   = predicted != "sound"
 
@@ -327,7 +339,7 @@ def run_single():
         fnr_d6 = result["fnr"]
         fpr_d6 = pred_flagged[~gt_del].sum() / n_neg * 100
 
-        print("\n  [rebar window validation — 6–11 ns]")
+        print("\n  [rebar window validation — 6.0–9.0 ns, largest envelope peak]")
         print(f"  Class-1 median t_rebar : {t_ref_ns:.4f} ns  →  depth {d_ref_cm:.2f} cm at ε=7.0")
         print(f"  Class-1 median A/A0    : {c1_med_ao:.4f}")
         print(f"\n  {'':22} {'Median A/A0':>12} {'P5':>8} {'P95':>8} {'NaN':>6}")
@@ -339,7 +351,9 @@ def run_single():
               f"{(r2 > c1_med_ao).sum()} / {len(r2)} ({(~np.isnan(r2) & (r2 > c1_med_ao)).sum() / (~np.isnan(r2)).sum() * 100:.1f}%)")
         print(f"  NaN t_rebar — Class-1: {nan_t1}  Class-2: {nan_t2}")
         print(f"\n  D6087 at <0.75× Class-1 median:  FNR {fnr_d6:.1f}%  FPR {fpr_d6:.1f}%")
-        print(f"  V3 baseline (3–11 ns window):     FNR 60.2%  FPR 10.3%")
+        print(f"  V3 original (3–11 ns, first-sig-peak): FNR 60.2%  FPR 10.3%")
+        print(f"  4.5–9.0 ns run:                        FNR 52.9%  FPR 25.8%")
+        print(f"  5.5–9.0 ns run:                        FNR 66.4%  FPR 27.5%")
 
         # ── Band energy ratio diagnostics ──────────────────────────────────
         band_ratios = result["band_ratios"]
@@ -647,6 +661,460 @@ def run_single():
         print(f"  Pearson r(α, FWHM) : {corr_a_fw:.4f}")
 
 
+def run_large_files():
+    """Run the current pipeline on files 050–055 and print per-file + aggregate stats."""
+    BRIDGE     = DATA_PATH / "forest_river_north_bound"
+    LARGE_NUMS = range(50, 56)
+    THRESH     = 0.75
+
+    print("=" * 72)
+    print("CURRENT PIPELINE — large files 050–055  (6.0–9.0 ns, largest env peak)")
+    print("=" * 72)
+
+    hdr = (f"  {'File':12} {'N':>6} {'C1':>6} {'C2':>6} {'C2%':>5}  "
+           f"{'t_reb':>6}  {'C1 med':>8} {'C2 med':>8}  "
+           f"{'C2<C1med':>9}  {'FNR':>6} {'FPR':>6}")
+    print(f"\n{hdr}")
+    print(f"  {'-'*70}")
+
+    agg_tp = agg_fp = agg_fn = agg_tn = 0
+
+    for num in LARGE_NUMS:
+        fname = BRIDGE / f"FILE____{num:03d}.xlsx"
+        r = process_file(fname)
+        if r is None:
+            print(f"  FILE____{num:03d}.xlsx  ERROR")
+            continue
+
+        labels       = r["labels"]
+        ratios       = r["ratios"]
+        rebar_times  = r["rebar_times"]
+        pred_flagged = r["pred_flagged"]
+        n            = r["n_signals"]
+        c1_mask      = labels == 1
+        c2_mask      = labels >= 2
+        n_c1         = int(c1_mask.sum())
+        n_c2         = int(c2_mask.sum())
+        c2_pct       = n_c2 / n * 100
+
+        t_reb   = float(np.nanmedian(rebar_times[c1_mask]))
+        r1      = ratios[c1_mask]
+        r2      = ratios[c2_mask]
+        c1_med  = float(np.nanmedian(r1))
+        c2_med  = float(np.nanmedian(r2))
+        c2_below = int((~np.isnan(r2) & (r2 < c1_med)).sum())
+        c2_valid = int((~np.isnan(r2)).sum())
+        c2_below_pct = c2_below / max(c2_valid, 1) * 100
+
+        gt_del = c2_mask
+        n_pos  = int(gt_del.sum())
+        n_neg  = int((~gt_del).sum())
+        tp = int(( pred_flagged &  gt_del).sum())
+        fp = int(( pred_flagged & ~gt_del).sum())
+        fn = int((~pred_flagged &  gt_del).sum())
+        tn = int((~pred_flagged & ~gt_del).sum())
+        fnr = fn / n_pos * 100 if n_pos > 0 else float("nan")
+        fpr = fp / n_neg * 100 if n_neg > 0 else float("nan")
+
+        agg_tp += tp; agg_fp += fp; agg_fn += fn; agg_tn += tn
+
+        print(f"  FILE____{num:03d}   {n:>6} {n_c1:>6} {n_c2:>6} {c2_pct:>4.1f}%  "
+              f"{t_reb:>6.3f}  {c1_med:>8.3f} {c2_med:>8.3f}  "
+              f"{c2_below_pct:>8.1f}%  {fnr:>5.1f}% {fpr:>5.1f}%")
+
+        # Detailed A/A0 distribution block
+        print(f"\n    {'':22} {'Median':>8} {'P5':>8} {'P95':>8}")
+        print(f"    {'Class-1 (sound)':22} {np.nanmedian(r1):>8.3f} "
+              f"{np.nanpercentile(r1, 5):>8.3f} {np.nanpercentile(r1, 95):>8.3f}")
+        if n_c2 > 0:
+            print(f"    {'Class-2 (delaminated)':22} {np.nanmedian(r2):>8.3f} "
+                  f"{np.nanpercentile(r2, 5):>8.3f} {np.nanpercentile(r2, 95):>8.3f}")
+        print()
+
+    # Aggregate
+    total_pos = agg_tp + agg_fn
+    total_neg = agg_fp + agg_tn
+    agg_fnr   = agg_fn / total_pos * 100 if total_pos > 0 else float("nan")
+    agg_fpr   = agg_fp / total_neg * 100 if total_neg > 0 else float("nan")
+    agg_acc   = (agg_tp + agg_tn) / (total_pos + total_neg) * 100
+
+    print("=" * 72)
+    print("AGGREGATE — files 050–055")
+    print("=" * 72)
+    print(f"\n  TP {agg_tp:,}  FP {agg_fp:,}  FN {agg_fn:,}  TN {agg_tn:,}")
+    print(f"\n  FNR {agg_fnr:.1f}%  FPR {agg_fpr:.1f}%  Acc {agg_acc:.1f}%")
+    print(f"\n  V3 baseline: FNR 60.2%  FPR 10.3%")
+    print(f"  Delta:       FNR {60.2 - agg_fnr:+.1f} pp  FPR {10.3 - agg_fpr:+.1f} pp")
+    print()
+
+
+def run_tpeak():
+    """Test peak time (t_rebar) as the primary classification feature on files 050–055."""
+    BRIDGE     = DATA_PATH / "forest_river_north_bound"
+    LARGE_NUMS = range(50, 56)
+    FPR_CAP    = 0.15
+
+    print("=" * 72)
+    print("PEAK TIME (t_rebar) AS CLASSIFIER — files 050–055")
+    print("=" * 72)
+
+    # Accumulators for aggregate sweep
+    agg_t_all    = []   # (t_peak, is_delaminated) tuples across all files
+    agg_tp = agg_fp = agg_fn = agg_tn = 0
+    best_agg_fnr = None
+
+    for num in LARGE_NUMS:
+        fname = BRIDGE / f"FILE____{num:03d}.xlsx"
+        r = process_file(fname)
+        if r is None:
+            print(f"\nFILE____{num:03d}.xlsx  ERROR")
+            continue
+
+        labels      = r["labels"]
+        t_peak      = r["rebar_times"]   # t_peak in 6–9 ns for every signal
+        c1_mask     = labels == 1
+        c2_mask     = labels >= 2
+        n_pos       = int(c2_mask.sum())
+        n_neg       = int(c1_mask.sum())
+
+        t1 = t_peak[c1_mask]
+        t2 = t_peak[c2_mask]
+        c1_med = float(np.nanmedian(t1))
+        c2_below = int((~np.isnan(t2) & (t2 < c1_med)).sum())
+        c2_valid  = int((~np.isnan(t2)).sum())
+
+        print(f"\n{'─'*72}")
+        print(f"FILE____{num:03d}  |  N={r['n_signals']:,}  C1={n_neg:,}  C2={n_pos:,} "
+              f"({n_pos/r['n_signals']*100:.1f}%)")
+        print(f"{'─'*72}")
+        print(f"\n  {'':22} {'Median':>8} {'P5':>8} {'P95':>8}")
+        print(f"  {'Class-1 (sound)':22} {np.nanmedian(t1):>8.3f} "
+              f"{np.nanpercentile(t1, 5):>8.3f} {np.nanpercentile(t1, 95):>8.3f}")
+        if n_pos > 0:
+            print(f"  {'Class-2 (delaminated)':22} {np.nanmedian(t2):>8.3f} "
+                  f"{np.nanpercentile(t2, 5):>8.3f} {np.nanpercentile(t2, 95):>8.3f}")
+        print(f"\n  Class-2 with t_peak < Class-1 median ({c1_med:.3f} ns): "
+              f"{c2_below}/{c2_valid} ({c2_below/max(c2_valid,1)*100:.1f}%)")
+
+        # Threshold sweep: flag as delaminated if t_peak < threshold
+        # (earlier peak = shallower reflector = delamination)
+        gt_del   = c2_mask
+        valid    = ~np.isnan(t_peak)
+        thresholds = np.percentile(t_peak[valid], np.arange(25, 76, 5))
+        pcts       = np.arange(25, 76, 5)
+
+        print(f"\n  [threshold sweep]  flag if t_peak < threshold")
+        print(f"  {'Threshold (ns)':>15} {'Pct':>5} {'TPR':>7} {'FPR':>7} {'FNR':>7}")
+        print(f"  {'-'*44}")
+
+        best_fnr = float("inf")
+        best_row = None
+        for pct, thresh in zip(pcts, thresholds):
+            flagged = valid & (t_peak < thresh)
+            tp = int(( flagged &  gt_del).sum())
+            fp = int(( flagged & ~gt_del).sum())
+            fn = int((~flagged &  gt_del).sum())
+            tn = int((~flagged & ~gt_del).sum())
+            tpr = tp / n_pos if n_pos > 0 else 0.0
+            fpr = fp / n_neg if n_neg > 0 else 0.0
+            fnr = fn / n_pos if n_pos > 0 else 0.0
+            marker = " <--" if fpr <= FPR_CAP and fnr < best_fnr else ""
+            if fpr <= FPR_CAP and fnr < best_fnr:
+                best_fnr = fnr
+                best_row = (thresh, pct, tpr, fpr, fnr, tp, fp, fn, tn)
+            print(f"  {thresh:>15.3f} {pct:>4.0f}% {tpr*100:>6.1f}% {fpr*100:>6.1f}% {fnr*100:>6.1f}%{marker}")
+
+        if best_row:
+            thresh, pct, tpr, fpr, fnr, tp, fp, fn, tn = best_row
+            print(f"\n  Best (FPR ≤ 15%): t_peak < {thresh:.3f} ns (P{pct:.0f})")
+            print(f"    TPR {tpr*100:.1f}%  FPR {fpr*100:.1f}%  FNR {fnr*100:.1f}%")
+            agg_tp += tp; agg_fp += fp; agg_fn += fn; agg_tn += tn
+        else:
+            print(f"\n  No threshold achieved FPR ≤ 15%.")
+            # use P25 as fallback for aggregate
+            thresh = thresholds[0]
+            flagged = valid & (t_peak < thresh)
+            tp = int(( flagged &  gt_del).sum())
+            fp = int(( flagged & ~gt_del).sum())
+            fn = int((~flagged &  gt_del).sum())
+            tn = int((~flagged & ~gt_del).sum())
+            agg_tp += tp; agg_fp += fp; agg_fn += fn; agg_tn += tn
+
+        # Collect for aggregate analysis
+        for i in range(len(labels)):
+            if not np.isnan(t_peak[i]):
+                agg_t_all.append((t_peak[i], int(labels[i] >= 2)))
+
+    # Aggregate
+    print(f"\n{'='*72}")
+    print("AGGREGATE — files 050–055  (best per-file threshold, FPR ≤ 15%)")
+    print(f"{'='*72}")
+    total_pos = agg_tp + agg_fn
+    total_neg = agg_fp + agg_tn
+    agg_fnr   = agg_fn / total_pos * 100 if total_pos > 0 else float("nan")
+    agg_fpr   = agg_fp / total_neg * 100 if total_neg > 0 else float("nan")
+    agg_acc   = (agg_tp + agg_tn) / (total_pos + total_neg) * 100
+
+    print(f"\n  TP {agg_tp:,}  FP {agg_fp:,}  FN {agg_fn:,}  TN {agg_tn:,}")
+    print(f"\n  FNR {agg_fnr:.1f}%  FPR {agg_fpr:.1f}%  Acc {agg_acc:.1f}%")
+    print(f"\n  V3 baseline:    FNR 60.2%  FPR 10.3%")
+    print(f"  Delta vs V3:    FNR {60.2-agg_fnr:+.1f} pp  FPR {10.3-agg_fpr:+.1f} pp")
+    print()
+
+
+def run_bscan():
+    """
+    Per-file B-scan lateral consistency analysis — large files (050–055) only.
+
+    For each file independently:
+      1. Find rebar depth (dominant Hilbert-envelope peak in 2–12 ns).
+      2. Build Class-1 P90 baseline: A_corrected = A_peak × t_peak².
+      3. Score every signal: score = A_corrected / baseline.
+      4. Report per-file and aggregate FNR/FPR at score < 0.75.
+    """
+    BRIDGE     = DATA_PATH / "forest_river_north_bound"
+    LARGE_NUMS = range(50, 56)   # 050 .. 055
+    PEAK_LO    = 2.0
+    PEAK_HI    = 12.0
+    THRESH     = 0.75
+
+    print("=" * 70)
+    print("PER-FILE B-SCAN ANALYSIS — forest_river_north_bound (files 050–055)")
+    print("=" * 70)
+
+    # Accumulators for aggregate Step 5
+    agg_tp = agg_fp = agg_fn = agg_tn = 0
+
+    for num in LARGE_NUMS:
+        fname = BRIDGE / f"FILE____{num:03d}.xlsx"
+        print(f"\n{'─'*70}")
+        print(f"FILE____{num:03d}.xlsx")
+        print(f"{'─'*70}")
+
+        # ── Load ─────────────────────────────────────────────────────────────
+        try:
+            raw = pd.read_excel(fname, header=None, engine="openpyxl")
+            n_signals = int(raw.iloc[0, 4])
+            labels    = raw.iloc[7, 1:n_signals + 1].values.astype(int)
+            amp_block = raw.iloc[10:522, 0:n_signals + 1].values.astype(float)
+            time_ns   = amp_block[:, 0]
+            amps      = amp_block[:, 1:] - DC_OFFSET   # (512, n_signals)
+        except Exception as e:
+            print(f"  ERROR: {e}")
+            continue
+
+        c1_mask = labels == 1
+        c2_mask = labels >= 2
+        n_c1    = int(c1_mask.sum())
+        n_c2    = int(c2_mask.sum())
+        print(f"  Signals: {n_signals}  |  Class-1: {n_c1}  |  Class-2: {n_c2}")
+
+        # ── Step 1: Rebar depth from dominant peak ────────────────────────────
+        peak_mask = (time_ns >= PEAK_LO) & (time_ns <= PEAK_HI)
+        t_win     = time_ns[peak_mask]
+
+        envelope  = np.abs(hilbert(amps, axis=0))   # (512, n_signals)
+        env_win   = envelope[peak_mask, :]           # (n_win, n_signals)
+
+        peak_idx  = np.argmax(env_win, axis=0)       # (n_signals,)
+        t_peak    = t_win[peak_idx]                  # (n_signals,)
+
+        p25, med, p75 = np.percentile(t_peak, [25, 50, 75])
+        t_rebar = float(med)
+
+        print(f"\n  [Step 1] t_peak distribution (ns):")
+        print(f"  P25={p25:.3f}  Median={med:.3f}  P75={p75:.3f}  →  t_rebar={t_rebar:.3f} ns")
+
+        # ── Step 2: Class-1 baseline (single P90 value) ───────────────────────
+        # For each signal: amplitude of largest peak within ±1.0 ns of t_rebar
+        SEARCH_NS = 1.0
+        lo = t_rebar - SEARCH_NS
+        hi = t_rebar + SEARCH_NS
+        search_mask = (time_ns >= lo) & (time_ns <= hi)
+
+        env_search = envelope[search_mask, :]              # (n_search, n_signals)
+        t_search   = time_ns[search_mask]
+        best_local = np.argmax(env_search, axis=0)         # (n_signals,)
+        a_peak     = env_search[best_local, np.arange(n_signals)]   # (n_signals,)
+        t_peak_local = t_search[best_local]                # (n_signals,)
+
+        # Geometric spreading correction
+        a_corrected = a_peak * (t_peak_local ** 2)
+
+        # Class-1 P90 — single scalar baseline for this file
+        a_c1        = a_corrected[c1_mask]
+        baseline    = float(np.percentile(a_c1, 90))
+
+        print(f"\n  [Step 2] Class-1 A_corrected P90 baseline: {baseline:.2f}")
+        print(f"           (median Class-1 A_corrected: {np.median(a_c1):.2f})")
+
+        # ── Step 3: Score ─────────────────────────────────────────────────────
+        score = a_corrected / baseline   # scalar division — no NaNs expected
+
+        s1 = score[c1_mask]
+        s2 = score[c2_mask]
+        c1_med = float(np.median(s1))
+
+        c2_below = int((s2 < c1_med).sum())
+
+        print(f"\n  [Step 4] Score distributions:")
+        print(f"  {'':22} {'Median':>8} {'P5':>8} {'P95':>8}")
+        print(f"  {'Class-1 (sound)':22} {np.median(s1):>8.4f} "
+              f"{np.percentile(s1,  5):>8.4f} {np.percentile(s1, 95):>8.4f}")
+        if n_c2 > 0:
+            print(f"  {'Class-2 (delaminated)':22} {np.median(s2):>8.4f} "
+                  f"{np.percentile(s2,  5):>8.4f} {np.percentile(s2, 95):>8.4f}")
+            print(f"\n  Class-2 below Class-1 median ({c1_med:.4f}): "
+                  f"{c2_below}/{n_c2} ({c2_below/n_c2*100:.1f}%)")
+        else:
+            print(f"  Class-2 (delaminated)     [no Class-2 signals in this file]")
+
+        # ── FNR / FPR ─────────────────────────────────────────────────────────
+        gt_del  = c2_mask
+        n_pos   = int(gt_del.sum())
+        n_neg   = int((~gt_del).sum())
+        flagged = score < THRESH
+
+        tp = int(( flagged &  gt_del).sum())
+        fp = int(( flagged & ~gt_del).sum())
+        fn = int((~flagged &  gt_del).sum())
+        tn = int((~flagged & ~gt_del).sum())
+
+        fnr = fn / n_pos * 100 if n_pos > 0 else float("nan")
+        fpr = fp / n_neg * 100 if n_neg > 0 else float("nan")
+
+        print(f"\n  FNR {fnr:.1f}%  FPR {fpr:.1f}%  (threshold < {THRESH})")
+
+        agg_tp += tp;  agg_fp += fp
+        agg_fn += fn;  agg_tn += tn
+
+    # ── Step 5: Aggregate ─────────────────────────────────────────────────────
+    print(f"\n{'='*70}")
+    print("AGGREGATE — files 050–055 combined")
+    print(f"{'='*70}")
+
+    total_pos = agg_tp + agg_fn
+    total_neg = agg_fp + agg_tn
+    agg_fnr   = agg_fn / total_pos * 100 if total_pos > 0 else float("nan")
+    agg_fpr   = agg_fp / total_neg * 100 if total_neg > 0 else float("nan")
+    agg_acc   = (agg_tp + agg_tn) / (total_pos + total_neg) * 100
+
+    print(f"\n  TP: {agg_tp:,}  FP: {agg_fp:,}  FN: {agg_fn:,}  TN: {agg_tn:,}")
+    print(f"  FNR {agg_fnr:.1f}%  FPR {agg_fpr:.1f}%  Acc {agg_acc:.1f}%")
+    print(f"\n  V3 baseline:  FNR 60.2%  FPR 10.3%  Acc ~88.4%")
+    fnr_delta = 60.2 - agg_fnr
+    fpr_delta = 10.3 - agg_fpr
+    print(f"  Delta vs V3:  FNR {fnr_delta:+.1f} pp  FPR {fpr_delta:+.1f} pp")
+    print()
+
+
+def run_diagnostic():
+    """
+    Pure diagnostic: find where rebar actually sits in FILE____050.
+    Prints Hilbert envelope at 0.5 ns intervals for 20 Class-1 and 10 Class-2
+    signals, then the 3 largest peaks per signal and the dominant peak time.
+    """
+    fname = DATA_PATH / "forest_river_north_bound" / "FILE____050.xlsx"
+    print(f"Loading {fname.name} …")
+
+    raw       = pd.read_excel(fname, header=None, engine="openpyxl")
+    n_signals = int(raw.iloc[0, 4])
+    labels    = raw.iloc[7, 1:n_signals + 1].values.astype(int)
+    amp_block = raw.iloc[10:522, 0:n_signals + 1].values.astype(float)
+    time_ns   = amp_block[:, 0]
+    amps      = amp_block[:, 1:] - DC_OFFSET   # (512, n_signals)
+
+    dt       = float(time_ns[1] - time_ns[0])
+    envelope = np.abs(hilbert(amps, axis=0))   # (512, n_signals)
+
+    rng     = np.random.default_rng(42)
+    c1_idx  = np.where(labels == 1)[0]
+    c2_idx  = np.where(labels >= 2)[0]
+    sample_c1 = rng.choice(c1_idx, size=20, replace=False)
+    sample_c2 = rng.choice(c2_idx, size=10, replace=False)
+
+    # ── Interpolate envelope at 0.5 ns grid points ──────────────────────────
+    grid = np.arange(2.0, 12.01, 0.5)   # 2.0, 2.5, …, 12.0
+
+    def interp_env(sig_idx: int) -> np.ndarray:
+        return np.interp(grid, time_ns, envelope[:, sig_idx])
+
+    # ── Print envelope table for one signal ──────────────────────────────────
+    def print_signal(sig_idx: int, label: str) -> None:
+        env_grid = interp_env(sig_idx)
+        peak_val = env_grid.max()
+        print(f"\nSignal {sig_idx} ({label}):")
+        for t, v in zip(grid, env_grid):
+            bar   = "█" * min(40, int(v / peak_val * 40))
+            note  = "  ← peak" if v == peak_val else ""
+            print(f"  {t:4.1f} ns: {v:>8,.0f}  {bar}{note}")
+
+    # ── Find top-3 peaks in 3–12 ns via find_peaks on the envelope ───────────
+    def top3_peaks(sig_idx: int) -> list[tuple[float, float]]:
+        mask  = (time_ns >= 3.0) & (time_ns <= 12.0)
+        t_win = time_ns[mask]
+        e_win = envelope[mask, sig_idx]
+        peaks, props = find_peaks(e_win, prominence=0.02 * e_win.max())
+        if len(peaks) == 0:
+            # fall back: just sort by amplitude
+            order = np.argsort(e_win)[::-1][:3]
+            return [(float(t_win[i]), float(e_win[i])) for i in order]
+        order = np.argsort(e_win[peaks])[::-1][:3]
+        return [(float(t_win[peaks[i]]), float(e_win[peaks[i]])) for i in order]
+
+    # ── Class-1 signals ───────────────────────────────────────────────────────
+    print("\n" + "=" * 70)
+    print("CLASS-1 SIGNALS (20 random samples)")
+    print("=" * 70)
+
+    for idx in sample_c1:
+        print_signal(idx, "Class-1")
+
+    # ── Class-2 signals ───────────────────────────────────────────────────────
+    print("\n" + "=" * 70)
+    print("CLASS-2 SIGNALS (10 random samples)")
+    print("=" * 70)
+
+    for idx in sample_c2:
+        print_signal(idx, "Class-2")
+
+    # ── Top-3 peaks per signal ────────────────────────────────────────────────
+    print("\n" + "=" * 70)
+    print("TOP-3 ENVELOPE PEAKS in 3–12 ns (largest first)")
+    print("=" * 70)
+
+    c1_first_peaks = []   # collect #1 peak times for mode analysis
+
+    print(f"\n{'Signal':>8}  {'Class':>7}  {'#1 peak':>10}  {'#2 peak':>10}  {'#3 peak':>10}")
+    print(f"  {'-'*54}")
+
+    for idx in list(sample_c1) + list(sample_c2):
+        cls  = "Class-1" if labels[idx] == 1 else "Class-2"
+        tops = top3_peaks(idx)
+        t1   = f"{tops[0][0]:.2f} ns" if len(tops) > 0 else "—"
+        t2   = f"{tops[1][0]:.2f} ns" if len(tops) > 1 else "—"
+        t3   = f"{tops[2][0]:.2f} ns" if len(tops) > 2 else "—"
+        print(f"  {idx:>6}  {cls:>7}  {t1:>10}  {t2:>10}  {t3:>10}")
+        if labels[idx] == 1:
+            c1_first_peaks.append(tops[0][0])
+
+    # ── Mode of Class-1 primary peaks (rounded to 0.5 ns) ────────────────────
+    rounded = [round(t * 2) / 2 for t in c1_first_peaks]
+    from collections import Counter
+    counts = Counter(rounded)
+    mode_t, mode_n = counts.most_common(1)[0]
+
+    print(f"\n{'='*70}")
+    print("DOMINANT REBAR PEAK TIME — Class-1 signals")
+    print(f"{'='*70}")
+    print(f"\n  Peak times (rounded to 0.5 ns):")
+    for t, n in sorted(counts.items()):
+        bar = "█" * n
+        print(f"  {t:5.1f} ns : {n:2d}  {bar}")
+    print(f"\n  Most common: {mode_t:.1f} ns  (found in {mode_n}/20 Class-1 signals)")
+    print()
+
+
 def run_all():
     all_results = []
     for bridge_dir in sorted(DATA_PATH.iterdir()):
@@ -675,5 +1143,13 @@ def run_all():
 if __name__ == "__main__":
     if "--all" in sys.argv:
         run_all()
+    elif "--bscan" in sys.argv:
+        run_bscan()
+    elif "--diag" in sys.argv:
+        run_diagnostic()
+    elif "--large" in sys.argv:
+        run_large_files()
+    elif "--tpeak" in sys.argv:
+        run_tpeak()
     else:
         run_single()

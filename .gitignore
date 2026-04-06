@@ -1,6 +1,10 @@
 gpr_data/
+all_bridges_csv/
+synthetic_data/
 .DS_Store
 __pycache__/
 *.pyc
 *.pyo
+*.pth
 .env
+*_out.txt
