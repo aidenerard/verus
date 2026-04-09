@@ -22,8 +22,10 @@ from scipy.signal import windows as sig_windows
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import f1_score
 
+import random
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
 
 torch.manual_seed(42)
@@ -92,6 +94,20 @@ class TemporalAttention(nn.Module):
         # x: (B, C, T) → permute → (B, T, C)
         weights = torch.softmax(self.score(x.permute(0, 2, 1)), dim=1)  # (B, T, 1)
         return (x * weights.permute(0, 2, 1)).sum(dim=2)                 # (B, C)
+
+
+class FocalLoss(nn.Module):
+    def __init__(self, alpha=0.25, gamma=2.0):
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+
+    def forward(self, inputs, targets):
+        bce = F.binary_cross_entropy_with_logits(
+            inputs, targets, reduction='none')
+        pt = torch.exp(-bce)
+        focal = self.alpha * (1 - pt) ** self.gamma * bce
+        return focal.mean()
 
 
 class CNN1D(nn.Module):
@@ -247,10 +263,6 @@ else:
     )
     print(f"  Train: {len(y_train):,}  Test: {len(y_test):,}", flush=True)
 
-    n_snd      = int(y_train.sum())
-    n_del      = len(y_train) - n_snd
-    pos_weight = torch.tensor([n_snd / n_del], dtype=torch.float32)
-    print(f"  pos_weight (sound/delam): {pos_weight.item():.3f}", flush=True)
 
     def to_tensor(arr_x, arr_y):
         tx = torch.tensor(arr_x, dtype=torch.float32).unsqueeze(1)
@@ -267,7 +279,7 @@ else:
     print(model, flush=True)
     print(f"  Trainable parameters: {n_params:,}", flush=True)
 
-    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight.to(DEVICE))
+    criterion = FocalLoss(alpha=0.25, gamma=2.0)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
     print("\nStep 4 — Training (50 epochs, early stopping patience=6)", flush=True)
