@@ -22,6 +22,10 @@ Outputs
     - bridge_cscan.png  — 2-D C-scan heat map (X=file, Y=signal)
 """
 
+import argparse
+import base64
+import io
+import json
 import sys
 import time
 import warnings
@@ -591,39 +595,93 @@ def generate_cscan_map(
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-def main() -> None:
-    csv_files = resolve_inputs(sys.argv[1:])
+def _render_astm_b64(file_preds, file_confs, file_names) -> str:
+    """
+    Render the ASTM D6087 condition map to an in-memory PNG and return
+    it as a base64 string suitable for embedding in JSON.
+    """
+    n_fi = len(file_preds)
+    half = n_fi // 2
 
-    # Load model
-    if not MODEL_PATH.exists():
-        sys.exit(f"Model not found: {MODEL_PATH}\n"
-                 "Train first with cnn.py before running inference.")
+    # Temporarily redirect generate_cscan_map to write to a BytesIO buffer
+    # by patching savefig.  Simpler: build the figure here and grab bytes.
+    import io as _io
+
+    # Reuse generate_cscan_map but capture the PNG instead of writing to disk.
+    # We call it with a temp stem, then read & delete the file.
+    import tempfile, os
+    with tempfile.TemporaryDirectory() as td:
+        stem = os.path.join(td, "cscan")
+        generate_cscan_map(
+            file_preds        = file_preds,
+            file_confs        = file_confs,
+            file_names        = file_names,
+            bridge_name       = "Bridge Deck",
+            ft_per_file       = 1.0,
+            ft_per_sig        = 1.0,
+            lane_offsets_ft   = [len(file_preds[0]) * 0.33, len(file_preds[0]) * 0.66]
+                                  if file_preds else None,
+            pier_file_indices = [half],
+            span_labels       = [(0, half, "Span 1"), (half, n_fi, "Span 2")],
+            out_stem          = stem,
+        )
+        png_path = stem + ".png"
+        with open(png_path, "rb") as f:
+            return base64.b64encode(f.read()).decode("utf-8")
+
+
+def main() -> None:
+    # ── CLI argument parsing ──────────────────────────────────────────────────
+    parser = argparse.ArgumentParser(description="Verus GPR Inference")
+    parser.add_argument("--input",     help="Input folder or CSV file(s)")
+    parser.add_argument("--model",     help="Path to model .pth file")
+    parser.add_argument("--threshold", type=float, default=None,
+                        help="Detection threshold (default 0.65)")
+    parser.add_argument("--output",    help="Write JSON results to this file path")
+    parser.add_argument("inputs",      nargs="*",
+                        help="Positional CSV files / folder (alternative to --input)")
+    args = parser.parse_args()
+
+    # Resolve model path and threshold overrides from CLI
+    model_path = Path(args.model) if args.model else MODEL_PATH
+    threshold  = args.threshold   if args.threshold is not None else THRESHOLD
+
+    # Resolve input files
+    if args.input:
+        csv_files = resolve_inputs([args.input])
+    elif args.inputs:
+        csv_files = resolve_inputs(args.inputs)
+    else:
+        csv_files = resolve_inputs([])
+
+    if not model_path.exists():
+        sys.exit(f"Model not found: {model_path}")
 
     print("=" * 60, flush=True)
     print("GPR Bridge Deck Inference", flush=True)
-    print(f"  Model      : {MODEL_PATH}", flush=True)
+    print(f"  Model      : {model_path}", flush=True)
     print(f"  Device     : {DEVICE}", flush=True)
-    print(f"  Threshold  : {THRESHOLD}  (sound if P(sound) ≥ {THRESHOLD})", flush=True)
+    print(f"  Threshold  : {threshold}", flush=True)
     print(f"  Input files: {len(csv_files)}", flush=True)
     print("=" * 60, flush=True)
 
     model = CNN1D().to(DEVICE)
-    model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
+    model.load_state_dict(torch.load(model_path, map_location=DEVICE))
     model.eval()
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"\n  Loaded model — {n_params:,} trainable parameters", flush=True)
 
-    # Per-file inference
+    # ── Per-file inference ────────────────────────────────────────────────────
     print(f"\n  {'File':36} {'Signals':>8} {'Sound%':>8} {'Delam%':>8} {'Avg conf':>9}", flush=True)
     print(f"  {'-'*73}", flush=True)
 
     t0 = time.perf_counter()
 
-    results     = {}          # file_path → dict
-    file_preds  = []
-    file_confs  = []
-    file_names  = []
-    total_sigs  = 0
+    file_preds: list[np.ndarray] = []
+    file_confs: list[np.ndarray] = []
+    file_names: list[str]        = []
+    per_file_summary: list[dict] = []
+    total_sigs = 0
 
     for fpath in csv_files:
         try:
@@ -634,81 +692,65 @@ def main() -> None:
 
         preds, confs = run_inference(model, signals)
 
-        n      = len(preds)
-        n_snd  = int(preds.sum())
-        n_del  = n - n_snd
+        n       = len(preds)
+        n_snd   = int(preds.sum())
+        n_del   = n - n_snd
         pct_snd = n_snd / n * 100
         pct_del = n_del / n * 100
-        avg_conf = float(confs.mean())
 
         tag = f"{fpath.parent.name}/{fpath.name}"
-        print(f"  {tag:36} {n:>8,} {pct_snd:>7.1f}% {pct_del:>7.1f}% {avg_conf:>8.3f}", flush=True)
-
-        results[str(fpath)] = {
-            "n_signals":         n,
-            "predictions":       preds.tolist(),
-            "confidences":       confs.tolist(),
-            "pct_sound":         round(pct_snd, 2),
-            "pct_delaminated":   round(pct_del, 2),
-            "avg_confidence":    round(avg_conf, 4),
-        }
+        print(f"  {tag:36} {n:>8,} {pct_snd:>7.1f}% {pct_del:>7.1f}% {float(confs.mean()):>8.3f}", flush=True)
 
         file_preds.append(preds)
         file_confs.append(confs)
         file_names.append(str(fpath))
+        per_file_summary.append({
+            "filename":  fpath.name,
+            "signals":   n,
+            "delam_pct": round(pct_del, 2),
+        })
         total_sigs += n
 
-    elapsed   = time.perf_counter() - t0
-    sig_per_s = total_sigs / elapsed if elapsed > 0 else 0.0
+    elapsed = time.perf_counter() - t0
 
-    # Overall summary
+    # ── Aggregate stats ───────────────────────────────────────────────────────
     all_preds = np.concatenate(file_preds)
-    all_confs = np.concatenate(file_confs)
-    tot_snd   = int(all_preds.sum())
-    tot_del   = total_sigs - tot_snd
-
-    overall = {
-        "total_signals":        total_sigs,
-        "total_sound":          tot_snd,
-        "total_delaminated":    tot_del,
-        "pct_sound":            round(tot_snd / total_sigs * 100, 2) if total_sigs else 0,
-        "pct_delaminated":      round(tot_del / total_sigs * 100, 2) if total_sigs else 0,
-        "avg_confidence":       round(float(all_confs.mean()), 4),
-        "elapsed_s":            round(elapsed, 2),
-        "signals_per_second":   round(sig_per_s, 1),
-    }
-    results["__overall__"] = overall
+    tot_del   = int((all_preds == 0).sum())
+    tot_snd   = total_sigs - tot_del
+    delam_pct = round(tot_del / total_sigs * 100, 2) if total_sigs else 0.0
+    sound_pct = round(100.0 - delam_pct, 2)
 
     print(f"\n{'=' * 60}", flush=True)
     print("OVERALL SUMMARY", flush=True)
     print(f"{'=' * 60}", flush=True)
-    print(f"  Files analysed   : {len(file_preds)}", flush=True)
-    print(f"  Total signals    : {total_sigs:,}", flush=True)
-    print(f"  Sound            : {tot_snd:,}  ({overall['pct_sound']:.1f}%)", flush=True)
-    print(f"  Delaminated      : {tot_del:,}  ({overall['pct_delaminated']:.1f}%)", flush=True)
-    print(f"  Avg confidence   : {overall['avg_confidence']:.3f}", flush=True)
-    print(f"  Time             : {elapsed:.2f} s  ({sig_per_s:,.0f} signals/s)", flush=True)
+    print(f"  Files analysed : {len(file_preds)}", flush=True)
+    print(f"  Total signals  : {total_sigs:,}", flush=True)
+    print(f"  Sound          : {tot_snd:,}  ({sound_pct:.1f}%)", flush=True)
+    print(f"  Delaminated    : {tot_del:,}  ({delam_pct:.1f}%)", flush=True)
+    print(f"  Time           : {elapsed:.2f} s", flush=True)
 
-    # Simple C-scan (quick raster)
+    # ── C-scan images ─────────────────────────────────────────────────────────
     save_cscan(file_preds, file_confs, file_names, CSCAN_OUT)
 
-    # ASTM D6087 professional condition map
-    # Span and pier geometry — adjust to match the actual bridge layout
-    n_fi = len(file_preds)
-    half = n_fi // 2
-    generate_cscan_map(
-        file_preds  = file_preds,
-        file_confs  = file_confs,
-        file_names  = file_names,
-        bridge_name = INPUT_PATH.name,
-        ft_per_file = 1.0,
-        ft_per_sig  = 1.0,
-        lane_offsets_ft   = [len(file_preds[0]) * 0.33, len(file_preds[0]) * 0.66]
-                              if file_preds else None,
-        pier_file_indices = [half],
-        span_labels       = [(0, half, "Span 1"), (half, n_fi, "Span 2")],
-        out_stem    = "bridge_deck_condition",
-    )
+    cscan_b64 = _render_astm_b64(file_preds, file_confs, file_names)
+
+    # ── JSON output (frontend format) ─────────────────────────────────────────
+    output = {
+        "signals_analyzed":  total_sigs,
+        "delamination_pct":  delam_pct,
+        "sound_pct":         sound_pct,
+        "analysis_time_sec": round(elapsed, 2),
+        "cscan_image":       cscan_b64,
+        "per_file_summary":  per_file_summary,
+    }
+
+    if args.output:
+        out_path = Path(args.output)
+        out_path.write_text(json.dumps(output, indent=2))
+        print(f"\n  Results JSON → {out_path.resolve()}", flush=True)
+    else:
+        # Print JSON to stdout so callers can capture it
+        print("\n" + json.dumps(output, indent=2))
 
 
 if __name__ == "__main__":
