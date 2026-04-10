@@ -18,7 +18,7 @@ CORS(app)  # Enable CORS for all routes
 # Paths - Render specific
 BASE_DIR = Path(__file__).parent
 MODELS_DIR = BASE_DIR / "models"
-RUN_SCRIPT = BASE_DIR / "run.py"
+RUN_SCRIPT = BASE_DIR.parent / "run.py"
 
 print(f"[STARTUP] Base directory: {BASE_DIR}", flush=True)
 print(f"[STARTUP] Models directory: {MODELS_DIR}", flush=True)
