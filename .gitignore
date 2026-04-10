@@ -5,6 +5,5 @@ synthetic_data/
 __pycache__/
 *.pyc
 *.pyo
-*.pth
 .env
 *_out.txt
