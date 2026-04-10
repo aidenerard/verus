@@ -93,38 +93,114 @@ class CNN1D(nn.Module):
 
 # ── Data loading (identical normalisation to cnn.py / run.py) ─────────────────
 
-def _find_data_start(raw) -> int:
-    for row in range(9, 14):
-        try:
-            val = float(raw[row, 0])
-            if not np.isnan(val):
-                return row
-        except (ValueError, TypeError):
-            continue
-    raise ValueError("Could not locate amplitude data rows in file")
-
-
 def load_csv(fpath: Path) -> np.ndarray:
-    """Return normalised signals as (n_signals, 512)."""
-    raw        = pd.read_csv(fpath, header=None).values
-    n_signals  = int(raw[0, 4])
-    data_start = _find_data_start(raw)
-    amp_block  = raw[data_start:data_start + N_SAMPLES, 0:n_signals + 1].astype(np.float32)
+    """
+    Auto-detecting CSV parser for GPR A-scan data.
+    Returns normalised signals as (n_signals, 512).
 
-    if amp_block.shape[0] < N_SAMPLES:
-        pad = np.zeros((N_SAMPLES - amp_block.shape[0], amp_block.shape[1]), dtype=np.float32)
-        amp_block = np.vstack([amp_block, pad])
+    Handles multiple formats:
+    1. Transposed format: each column = one A-scan (Amplitude_0, Amplitude_1, ...)
+    2. Row format: each row = one A-scan
+    3. Various metadata/header configurations
+    """
 
-    amps = (amp_block[:, 1:] - DC_OFFSET) * _TAPER[:, np.newaxis]
+    # Try different delimiters
+    for delimiter in [',', '\t', ';']:
+        try:
+            df = pd.read_csv(fpath, header=None, delimiter=delimiter, low_memory=False)
+            if df.shape[1] > 1:  # Valid parse
+                break
+        except Exception:
+            continue
+    else:
+        raise ValueError("Could not parse CSV file with standard delimiters")
 
-    # Spatial average radius=2
-    n = amps.shape[1]
+    # ── Step 1: Find where numeric data starts ────────────────────────────────
+    data_start_row = None
+
+    for idx in range(min(20, len(df))):
+        row_values = df.iloc[idx].astype(str).values
+
+        # Check if this looks like a header row
+        has_amplitude = any('amplitude' in str(val).lower() for val in row_values)
+        has_signal    = any('signal' in str(val).lower() for val in row_values)
+        if has_amplitude or has_signal:
+            data_start_row = idx + 1
+            break
+
+        # Check if this row contains mostly numeric data (>80%)
+        numeric_count = sum(
+            1 for val in row_values[1:]
+            if _is_float(val)
+        )
+        if numeric_count > 0.8 * (len(row_values) - 1):
+            data_start_row = idx
+            break
+
+    if data_start_row is None:
+        raise ValueError("Could not find numeric data in CSV file")
+
+    # ── Step 2: Extract numeric data ─────────────────────────────────────────
+    raw_data     = df.iloc[data_start_row:].copy()
+    numeric_data = raw_data.apply(pd.to_numeric, errors='coerce')
+    numeric_data = numeric_data.dropna(axis=1, how='all')
+    numeric_data = numeric_data.dropna(axis=0, how='all')
+
+    if numeric_data.empty:
+        raise ValueError("No numeric data found in CSV")
+
+    data_array = numeric_data.values.astype(np.float32)
+
+    # ── Step 3: Auto-detect orientation ──────────────────────────────────────
+    rows, cols = data_array.shape
+
+    # If rows ≈ 512 and cols << rows  → transposed (columns are A-scans)
+    # If cols ≈ 512 and rows << cols  → correct orientation (rows are A-scans)
+    if 400 <= rows <= 600 and cols < rows / 2:
+        amps = data_array.T       # each column was an A-scan
+    elif 400 <= cols <= 600 and rows < cols / 2:
+        amps = data_array         # each row is already an A-scan
+    elif rows > cols:
+        amps = data_array.T
+    else:
+        amps = data_array
+
+    n_signals, n_samples = amps.shape
+    if n_signals == 0:
+        raise ValueError("No A-scan signals found in CSV")
+
+    # ── Step 4: Normalise sample count to N_SAMPLES (512) ────────────────────
+    if n_samples > N_SAMPLES:
+        amps = amps[:, :N_SAMPLES]
+    elif n_samples < N_SAMPLES:
+        amps = np.pad(amps, ((0, 0), (0, N_SAMPLES - n_samples)), mode='constant')
+
+    # ── Step 5: Remove DC offset and apply Hann taper ────────────────────────
+    if np.abs(amps.mean()) > 1000:   # data has DC offset (~32768)
+        amps = (amps - DC_OFFSET) * _TAPER[np.newaxis, :]
+    else:
+        amps = amps * _TAPER[np.newaxis, :]
+
+    # ── Step 6: Spatial averaging (radius=2) ─────────────────────────────────
     amps_avg = np.empty_like(amps)
-    for i in range(n):
-        amps_avg[:, i] = amps[:, max(0, i - 2):i + 3].mean(axis=1)
+    for i in range(n_signals):
+        amps_avg[i] = amps[max(0, i - 2):i + 3].mean(axis=0)
 
-    amps_avg = (amps_avg - amps_avg.mean()) / (amps_avg.std() + 1e-8)
-    return amps_avg.T   # (n_signals, 512)
+    # ── Step 7: Z-score normalisation ────────────────────────────────────────
+    std = amps_avg.std()
+    if std < 1e-8:
+        raise ValueError("Signal has no variation (constant values)")
+    amps_avg = (amps_avg - amps_avg.mean()) / std
+
+    return amps_avg  # (n_signals, 512)
+
+
+def _is_float(val: str) -> bool:
+    try:
+        float(val)
+        return True
+    except (ValueError, TypeError):
+        return False
 
 
 # ── Inference ─────────────────────────────────────────────────────────────────
