@@ -1,5 +1,8 @@
 fastapi
 uvicorn
+flask
+flask-cors
+gunicorn
 torch
 numpy
 pandas
