@@ -44,7 +44,24 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 # ── Configuration ─────────────────────────────────────────────────────────────
-MODEL_PATH = Path(os.environ.get("MODEL_PATH", "model.pth"))
+def _resolve_model_path() -> Path:
+    """
+    Resolve model path in order of priority:
+    1. MODEL_PATH env var (explicit override)
+    2. models/ directory — pick the highest-versioned .pth file
+    3. model.pth in current directory (legacy fallback)
+    """
+    if env := os.environ.get("MODEL_PATH"):
+        return Path(env)
+    models_dir = Path("models")
+    if models_dir.is_dir():
+        candidates = sorted(models_dir.glob("*.pth"), reverse=True)
+        if candidates:
+            print(f"Auto-selected model: {candidates[0]}", flush=True)
+            return candidates[0]
+    return Path("model.pth")
+
+MODEL_PATH = _resolve_model_path()
 THRESHOLD  = 0.65        # P(sound) < THRESHOLD → delaminated
 DC_OFFSET  = 32768
 N_SAMPLES  = 512
@@ -449,6 +466,8 @@ app.add_middleware(
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_credentials=False,
+    expose_headers=["*"],
 )
 
 _model: CNN1D | None = None
@@ -458,28 +477,42 @@ _model: CNN1D | None = None
 def startup_event() -> None:
     global _model
 
+    print(f"Looking for model at: {MODEL_PATH.resolve()}", flush=True)
+
     # Download model if missing
     if not MODEL_PATH.exists():
         gdrive_url = os.environ.get("MODEL_GDRIVE_URL")
-        if not gdrive_url:
-            raise RuntimeError(
-                f"Model not found at {MODEL_PATH} and MODEL_GDRIVE_URL is not set."
+        if gdrive_url:
+            print(f"Downloading model from {gdrive_url} …", flush=True)
+            try:
+                import gdown
+                MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
+                gdown.download(gdrive_url, str(MODEL_PATH), quiet=False, fuzzy=True)
+            except Exception as exc:
+                print(f"ERROR: gdown download failed: {exc}", flush=True)
+        else:
+            print(
+                f"WARNING: Model not found at {MODEL_PATH} and MODEL_GDRIVE_URL is not set. "
+                "Server will start but /analyze will return 503 until model is available.",
+                flush=True,
             )
-        print(f"Downloading model from {gdrive_url} …", flush=True)
-        try:
-            import gdown
-            gdown.download(gdrive_url, str(MODEL_PATH), quiet=False, fuzzy=True)
-        except Exception as exc:
-            raise RuntimeError(f"gdown download failed: {exc}") from exc
+            return   # Let server start — /analyze returns 503
 
     if not MODEL_PATH.exists():
-        raise RuntimeError(f"Model file still missing after download attempt: {MODEL_PATH}")
+        print(f"ERROR: Model file still missing: {MODEL_PATH}", flush=True)
+        return       # Same — keep server alive, return 503 on requests
 
-    _model = CNN1D().to(DEVICE)
-    _model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
-    _model.eval()
-    n_params = sum(p.numel() for p in _model.parameters() if p.requires_grad)
-    print(f"Model loaded successfully  ({n_params:,} parameters, device={DEVICE})", flush=True)
+    try:
+        _model = CNN1D().to(DEVICE)
+        _model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE,
+                                          weights_only=False))
+        _model.eval()
+        n_params = sum(p.numel() for p in _model.parameters() if p.requires_grad)
+        print(f"Model loaded successfully  ({n_params:,} parameters, device={DEVICE})",
+              flush=True)
+    except Exception as exc:
+        print(f"ERROR loading model: {exc}", flush=True)
+        _model = None   # Keep server alive
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
