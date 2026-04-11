@@ -210,14 +210,24 @@ export default function App() {
       console.log('[ANALYZE] Response OK:', response.ok);
 
       if (!response.ok) {
+        // Handle 503 hibernate-wake-error from Render
+        if (response.status === 503) {
+          alert('Server is waking up from sleep (Render free tier). This can take up to 2 minutes.\n\nPlease:\n1. Wait 2 minutes\n2. Try uploading again\n\nOR go to Render dashboard and click "Restart Service" to wake it up immediately.');
+          setIsAnalyzing(false);
+          setSlowRequest(false);
+          setServerStatus('warming');
+          return;
+        }
+
         let errorMsg = 'Unknown error';
         try {
           const error = await response.json();
           console.error('[ANALYZE] Error response:', error);
           errorMsg = error.detail || error.error || error.stderr || JSON.stringify(error);
         } catch {
-          errorMsg = await response.text();
-          console.error('[ANALYZE] Error text:', errorMsg);
+          const errorText = await response.text();
+          console.error('[ANALYZE] Error text:', errorText);
+          errorMsg = errorText || `HTTP ${response.status} error`;
         }
         console.error('Analysis failed:', errorMsg);
         alert(`Analysis failed:\n\n${errorMsg}\n\nThis might mean your CSV files aren't in the expected GPR format. Check browser console for details.`);
@@ -241,6 +251,10 @@ export default function App() {
 
       if (error instanceof Error && error.name === 'TimeoutError') {
         alert('Analysis timed out after 5 minutes. This may happen if:\n\n1. Server is cold-starting (wait 90 seconds and try again)\n2. Too many files uploaded (try with fewer files)\n3. Server needs more resources\n\nCheck the Render dashboard logs for details.');
+      } else if (error instanceof TypeError && error.message.includes('fetch')) {
+        // Network error or CORS issue
+        alert('Cannot connect to server. This usually means:\n\n1. Server is asleep (Render free tier) - wait 2 minutes and retry\n2. Network connection issue\n3. CORS error\n\nTry:\n• Wait 2 minutes, then upload again\n• Go to Render dashboard → Click "Restart Service"\n• Check browser console for CORS errors');
+        setServerStatus('warming');
       } else if (error instanceof Error) {
         alert(`Analysis failed: ${error.message}\n\nCheck browser console for details.`);
       } else {
