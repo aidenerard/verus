@@ -284,7 +284,7 @@ def render_cscan(
     half  = n_files // 2
     spans = [(0, half, "Span 1"), (half, n_files, "Span 2")]
 
-    fig = plt.figure(figsize=(24, 10), facecolor="white")
+    fig = plt.figure(figsize=(14, 6), facecolor="white")
     ax  = fig.add_axes([0.06, 0.14, 0.70, 0.72])
 
     cmap = plt.cm.RdYlGn_r
@@ -452,7 +452,7 @@ def render_cscan(
     )
 
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight", facecolor="white")
+    fig.savefig(buf, format="png", dpi=90, bbox_inches="tight", facecolor="white")
     plt.close(fig)
     buf.seek(0)
     return buf.read()
@@ -545,7 +545,9 @@ def health() -> dict:
 
 @app.post("/analyze")
 async def analyze(files: list[UploadFile] = File(...)) -> JSONResponse:
+    print(f"[analyze] Received request: {len(files)} file(s)", flush=True)
     if _model is None:
+        print("[analyze] Model not loaded yet — returning 503", flush=True)
         raise HTTPException(status_code=503, detail="Model not loaded yet.")
     if not files:
         raise HTTPException(status_code=400, detail="No files uploaded.")
@@ -593,11 +595,18 @@ async def analyze(files: list[UploadFile] = File(...)) -> JSONResponse:
         sound_pct_total = round(100.0 - delam_pct_total, 2)
 
         # Render C-scan PNG → base64
-        png_bytes = render_cscan(
-            file_preds, file_confs,
-            [f.filename or "" for f in files],
-        )
-        cscan_b64 = base64.b64encode(png_bytes).decode("utf-8")
+        print(f"[analyze] Rendering C-scan for {len(file_preds)} files, "
+              f"{total_sigs} signals total …", flush=True)
+        try:
+            png_bytes = render_cscan(
+                file_preds, file_confs,
+                [f.filename or "" for f in files],
+            )
+            cscan_b64 = base64.b64encode(png_bytes).decode("utf-8")
+            print(f"[analyze] C-scan rendered OK ({len(png_bytes)//1024} KB)", flush=True)
+        except Exception as render_exc:
+            print(f"[analyze] WARNING: C-scan render failed: {render_exc}", flush=True)
+            cscan_b64 = ""
 
         elapsed = round(time.perf_counter() - t0, 3)
 
