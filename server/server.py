@@ -20,6 +20,7 @@ import io
 import base64
 import shutil
 import tempfile
+import threading
 import time
 import datetime
 from pathlib import Path
@@ -473,53 +474,73 @@ app.add_middleware(
 _model: CNN1D | None = None
 
 
-@app.on_event("startup")
-def startup_event() -> None:
+def _load_model_background() -> None:
+    """
+    Load the model in a background thread so the server port opens immediately
+    and health checks succeed while the model is still initialising.
+    """
     global _model
 
-    print(f"Looking for model at: {MODEL_PATH.resolve()}", flush=True)
+    print(f"[startup] Looking for model at: {MODEL_PATH.resolve()}", flush=True)
 
-    # Download model if missing
+    # Download if missing
     if not MODEL_PATH.exists():
         gdrive_url = os.environ.get("MODEL_GDRIVE_URL")
         if gdrive_url:
-            print(f"Downloading model from {gdrive_url} …", flush=True)
+            print(f"[startup] Downloading model from {gdrive_url} …", flush=True)
             try:
                 import gdown
                 MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
                 gdown.download(gdrive_url, str(MODEL_PATH), quiet=False, fuzzy=True)
             except Exception as exc:
-                print(f"ERROR: gdown download failed: {exc}", flush=True)
+                print(f"[startup] ERROR: gdown download failed: {exc}", flush=True)
+                return
         else:
             print(
-                f"WARNING: Model not found at {MODEL_PATH} and MODEL_GDRIVE_URL is not set. "
-                "Server will start but /analyze will return 503 until model is available.",
+                f"[startup] WARNING: Model not found at {MODEL_PATH} and "
+                "MODEL_GDRIVE_URL is not set. /analyze will return 503.",
                 flush=True,
             )
-            return   # Let server start — /analyze returns 503
+            return
 
     if not MODEL_PATH.exists():
-        print(f"ERROR: Model file still missing: {MODEL_PATH}", flush=True)
-        return       # Same — keep server alive, return 503 on requests
+        print(f"[startup] ERROR: Model still missing after download: {MODEL_PATH}",
+              flush=True)
+        return
 
     try:
-        _model = CNN1D().to(DEVICE)
-        _model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE,
-                                          weights_only=False))
-        _model.eval()
-        n_params = sum(p.numel() for p in _model.parameters() if p.requires_grad)
-        print(f"Model loaded successfully  ({n_params:,} parameters, device={DEVICE})",
-              flush=True)
+        m = CNN1D().to(DEVICE)
+        m.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE,
+                                     weights_only=False))
+        m.eval()
+        n_params = sum(p.numel() for p in m.parameters() if p.requires_grad)
+        _model = m   # atomic assignment — safe for GIL-protected reads
+        print(f"[startup] Model loaded successfully  "
+              f"({n_params:,} parameters, device={DEVICE})", flush=True)
     except Exception as exc:
-        print(f"ERROR loading model: {exc}", flush=True)
-        _model = None   # Keep server alive
+        print(f"[startup] ERROR loading model weights: {exc}", flush=True)
+
+
+@app.on_event("startup")
+def startup_event() -> None:
+    # Kick off model loading in the background so the port opens immediately.
+    # Health checks will return model_loaded=false until the thread finishes.
+    t = threading.Thread(target=_load_model_background, daemon=True)
+    t.start()
+    print("[startup] Server ready — model loading in background.", flush=True)
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "model_loaded": _model is not None}
+    loaded = _model is not None
+    return {
+        "status": "ok",
+        "model_loaded": loaded,
+        "model_path": str(MODEL_PATH),
+        "message": "Ready" if loaded else "Model loading in background, please retry in 30s",
+    }
 
 
 @app.post("/analyze")
