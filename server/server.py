@@ -124,6 +124,10 @@ def _sniff_csv(fpath: Path) -> tuple[str, int]:
     """
     Read the first 25 lines to detect delimiter and the first all-numeric row.
     Returns (delimiter, skiprows).
+
+    Key rule: any row that contains alphabetic characters in any field (e.g.
+    'X(ft)', 'Amplitude_0') is a header row and is skipped, even if 99% of
+    its fields are numeric (e.g. X(ft) followed by 512 position floats).
     """
     with open(fpath, "r", errors="replace") as f:
         head = [f.readline() for _ in range(25)]
@@ -136,13 +140,20 @@ def _sniff_csv(fpath: Path) -> tuple[str, int]:
             delimiter = max(counts, key=counts.get)
             break
 
-    # Find the first row where ≥80% of fields are numeric
+    # Find the first row where ALL non-empty fields are numeric
     for i, line in enumerate(head):
         stripped = line.strip()
         if not stripped:
             continue
         parts = stripped.split(delimiter)
         if len(parts) < 2:
+            continue
+        # Skip rows with ANY alphabetic character in any field (header labels)
+        has_alpha = any(
+            any(c.isalpha() for c in p.strip())
+            for p in parts if p.strip()
+        )
+        if has_alpha:
             continue
         numeric = sum(1 for p in parts if _is_float(p.strip()))
         if numeric >= 0.8 * len(parts):
@@ -200,6 +211,16 @@ def load_csv(fpath: Path) -> np.ndarray:
     else:
         amps = data_array
     gc.collect()
+
+    # ── Drop first column if it looks like a row-index (0,1,2,...,N) ──────────
+    # SDNET CSVs have X(ft) header + sample indices in column 0; the actual
+    # amplitude data starts at column 1.
+    if amps.shape[1] > N_SAMPLES:
+        col0 = amps[:, 0]
+        expected = np.arange(len(col0), dtype=np.float32)
+        if np.allclose(col0, expected, atol=2.0):
+            print("[load_csv] Dropping sample-index column 0", flush=True)
+            amps = np.ascontiguousarray(amps[:, 1:])
 
     n_signals, n_samples = amps.shape
     if n_signals == 0:
