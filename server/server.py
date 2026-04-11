@@ -15,6 +15,7 @@ Endpoints
   POST /analyze   → multipart CSV upload → JSON + base64 C-scan PNG
 """
 
+import gc
 import os
 import io
 import base64
@@ -120,102 +121,97 @@ def _is_float(val: str) -> bool:
 
 def load_csv(fpath: Path) -> np.ndarray:
     """
-    Auto-detecting CSV parser for GPR A-scan data.
+    Memory-efficient CSV parser for GPR A-scan data.
     Returns normalised signals as (n_signals, 512).
-
-    Handles multiple formats:
-    1. Transposed format: each column = one A-scan (Amplitude_0, Amplitude_1, ...)
-    2. Row format: each row = one A-scan
-    3. Various metadata/header configurations
+    Intermediate pandas frames are deleted immediately to minimise peak RAM.
     """
 
-    # Try different delimiters
+    # ── Step 1: Parse with best-fit delimiter ────────────────────────────────
+    df = None
     for delimiter in [',', '\t', ';']:
         try:
-            df = pd.read_csv(fpath, header=None, delimiter=delimiter, low_memory=False)
-            if df.shape[1] > 1:  # Valid parse
+            _df = pd.read_csv(fpath, header=None, delimiter=delimiter,
+                              low_memory=False)
+            if _df.shape[1] > 1:
+                df = _df
                 break
+            del _df
         except Exception:
             continue
-    else:
+    if df is None:
         raise ValueError("Could not parse CSV file with standard delimiters")
 
-    # ── Step 1: Find where numeric data starts ────────────────────────────────
+    # ── Step 2: Find first numeric row ───────────────────────────────────────
     data_start_row = None
-
     for idx in range(min(20, len(df))):
         row_values = df.iloc[idx].astype(str).values
-
-        # Check if this looks like a header row
-        has_amplitude = any('amplitude' in str(val).lower() for val in row_values)
-        has_signal    = any('signal' in str(val).lower() for val in row_values)
-        if has_amplitude or has_signal:
+        if any('amplitude' in v.lower() for v in row_values) or \
+           any('signal' in v.lower() for v in row_values):
             data_start_row = idx + 1
             break
-
-        # Check if this row contains mostly numeric data (>80%)
-        numeric_count = sum(
-            1 for val in row_values[1:]
-            if _is_float(val)
-        )
+        numeric_count = sum(1 for v in row_values[1:] if _is_float(v))
         if numeric_count > 0.8 * (len(row_values) - 1):
             data_start_row = idx
             break
-
     if data_start_row is None:
+        del df
         raise ValueError("Could not find numeric data in CSV file")
 
-    # ── Step 2: Extract numeric data ─────────────────────────────────────────
-    raw_data     = df.iloc[data_start_row:].copy()
-    numeric_data = raw_data.apply(pd.to_numeric, errors='coerce')
-    numeric_data = numeric_data.dropna(axis=1, how='all')
-    numeric_data = numeric_data.dropna(axis=0, how='all')
+    # ── Step 3: Convert to float32 array, then immediately free the DataFrame ─
+    numeric_data = df.iloc[data_start_row:].apply(pd.to_numeric, errors='coerce')
+    del df  # free raw string data
+    gc.collect()
 
+    numeric_data = numeric_data.dropna(axis=1, how='all').dropna(axis=0, how='all')
     if numeric_data.empty:
         raise ValueError("No numeric data found in CSV")
 
     data_array = numeric_data.values.astype(np.float32)
+    del numeric_data  # free pandas frame
+    gc.collect()
 
-    # ── Step 3: Auto-detect orientation ──────────────────────────────────────
+    # ── Step 4: Auto-detect orientation ──────────────────────────────────────
     rows, cols = data_array.shape
-
-    # If rows ≈ 512 and cols << rows  → transposed (columns are A-scans)
-    # If cols ≈ 512 and rows << cols  → correct orientation (rows are A-scans)
     if 400 <= rows <= 600 and cols < rows / 2:
-        amps = data_array.T       # each column was an A-scan
+        amps = np.ascontiguousarray(data_array.T)
     elif 400 <= cols <= 600 and rows < cols / 2:
-        amps = data_array         # each row is already an A-scan
+        amps = data_array
     elif rows > cols:
-        amps = data_array.T
+        amps = np.ascontiguousarray(data_array.T)
     else:
         amps = data_array
+    if amps is not data_array:
+        del data_array
+        gc.collect()
 
     n_signals, n_samples = amps.shape
     if n_signals == 0:
         raise ValueError("No A-scan signals found in CSV")
 
-    # ── Step 4: Normalise sample count to N_SAMPLES (512) ────────────────────
+    # ── Step 5: Pad / truncate to N_SAMPLES ──────────────────────────────────
     if n_samples > N_SAMPLES:
-        amps = amps[:, :N_SAMPLES]
+        amps = np.ascontiguousarray(amps[:, :N_SAMPLES])
     elif n_samples < N_SAMPLES:
         amps = np.pad(amps, ((0, 0), (0, N_SAMPLES - n_samples)), mode='constant')
 
-    # ── Step 5: Remove DC offset and apply Hann taper ────────────────────────
-    if np.abs(amps.mean()) > 1000:   # data has DC offset (~32768)
-        amps = (amps - DC_OFFSET) * _TAPER[np.newaxis, :]
-    else:
-        amps = amps * _TAPER[np.newaxis, :]
+    # ── Step 6: DC offset + Hann taper (in-place) ────────────────────────────
+    if np.abs(amps.mean()) > 1000:
+        amps -= DC_OFFSET
+    amps *= _TAPER[np.newaxis, :]
 
-    # ── Step 6: Spatial averaging (radius=2) ─────────────────────────────────
+    # ── Step 7: Spatial averaging (radius=2) ─────────────────────────────────
     amps_avg = np.empty_like(amps)
     for i in range(n_signals):
         amps_avg[i] = amps[max(0, i - 2):i + 3].mean(axis=0)
+    del amps
+    gc.collect()
 
-    # ── Step 7: Z-score normalisation ────────────────────────────────────────
+    # ── Step 8: Z-score normalisation (in-place) ─────────────────────────────
     std = amps_avg.std()
     if std < 1e-8:
         raise ValueError("Signal has no variation (constant values)")
-    amps_avg = (amps_avg - amps_avg.mean()) / std
+    amps_avg -= amps_avg.mean()
+    amps_avg /= std
 
     return amps_avg  # (n_signals, 512)
 
@@ -561,28 +557,36 @@ async def analyze(files: list[UploadFile] = File(...)) -> JSONResponse:
         per_file_summary: list[dict] = []
         total_sigs = 0
 
-        for upload in files:
-            dest = tmpdir / (upload.filename or "upload.csv")
+        for i, upload in enumerate(files):
+            fname = upload.filename or "upload.csv"
+            print(f"[analyze] File {i+1}/{len(files)}: {fname}", flush=True)
+            dest = tmpdir / fname
             content = await upload.read()
             dest.write_bytes(content)
+            del content  # free upload bytes immediately
 
             try:
                 signals = load_csv(dest)
             except Exception as exc:
                 raise HTTPException(
                     status_code=422,
-                    detail=f"Could not parse {upload.filename}: {exc}",
+                    detail=f"Could not parse {fname}: {exc}",
                 )
 
+            print(f"[analyze]   → {signals.shape[0]} signals loaded, running inference …", flush=True)
             preds, confs = run_inference(_model, signals)
+            del signals  # free signal array after inference
+            gc.collect()
+
             n         = len(preds)
             n_delam   = int((preds == 0).sum())
             delam_pct = round(n_delam / n * 100, 2) if n else 0.0
+            print(f"[analyze]   → done: {n} signals, {delam_pct}% delam", flush=True)
 
             file_preds.append(preds)
             file_confs.append(confs)
             per_file_summary.append({
-                "filename":  upload.filename,
+                "filename":  fname,
                 "signals":   n,
                 "delam_pct": delam_pct,
             })
