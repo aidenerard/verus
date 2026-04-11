@@ -122,33 +122,41 @@ def _is_float(val: str) -> bool:
 
 def _sniff_csv(fpath: Path) -> tuple[str, int]:
     """
-    Read the first 25 lines to detect delimiter and the first all-numeric row.
+    Scan up to 200 lines to detect delimiter and the first data row.
     Returns (delimiter, skiprows).
 
-    Key rule: any row that contains alphabetic characters in any field (e.g.
-    'X(ft)', 'Amplitude_0') is a header row and is skipped, even if 99% of
-    its fields are numeric (e.g. X(ft) followed by 512 position floats).
+    Rules:
+    - Any row with alphabetic text in any field is a header/metadata row.
+    - Any row with fewer than 10 fields is a metadata row
+      (e.g. 'Scan Length (L),47.5' has only 2 fields).
+    - The first row with ≥10 fields and ≥80% numeric values is the data start.
     """
     with open(fpath, "r", errors="replace") as f:
-        head = [f.readline() for _ in range(25)]
+        head = [f.readline() for _ in range(200)]
 
-    # Detect delimiter from the first non-empty line
+    # Detect delimiter: use the one most common in lines with many fields
     delimiter = ","
+    best_count = 0
     for line in head:
-        if line.strip():
-            counts = {d: line.count(d) for d in (",", "\t", ";")}
-            delimiter = max(counts, key=counts.get)
-            break
+        stripped = line.strip()
+        if not stripped:
+            continue
+        for d in (",", "\t", ";"):
+            c = stripped.count(d)
+            if c > best_count:
+                best_count = c
+                delimiter = d
 
-    # Find the first row where ALL non-empty fields are numeric
+    # Find the first data row
     for i, line in enumerate(head):
         stripped = line.strip()
         if not stripped:
             continue
         parts = stripped.split(delimiter)
-        if len(parts) < 2:
+        # Must have many fields — single-value metadata rows have ≤2
+        if len(parts) < 10:
             continue
-        # Skip rows with ANY alphabetic character in any field (header labels)
+        # Skip rows with any alphabetic text (X(ft), Amplitude_0, Scan Length, …)
         has_alpha = any(
             any(c.isalpha() for c in p.strip())
             for p in parts if p.strip()
@@ -157,8 +165,13 @@ def _sniff_csv(fpath: Path) -> tuple[str, int]:
             continue
         numeric = sum(1 for p in parts if _is_float(p.strip()))
         if numeric >= 0.8 * len(parts):
+            print(f"[sniff_csv] Found data at row {i} "
+                  f"({len(parts)} fields, {numeric} numeric)", flush=True)
             return delimiter, i
 
+    # Fallback: couldn't find data in first 200 lines
+    print("[sniff_csv] WARNING: no data row found in first 200 lines, trying skiprows=0",
+          flush=True)
     return delimiter, 0
 
 
