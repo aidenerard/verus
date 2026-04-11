@@ -120,43 +120,65 @@ def _is_float(val: str) -> bool:
         return False
 
 
+_TIME_AXIS_KEYS = {
+    "time_ns", "time", "time(ns)", "t(ns)", "depth_m", "depth",
+    "sample", "sample_no", "twt", "twt(ns)",
+}
+
+
+def _normalise_key(s: str) -> str:
+    """Lower-case, strip parens/spaces/underscores for loose matching."""
+    return s.lower().replace(" ", "").replace("_", "").replace("(", "").replace(")", "")
+
+
 def _sniff_csv(fpath: Path) -> tuple[str, int]:
     """
-    Scan up to 200 lines to detect delimiter and the first data row.
-    Returns (delimiter, skiprows).
+    Scan the file line by line (up to 300 lines) to find:
+      1. The delimiter (comma / tab / semicolon).
+      2. The first row of pure numeric data (skiprows).
 
-    Rules:
-    - Any row with alphabetic text in any field is a header/metadata row.
-    - Any row with fewer than 10 fields is a metadata row
-      (e.g. 'Scan Length (L),47.5' has only 2 fields).
-    - The first row with ≥10 fields and ≥80% numeric values is the data start.
+    Strategy A — keyword: if a row's first field matches a known time-axis
+    label (Time_ns, Depth, Sample, …), data starts on the NEXT line.
+
+    Strategy B — numeric: first row with ≥10 fields, no alpha chars, ≥80%
+    parseable as float.
     """
-    with open(fpath, "r", errors="replace") as f:
-        head = [f.readline() for _ in range(200)]
-
-    # Detect delimiter: use the one most common in lines with many fields
     delimiter = ","
     best_count = 0
-    for line in head:
-        stripped = line.strip()
-        if not stripped:
-            continue
+
+    with open(fpath, "r", errors="replace") as f:
+        lines = []
+        for _ in range(300):
+            line = f.readline()
+            if not line:
+                break
+            lines.append(line)
+
+    # ── Pick delimiter from the line with the most field separators ───────────
+    for line in lines:
         for d in (",", "\t", ";"):
-            c = stripped.count(d)
+            c = line.count(d)
             if c > best_count:
                 best_count = c
                 delimiter = d
 
-    # Find the first data row
-    for i, line in enumerate(head):
+    # ── Scan for data start ───────────────────────────────────────────────────
+    for i, line in enumerate(lines):
         stripped = line.strip()
         if not stripped:
             continue
         parts = stripped.split(delimiter)
-        # Must have many fields — single-value metadata rows have ≤2
+        first = _normalise_key(parts[0].strip())
+
+        # Strategy A: known time-axis header → data is on the next line
+        if first in _TIME_AXIS_KEYS and len(parts) > 1:
+            print(f"[sniff_csv] time-axis header '{parts[0].strip()}' "
+                  f"at row {i} → data starts at row {i + 1}", flush=True)
+            return delimiter, i + 1
+
+        # Strategy B: large row, no letters, mostly numeric
         if len(parts) < 10:
             continue
-        # Skip rows with any alphabetic text (X(ft), Amplitude_0, Scan Length, …)
         has_alpha = any(
             any(c.isalpha() for c in p.strip())
             for p in parts if p.strip()
@@ -165,12 +187,11 @@ def _sniff_csv(fpath: Path) -> tuple[str, int]:
             continue
         numeric = sum(1 for p in parts if _is_float(p.strip()))
         if numeric >= 0.8 * len(parts):
-            print(f"[sniff_csv] Found data at row {i} "
+            print(f"[sniff_csv] numeric data at row {i} "
                   f"({len(parts)} fields, {numeric} numeric)", flush=True)
             return delimiter, i
 
-    # Fallback: couldn't find data in first 200 lines
-    print("[sniff_csv] WARNING: no data row found in first 200 lines, trying skiprows=0",
+    print("[sniff_csv] WARNING: no data row in first 300 lines → skiprows=0",
           flush=True)
     return delimiter, 0
 
@@ -212,28 +233,36 @@ def load_csv(fpath: Path) -> np.ndarray:
     print(f"[load_csv] raw shape: {data_array.shape}", flush=True)
 
     # ── Auto-detect orientation ───────────────────────────────────────────────
+    # SDNET format: (512 time-samples, 10455+ A-scans).
+    # We want output shape (n_scans, 512).
     rows, cols = data_array.shape
-    if 400 <= rows <= 600 and cols < rows / 2:
-        amps = np.ascontiguousarray(data_array.T)
+
+    if 400 <= rows <= 600:
+        # Rows ≈ N_SAMPLES → rows are time-samples, columns are A-scans.
+        # Column 0 may be a Time_ns axis (small floats) or integer index
+        # rather than amplitude data — drop it if so.
+        col0 = data_array[:, 0]
+        if np.abs(col0).max() < 500:           # time values or small index
+            print("[load_csv] Dropping time/index column 0", flush=True)
+            data_array = np.ascontiguousarray(data_array[:, 1:])
+        # Transpose so each row becomes one A-scan
+        amps = np.ascontiguousarray(data_array.T)   # (n_scans, 512)
         del data_array
-    elif 400 <= cols <= 600 and rows < cols / 2:
-        amps = data_array
+    elif 400 <= cols <= 600:
+        # Cols ≈ N_SAMPLES → rows are already A-scans.
+        col0 = data_array[:, 0]
+        if np.abs(col0).max() < rows + 2:      # looks like a row index
+            print("[load_csv] Dropping row-index column 0", flush=True)
+            amps = np.ascontiguousarray(data_array[:, 1:])
+            del data_array
+        else:
+            amps = data_array
     elif rows > cols:
         amps = np.ascontiguousarray(data_array.T)
         del data_array
     else:
         amps = data_array
     gc.collect()
-
-    # ── Drop first column if it looks like a row-index (0,1,2,...,N) ──────────
-    # SDNET CSVs have X(ft) header + sample indices in column 0; the actual
-    # amplitude data starts at column 1.
-    if amps.shape[1] > N_SAMPLES:
-        col0 = amps[:, 0]
-        expected = np.arange(len(col0), dtype=np.float32)
-        if np.allclose(col0, expected, atol=2.0):
-            print("[load_csv] Dropping sample-index column 0", flush=True)
-            amps = np.ascontiguousarray(amps[:, 1:])
 
     n_signals, n_samples = amps.shape
     if n_signals == 0:
