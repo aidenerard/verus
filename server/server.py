@@ -93,6 +93,13 @@ class CNN1D(nn.Module):
 
 # ── Data loading (identical normalisation to cnn.py / run.py) ─────────────────
 
+def _is_float(val: str) -> bool:
+    try:
+        float(val)
+        return True
+    except (ValueError, TypeError):
+        return False
+
 def load_csv(fpath: Path) -> np.ndarray:
     """
     Auto-detecting CSV parser for GPR A-scan data.
@@ -193,14 +200,6 @@ def load_csv(fpath: Path) -> np.ndarray:
     amps_avg = (amps_avg - amps_avg.mean()) / std
 
     return amps_avg  # (n_signals, 512)
-
-
-def _is_float(val: str) -> bool:
-    try:
-        float(val)
-        return True
-    except (ValueError, TypeError):
-        return False
 
 
 # ── Inference ─────────────────────────────────────────────────────────────────
