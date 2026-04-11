@@ -120,15 +120,19 @@ def _is_float(val: str) -> bool:
         return False
 
 
-_TIME_AXIS_KEYS = {
-    "time_ns", "time", "time(ns)", "t(ns)", "depth_m", "depth",
-    "sample", "sample_no", "twt", "twt(ns)",
-}
-
-
 def _normalise_key(s: str) -> str:
     """Lower-case, strip parens/spaces/underscores for loose matching."""
     return s.lower().replace(" ", "").replace("_", "").replace("(", "").replace(")", "")
+
+
+# Pre-normalised so comparison against _normalise_key(field) always works
+_TIME_AXIS_KEYS = {
+    _normalise_key(k) for k in (
+        "time_ns", "time", "time(ns)", "t(ns)", "depth_m", "depth",
+        "sample", "sample_no", "twt", "twt(ns)",
+    )
+}
+# → {"timens", "time", "tns", "depthm", "depth", "sample", "sampleno", "twt", "twtns"}
 
 
 def _sniff_csv(fpath: Path) -> tuple[str, int]:
