@@ -2,9 +2,9 @@
 # Uses CPU-only PyTorch which is ~500MB smaller than full version
 
 # Core dependencies
-fastapi==0.115.12
-uvicorn[standard]==0.34.5
-python-multipart==0.0.20
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+python-multipart==0.0.9
 
 # CPU-only PyTorch (much smaller than CUDA version)
 --extra-index-url https://download.pytorch.org/whl/cpu
@@ -12,12 +12,12 @@ torch==2.2.0+cpu
 
 # Scientific computing
 numpy==1.26.4
-pandas==2.2.3
-scipy==1.14.1
+pandas==2.2.1
+scipy==1.13.0
 
-# Image processing (base version, no GUI)
-matplotlib==3.9.3
-pillow==11.1.0
+# Image processing
+matplotlib==3.8.3
+pillow==10.2.0
 
 # Additional
-gdown==5.2.0
+gdown==5.1.0
