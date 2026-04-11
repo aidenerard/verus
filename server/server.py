@@ -119,100 +119,118 @@ def _is_float(val: str) -> bool:
     except (ValueError, TypeError):
         return False
 
+
+def _sniff_csv(fpath: Path) -> tuple[str, int]:
+    """
+    Read the first 25 lines to detect delimiter and the first all-numeric row.
+    Returns (delimiter, skiprows).
+    """
+    with open(fpath, "r", errors="replace") as f:
+        head = [f.readline() for _ in range(25)]
+
+    # Detect delimiter from the first non-empty line
+    delimiter = ","
+    for line in head:
+        if line.strip():
+            counts = {d: line.count(d) for d in (",", "\t", ";")}
+            delimiter = max(counts, key=counts.get)
+            break
+
+    # Find the first row where ≥80% of fields are numeric
+    for i, line in enumerate(head):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        parts = stripped.split(delimiter)
+        if len(parts) < 2:
+            continue
+        numeric = sum(1 for p in parts if _is_float(p.strip()))
+        if numeric >= 0.8 * len(parts):
+            return delimiter, i
+
+    return delimiter, 0
+
+
 def load_csv(fpath: Path) -> np.ndarray:
     """
     Memory-efficient CSV parser for GPR A-scan data.
     Returns normalised signals as (n_signals, 512).
-    Intermediate pandas frames are deleted immediately to minimise peak RAM.
+
+    Key optimisation: sniff delimiter/skiprows from the first 25 lines,
+    then call pd.read_csv with dtype=np.float32 so pandas never allocates
+    Python string objects for every cell (saves ~8× RAM vs default object dtype).
     """
 
-    # ── Step 1: Parse with best-fit delimiter ────────────────────────────────
-    df = None
-    for delimiter in [',', '\t', ';']:
-        try:
-            _df = pd.read_csv(fpath, header=None, delimiter=delimiter,
-                              low_memory=False)
-            if _df.shape[1] > 1:
-                df = _df
-                break
-            del _df
-        except Exception:
-            continue
-    if df is None:
-        raise ValueError("Could not parse CSV file with standard delimiters")
+    delimiter, skiprows = _sniff_csv(fpath)
+    print(f"[load_csv] delimiter={repr(delimiter)} skiprows={skiprows}", flush=True)
 
-    # ── Step 2: Find first numeric row ───────────────────────────────────────
-    data_start_row = None
-    for idx in range(min(20, len(df))):
-        row_values = df.iloc[idx].astype(str).values
-        if any('amplitude' in v.lower() for v in row_values) or \
-           any('signal' in v.lower() for v in row_values):
-            data_start_row = idx + 1
-            break
-        numeric_count = sum(1 for v in row_values[1:] if _is_float(v))
-        if numeric_count > 0.8 * (len(row_values) - 1):
-            data_start_row = idx
-            break
-    if data_start_row is None:
-        del df
-        raise ValueError("Could not find numeric data in CSV file")
+    # ── Read directly as float32 — no string-object overhead ─────────────────
+    try:
+        df = pd.read_csv(
+            fpath, header=None, sep=delimiter,
+            skiprows=skiprows, dtype=np.float32,
+            on_bad_lines="skip",
+        )
+    except Exception as exc:
+        raise ValueError(f"pd.read_csv failed: {exc}")
 
-    # ── Step 3: Convert to float32 array, then immediately free the DataFrame ─
-    numeric_data = df.iloc[data_start_row:].apply(pd.to_numeric, errors='coerce')
-    del df  # free raw string data
-    gc.collect()
+    # Drop any columns that are entirely NaN (e.g. trailing delimiter)
+    df.dropna(axis=1, how="all", inplace=True)
+    df.dropna(axis=0, how="all", inplace=True)
 
-    numeric_data = numeric_data.dropna(axis=1, how='all').dropna(axis=0, how='all')
-    if numeric_data.empty:
+    if df.empty:
         raise ValueError("No numeric data found in CSV")
 
-    data_array = numeric_data.values.astype(np.float32)
-    del numeric_data  # free pandas frame
+    data_array = df.to_numpy(dtype=np.float32, na_value=0.0)
+    del df
     gc.collect()
 
-    # ── Step 4: Auto-detect orientation ──────────────────────────────────────
+    print(f"[load_csv] raw shape: {data_array.shape}", flush=True)
+
+    # ── Auto-detect orientation ───────────────────────────────────────────────
     rows, cols = data_array.shape
     if 400 <= rows <= 600 and cols < rows / 2:
         amps = np.ascontiguousarray(data_array.T)
+        del data_array
     elif 400 <= cols <= 600 and rows < cols / 2:
         amps = data_array
     elif rows > cols:
         amps = np.ascontiguousarray(data_array.T)
+        del data_array
     else:
         amps = data_array
-    if amps is not data_array:
-        del data_array
-        gc.collect()
+    gc.collect()
 
     n_signals, n_samples = amps.shape
     if n_signals == 0:
         raise ValueError("No A-scan signals found in CSV")
 
-    # ── Step 5: Pad / truncate to N_SAMPLES ──────────────────────────────────
+    # ── Pad / truncate to N_SAMPLES ───────────────────────────────────────────
     if n_samples > N_SAMPLES:
         amps = np.ascontiguousarray(amps[:, :N_SAMPLES])
     elif n_samples < N_SAMPLES:
-        amps = np.pad(amps, ((0, 0), (0, N_SAMPLES - n_samples)), mode='constant')
+        amps = np.pad(amps, ((0, 0), (0, N_SAMPLES - n_samples)), mode="constant")
 
-    # ── Step 6: DC offset + Hann taper (in-place) ────────────────────────────
+    # ── DC offset + Hann taper (in-place) ────────────────────────────────────
     if np.abs(amps.mean()) > 1000:
         amps -= DC_OFFSET
     amps *= _TAPER[np.newaxis, :]
 
-    # ── Step 7: Spatial averaging (radius=2) ─────────────────────────────────
+    # ── Spatial averaging radius=2 ────────────────────────────────────────────
     amps_avg = np.empty_like(amps)
     for i in range(n_signals):
         amps_avg[i] = amps[max(0, i - 2):i + 3].mean(axis=0)
     del amps
     gc.collect()
 
-    # ── Step 8: Z-score normalisation (in-place) ─────────────────────────────
+    # ── Z-score (in-place) ────────────────────────────────────────────────────
     std = amps_avg.std()
     if std < 1e-8:
         raise ValueError("Signal has no variation (constant values)")
     amps_avg -= amps_avg.mean()
     amps_avg /= std
 
+    print(f"[load_csv] done: {n_signals} signals normalised", flush=True)
     return amps_avg  # (n_signals, 512)
 
 
