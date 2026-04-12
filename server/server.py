@@ -268,9 +268,12 @@ async def analyze(files: list[UploadFile] = File(...)) -> JSONResponse:
         sound_pct_total = round(100.0 - delam_pct_total, 2)
 
         # Render C-scan → base64 PNG string (in-memory, no disk I/O)
+        gc.collect()   # free any lingering per-file buffers before the peak render allocation
+        vm_pre = psutil.virtual_memory()
         print(f"[analyze] Rendering C-scan: {len(file_preds)} files, "
               f"{total_sigs:,} signals (grid capped at "
-              f"{MAX_GRID_ROWS}×{MAX_GRID_COLS}) …", flush=True)
+              f"{MAX_GRID_ROWS}×{MAX_GRID_COLS}) — RAM before render: "
+              f"{vm_pre.used//1024**2} MB ({vm_pre.percent:.1f}%) …", flush=True)
         try:
             cscan_b64 = render_cscan_b64(file_preds, file_confs, file_names)
             print(f"[analyze] C-scan rendered OK ({len(cscan_b64)//1024} KB b64)",

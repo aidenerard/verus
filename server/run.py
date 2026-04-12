@@ -346,7 +346,7 @@ def render_cscan_b64(
     file_confs:  list[np.ndarray],
     file_names:  list[str],
     bridge_name: str = "Bridge Deck",
-    dpi:         int = 300,
+    dpi:         int = 150,
 ) -> str:
     """
     Render a professional ASTM D6087 / FHWA LTBP-style GPR deterioration map.
@@ -458,7 +458,7 @@ def render_cscan_b64(
     norm = mcolors.Normalize(vmin=0.0, vmax=1.0)
 
     # ── Figure ────────────────────────────────────────────────────────────────
-    fig = plt.figure(figsize=(24, 6), facecolor='white')
+    fig = plt.figure(figsize=(20, 5), facecolor='white')
     fig.subplots_adjust(left=0.07, right=0.97, top=0.82, bottom=0.20)
 
     # Title — centred above everything
@@ -561,6 +561,7 @@ def render_cscan_b64(
     buf = io.BytesIO()
     fig.savefig(buf, format='png', dpi=dpi, bbox_inches='tight', facecolor='white')
     plt.close(fig)
+    gc.collect()   # release matplotlib canvas memory immediately
     buf.seek(0)
     return base64.b64encode(buf.read()).decode('utf-8')
 
