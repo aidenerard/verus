@@ -4,7 +4,14 @@ import { Button } from './components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './components/ui/collapsible';
 import { Progress } from './components/ui/progress';
 
-const PYTHON_SERVER_URL = 'https://verus-0j5j.onrender.com';
+// In dev mode (npm run dev), VITE_API_URL is set to '' in .env.local so all
+// fetch calls are relative (e.g. /health) and the Vite proxy forwards them to
+// http://localhost:10000.  In production the env var is not set, so it falls
+// back to the Render URL.
+const PYTHON_SERVER_URL =
+  import.meta.env.VITE_API_URL !== undefined
+    ? import.meta.env.VITE_API_URL          // '' in dev → relative URLs
+    : 'https://verus-0j5j.onrender.com';   // production fallback
 
 type InspectionMethod = 'gpr' | 'impact-echo' | 'infrared' | 'sounding';
 

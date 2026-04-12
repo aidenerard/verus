@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: verus-server
+    runtime: docker
+    dockerfilePath: ./server/Dockerfile
+    dockerContext: ./server
+    plan: free
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: MODEL_GDRIVE_URL
+        sync: false   # set this in Render dashboard → Environment
