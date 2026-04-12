@@ -80,7 +80,7 @@ def _resolve_model_path() -> Path:
 
 MODEL_PATH   = _resolve_model_path()
 MAX_FILE_MB  = 50    # per-file upload limit
-MAX_TOTAL_MB = 500   # total upload limit across all files
+MAX_TOTAL_MB = 200   # total upload limit across all files
 
 
 # ── App + startup ─────────────────────────────────────────────────────────────
@@ -296,4 +296,4 @@ async def analyze(files: list[UploadFile] = File(...)) -> JSONResponse:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
