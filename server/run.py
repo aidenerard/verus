@@ -425,6 +425,14 @@ def render_cscan_b64(
     #   P(sound) in [T, 1] → display in [0.5, 1.0]
     nan_mask = np.isnan(prob_grid)
     p        = np.where(nan_mask, T, prob_grid)   # fill NaN with boundary
+
+    # Gaussian smoothing produces the continuous, organic blob appearance seen
+    # in professional ASTM D6087 maps.  Smoothing happens on raw P(sound)
+    # values BEFORE rescaling so that the threshold boundary stays sharp.
+    # sigma=(lateral, longitudinal): more lateral blending blends between scan
+    # lines; longitudinal blends along the drive direction.
+    p = gaussian_filter(p, sigma=(1.5, 3.0))
+
     display  = np.where(
         p <= T,
         0.5 * p / T,                          # [0, T] → [0, 0.5]
@@ -476,7 +484,7 @@ def render_cscan_b64(
         cmap=cmap_obj, norm=norm,
         aspect='auto', origin='upper',
         extent=[0, grid_long, grid_lat, 0],
-        interpolation='nearest',
+        interpolation='bilinear',
     )
 
     # Bridge outline rectangle
@@ -493,6 +501,16 @@ def render_cscan_b64(
         edgecolor='black', linewidth=0.8, zorder=6,
     )
     ax.add_patch(abutment)
+
+    # Dashed scan-line reference markers (every ~25% of lateral span)
+    for frac in (0.25, 0.50, 0.75):
+        ax.axhline(grid_lat * frac, color='black', linewidth=0.5,
+                   linestyle='--', alpha=0.45, zorder=4)
+
+    # "Deterioration Map" label — top-right corner of map axes
+    ax.text(0.99, 0.97, "Deterioration Map", transform=ax.transAxes,
+            ha='right', va='top', fontsize=9, style='italic', color='#222222',
+            zorder=7)
 
     # Axis labels and ticks
     ax.set_xlabel('Longitudinal Distance (ft.)', fontsize=8, labelpad=4)
