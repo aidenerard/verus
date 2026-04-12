@@ -334,11 +334,15 @@ def render_cscan_b64(
     max_sigs = max(len(p) for p in file_preds)
 
     # ── Grid: rows = scan lines (lateral), cols = signals (longitudinal) ───────
+    # Store raw P(sound) directly from the model sigmoid output.
+    # confs convention (from run_inference):
+    #   pred=1 (sound):       conf = P(sound)
+    #   pred=0 (delaminated): conf = 1 - P(sound)  [= P(delam)]
+    # So P(sound) = conf if pred==1 else 1.0 - conf.
     prob_grid = np.full((n_files, max_sigs), np.nan, dtype=np.float32)
     for row, (preds, confs) in enumerate(zip(file_preds, file_confs)):
         for col, (pred, conf) in enumerate(zip(preds, confs)):
-            # P(delam): 0 = sound, 1 = deteriorated
-            prob_grid[row, col] = conf if pred == 0 else 1.0 - conf
+            prob_grid[row, col] = conf if pred == 1 else 1.0 - conf  # P(sound)
 
     # Downsample if grid exceeds memory limits
     if n_files > MAX_GRID_ROWS:
@@ -348,6 +352,13 @@ def render_cscan_b64(
         idx       = np.linspace(0, max_sigs - 1, MAX_GRID_COLS, dtype=int)
         prob_grid = prob_grid[:, idx]
 
+    # Fill trailing NaN in each row (shorter scan lines) by extending last value.
+    # Without this, scan lines shorter than max_sigs show as gray on the right.
+    for i in range(prob_grid.shape[0]):
+        valid = np.where(~np.isnan(prob_grid[i, :]))[0]
+        if len(valid) and valid[-1] < prob_grid.shape[1] - 1:
+            prob_grid[i, valid[-1] + 1 :] = prob_grid[i, valid[-1]]
+
     # Upsample longitudinally when too few signals (sparse test uploads)
     if prob_grid.shape[1] < 50:
         scale     = max(1, 50 // prob_grid.shape[1])
@@ -355,11 +366,27 @@ def render_cscan_b64(
 
     grid_lat, grid_long = prob_grid.shape   # (lateral rows, longitudinal cols)
 
-    # P(sound) = 1 − P(delam):  0 → deteriorated,  1 → sound
-    sound_grid = 1.0 - prob_grid
-    nan_mask   = np.isnan(sound_grid)
-    masked     = np.ma.array(np.where(nan_mask, 0.5, sound_grid), mask=nan_mask)
-    del prob_grid, sound_grid
+    # ── Threshold-centred rescaling ───────────────────────────────────────────
+    # The model's decision boundary is THRESHOLD (0.65).  Signals classified as
+    # delaminated have P(sound) in [0, THRESHOLD), which without rescaling maps
+    # to yellow-green on the colormap — visually misleading when delam% is high.
+    #
+    # Rescale so THRESHOLD → 0.5 (colormap midpoint):
+    #   P(sound) in [0,   T] → display in [0,   0.5]  (red / orange / yellow)
+    #   P(sound) in [T,   1] → display in [0.5, 1.0]  (green / cyan / blue)
+    #
+    # Result: every delaminated prediction always falls in the warm half of the
+    # scale regardless of confidence; every sound prediction in the cool half.
+    T        = THRESHOLD   # 0.65
+    nan_mask = np.isnan(prob_grid)
+    p        = np.where(nan_mask, T, prob_grid)   # fill NaN with midpoint
+    display  = np.where(
+        p <= T,
+        0.5 * p / T,                          # [0, T] → [0, 0.5]
+        0.5 + 0.5 * (p - T) / (1.0 - T),     # [T, 1] → [0.5, 1.0]
+    )
+    masked = np.ma.array(display, mask=nan_mask)
+    del prob_grid, p, display
 
     # ── Stats ─────────────────────────────────────────────────────────────────
     all_preds  = np.concatenate(file_preds)
@@ -370,8 +397,10 @@ def render_cscan_b64(
 
     # ── Colormap: deep red → orange → yellow → green → cyan → blue → violet ───
     # Matches Sensoft/IRIS and FHWA LTBP spectral attenuation scale.
-    # cmap(0) = #8B0000 = dark red  → P(sound)=0 → highly deteriorated
-    # cmap(1) = #4B0082 = indigo    → P(sound)=1 → sound / strong reflection
+    # After threshold-centred rescaling:
+    #   display=0.0 → dark red  → P(sound)=0    → highly deteriorated
+    #   display=0.5 → yellow    → P(sound)=0.65 → decision boundary (threshold)
+    #   display=1.0 → indigo    → P(sound)=1.0  → confidently sound
     cmap_colors = [
         '#8B0000', '#FF0000', '#FF4500', '#FF8C00', '#FFD700',
         '#ADFF2F', '#00FF7F', '#00CED1', '#1E90FF', '#4B0082',
