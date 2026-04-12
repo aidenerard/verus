@@ -1,14 +1,7 @@
-# Optimized requirements for Render free tier (512MB RAM limit)
-# Uses CPU-only PyTorch which is ~500MB smaller than full version
-
 # Core dependencies
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
 python-multipart==0.0.9
-
-# CPU-only PyTorch (much smaller than CUDA version)
---extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.2.0+cpu
 
 # Scientific computing
 numpy==1.26.4
@@ -21,3 +14,7 @@ pillow==10.2.0
 
 # Additional
 gdown==5.1.0
+
+# CPU-only PyTorch (must be at end with --extra-index-url)
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.2.0+cpu
