@@ -17,6 +17,17 @@ export default defineConfig({
     },
   },
 
+  // In dev mode, proxy API calls to the local Python server so you don't
+  // need to change the API URL in App.tsx.  The production build uses the
+  // hardcoded PYTHON_SERVER_URL in App.tsx.
+  server: {
+    proxy: {
+      '/health':  'http://localhost:10000',
+      '/analyze': 'http://localhost:10000',
+      '/memory':  'http://localhost:10000',
+    },
+  },
+
   // File types to support raw imports. Never add .css, .tsx, or .ts files to this.
   assetsInclude: ['**/*.svg', '**/*.csv'],
 })
