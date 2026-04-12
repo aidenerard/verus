@@ -317,7 +317,7 @@ def render_cscan_b64(
     file_confs:  list[np.ndarray],
     file_names:  list[str],
     bridge_name: str = "Bridge Deck",
-    dpi:         int = 200,
+    dpi:         int = 300,
 ) -> str:
     """
     Render a professional ASTM D6087 / FHWA LTBP-style GPR deterioration map.
@@ -325,7 +325,7 @@ def render_cscan_b64(
     Colormap: deep red (high attenuation = deteriorated) → orange → yellow →
               green → cyan → blue → violet (low attenuation = sound), matching
               the spectral scale used by Sensoft/IRIS and the FHWA LTBP program.
-    Layout: 20 × 4 in landscape, 200 DPI.  X = Longitudinal Distance (ft),
+    Layout: 24 × 6 in landscape, 300 DPI.  X = Longitudinal Distance (ft),
             Y = Lateral Distance (ft).  Horizontal dB colorbar below.
     """
     from matplotlib.patches import Polygon as MplPolygon
@@ -358,10 +358,8 @@ def render_cscan_b64(
     # P(sound) = 1 − P(delam):  0 → deteriorated,  1 → sound
     sound_grid = 1.0 - prob_grid
     nan_mask   = np.isnan(sound_grid)
-    filled     = np.where(nan_mask, 0.5, sound_grid)
-    smoothed   = gaussian_filter(filled, sigma=2.0)
-    masked     = np.ma.array(smoothed, mask=nan_mask)
-    del filled, prob_grid, sound_grid
+    masked     = np.ma.array(np.where(nan_mask, 0.5, sound_grid), mask=nan_mask)
+    del prob_grid, sound_grid
 
     # ── Stats ─────────────────────────────────────────────────────────────────
     all_preds  = np.concatenate(file_preds)
@@ -385,21 +383,33 @@ def render_cscan_b64(
     norm = mcolors.Normalize(vmin=0.0, vmax=1.0)
 
     # ── Figure ────────────────────────────────────────────────────────────────
-    fig = plt.figure(figsize=(20, 4), facecolor='white')
+    fig = plt.figure(figsize=(24, 6), facecolor='white')
+    fig.subplots_adjust(left=0.07, right=0.97, top=0.82, bottom=0.20)
 
-    # Title
+    # Title — centred above everything
     fig.text(0.5, 0.97, "Bridge Deck Condition Assessment",
-             ha='center', va='top', fontsize=12, fontweight='bold', color='#111111')
+             ha='center', va='top', fontsize=11, fontweight='bold', color='#111111')
 
-    # Map axes — fills most of the figure, leaves room for colorbar below
-    ax = fig.add_axes([0.06, 0.22, 0.88, 0.66])
+    # Header block — top-left, above the map, not overlaid on it
+    survey_date = datetime.date.today().strftime('%B %d, %Y')
+    hdr = (
+        f"Structure: {bridge_name}    Survey: {survey_date}\n"
+        f"Standard: ASTM D6087    Scan lines: {n_files}\n"
+        f"Signals: {total_sigs}    Delamination: {pct_delam:.1f}%"
+    )
+    fig.text(0.07, 0.91, hdr,
+             ha='left', va='top', fontsize=7, color='#333333',
+             fontfamily='monospace', linespacing=1.6)
+
+    # Map axes
+    ax = fig.add_axes([0.07, 0.20, 0.90, 0.60])
 
     ax.imshow(
         masked,
         cmap=cmap_obj, norm=norm,
         aspect='auto', origin='upper',
         extent=[0, grid_long, grid_lat, 0],
-        interpolation='bilinear',
+        interpolation='nearest',
     )
 
     # Bridge outline rectangle
@@ -418,7 +428,7 @@ def render_cscan_b64(
     ax.add_patch(abutment)
 
     # Axis labels and ticks
-    ax.set_xlabel('Longitudinal Distance (ft.)', fontsize=9, labelpad=4)
+    ax.set_xlabel('Longitudinal Distance (ft.)', fontsize=8, labelpad=4)
     ax.set_ylabel('Lateral\nDistance\n(ft.)', fontsize=8, labelpad=4)
 
     n_xticks = 12
@@ -435,19 +445,8 @@ def render_cscan_b64(
     ax.set_yticklabels([str(v) for v in y_ft], fontsize=7)
     ax.tick_params(direction='out', length=3, width=0.6)
 
-    # ── 4-line header block — top-right of figure ─────────────────────────────
-    survey_date = datetime.date.today().strftime('%B %d, %Y')
-    hdr = (
-        f"Structure: {bridge_name:<28}Survey: {survey_date}\n"
-        f"Standard: ASTM D6087{' ' * 22}Scan lines: {n_files}\n"
-        f"Signals: {total_sigs:<30}Delamination: {pct_delam:.1f}%"
-    )
-    fig.text(0.94, 0.96, hdr,
-             ha='right', va='top', fontsize=6.0, color='#333333',
-             fontfamily='monospace', linespacing=1.7)
-
     # ── Colorbar ──────────────────────────────────────────────────────────────
-    cbar_ax = fig.add_axes([0.20, 0.04, 0.55, 0.065])
+    cbar_ax = fig.add_axes([0.20, 0.05, 0.55, 0.055])
     sm = plt.cm.ScalarMappable(cmap=cmap_obj, norm=norm)
     sm.set_array([])
     cbar = fig.colorbar(sm, cax=cbar_ax, orientation='horizontal')
@@ -457,21 +456,21 @@ def render_cscan_b64(
     db_range = db_ticks[-1] - db_ticks[0]
     tick_pos = [(v - db_ticks[0]) / db_range for v in db_ticks]
     cbar.set_ticks(tick_pos)
-    cbar.set_ticklabels([str(v) for v in db_ticks], fontsize=6.5)
+    cbar.set_ticklabels([str(v) for v in db_ticks], fontsize=7)
     cbar.ax.tick_params(length=2, width=0.5)
     cbar.outline.set_linewidth(0.6)
     cbar_ax.set_title(
         "Attenuation at top rebar level (dB)  —  corrected for depth variation",
-        fontsize=7, pad=3,
+        fontsize=8, pad=3,
     )
 
     # Colored "More / Less" labels flanking the colorbar
     cbar_ax.text(-0.01, 0.5, "More\nDeterioration",
                  transform=cbar_ax.transAxes, ha='right', va='center',
-                 fontsize=6.5, fontweight='bold', color='#8B0000')
+                 fontsize=7, fontweight='bold', color='#8B0000')
     cbar_ax.text(1.01, 0.5, "Less Deteriorated /\nStronger Reflections",
                  transform=cbar_ax.transAxes, ha='left', va='center',
-                 fontsize=6.5, fontweight='bold', color='#1E3A8A')
+                 fontsize=7, fontweight='bold', color='#1E3A8A')
 
     # ── Render to in-memory PNG ────────────────────────────────────────────────
     buf = io.BytesIO()
