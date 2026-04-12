@@ -1,39 +1,27 @@
 """
-run.py — GPR bridge deck delamination inference (no training).
+run.py — GPR bridge deck delamination inference module + CLI.
 
-Loads a trained CNN1D model and runs inference on all CSV files in
-INPUT_PATH (a folder) or a list of CSV file paths supplied via the
-command line.
+Importable by server.py:
+    from run import (CNN1D, TemporalAttention,
+                     load_csv, run_inference,
+                     render_cscan_b64, make_predictions_list)
 
-Usage
------
-    # Scan a folder:
-    python3 run.py /path/to/csv_folder
-
-    # Scan specific files:
-    python3 run.py file1.csv file2.csv file3.csv
-
-    # Use defaults (INPUT_PATH variable below):
-    python3 run.py
-
-Outputs
--------
-    - Console summary table per file + overall stats
-    - bridge_cscan.png  — 2-D C-scan heat map (X=file, Y=signal)
+CLI usage:
+    python run.py --input /path/to/csvs --model model.pth [--output results.json]
 """
 
 import argparse
 import base64
+import gc
 import io
 import json
 import sys
 import time
 import warnings
+import datetime
 warnings.filterwarnings("ignore")
 
 from pathlib import Path
-
-import datetime
 
 import numpy as np
 import pandas as pd
@@ -42,28 +30,29 @@ from scipy.ndimage import gaussian_filter
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.utils.data import DataLoader, TensorDataset
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
+from matplotlib.patches import FancyBboxPatch, Rectangle
 
-# ── Configure these two paths ─────────────────────────────────────────────────
-MODEL_PATH = Path("/content/drive/MyDrive/fluxspace_gpr_data/model.pth")
-INPUT_PATH = Path("~/Desktop/verus/all_bridges_csv").expanduser()
-CSCAN_OUT  = Path("bridge_cscan.png")
-# ─────────────────────────────────────────────────────────────────────────────
+# ── Constants ─────────────────────────────────────────────────────────────────
+THRESHOLD    = 0.65       # P(sound) < THRESHOLD → delaminated
+DC_OFFSET    = 32768
+N_SAMPLES    = 512
+INFER_BATCH  = 1000       # max signals per torch forward pass (~2 MB each)
+MAX_GRID_ROWS = 500       # C-scan grid rows, downsampled if larger
+MAX_GRID_COLS = 100       # C-scan grid cols, downsampled if larger
+DEVICE       = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-THRESHOLD  = 0.65          # predict delaminated if sigmoid(logit) < THRESHOLD
-DC_OFFSET  = 32768
-N_SAMPLES  = 512
-BATCH_SIZE = 256
-DEVICE     = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-# Hann taper — same as cnn.py
 _TAPER       = np.ones(N_SAMPLES, dtype=np.float32)
 _TAPER[410:] = sig_windows.hann(204)[102:].astype(np.float32)
+
+# CLI-only defaults (not used when imported as a module)
+_DEFAULT_MODEL = Path("models/model_v13.pth")
+_DEFAULT_INPUT = Path(".")
+_CSCAN_OUT     = Path("bridge_cscan.png")
 
 
 # ── Model architecture — must exactly match cnn.py ───────────────────────────
@@ -75,8 +64,8 @@ class TemporalAttention(nn.Module):
         self.score = nn.Linear(channels, 1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        weights = torch.softmax(self.score(x.permute(0, 2, 1)), dim=1)  # (B, T, 1)
-        return (x * weights.permute(0, 2, 1)).sum(dim=2)                 # (B, C)
+        weights = torch.softmax(self.score(x.permute(0, 2, 1)), dim=1)
+        return (x * weights.permute(0, 2, 1)).sum(dim=2)
 
 
 class CNN1D(nn.Module):
@@ -103,585 +92,544 @@ class CNN1D(nn.Module):
         return self.head(x).squeeze(1)
 
 
-# ── Data loading — identical normalisation to cnn.py ─────────────────────────
+# ── CSV parsing ───────────────────────────────────────────────────────────────
 
-def _find_data_start(raw) -> int:
-    for row in range(9, 14):
-        try:
-            val = float(raw[row, 0])
-            if not np.isnan(val):
-                return row
-        except (ValueError, TypeError):
+def _is_float(val: str) -> bool:
+    try:
+        float(val)
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
+def _normalise_key(s: str) -> str:
+    """Lower-case, strip parens/spaces/underscores for loose matching."""
+    return s.lower().replace(" ", "").replace("_", "").replace("(", "").replace(")", "")
+
+
+# Pre-normalised so comparison against _normalise_key(field) always works.
+_TIME_AXIS_KEYS = {
+    _normalise_key(k) for k in (
+        "time_ns", "time", "time(ns)", "t(ns)", "depth_m", "depth",
+        "sample", "sample_no", "twt", "twt(ns)",
+    )
+}
+
+
+def _sniff_csv(fpath: Path) -> tuple[str, int]:
+    """
+    Scan the file line by line (up to 300 lines) to find delimiter and data start row.
+
+    Strategy A — keyword: if a row's first field matches a known time-axis
+    label (Time_ns, Depth, Sample, …), data starts on the NEXT line.
+
+    Strategy B — numeric: first row with ≥10 fields, no alpha chars, ≥80%
+    parseable as float.
+    """
+    delimiter  = ","
+    best_count = 0
+
+    with open(fpath, "r", errors="replace") as f:
+        lines = []
+        for _ in range(300):
+            line = f.readline()
+            if not line:
+                break
+            lines.append(line)
+
+    for line in lines:
+        for d in (",", "\t", ";"):
+            c = line.count(d)
+            if c > best_count:
+                best_count = c
+                delimiter = d
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped:
             continue
-    raise ValueError("Could not locate amplitude data rows in file")
+        parts = stripped.split(delimiter)
+        first = _normalise_key(parts[0].strip())
+
+        # Strategy A: known time-axis header → data on next line
+        if first in _TIME_AXIS_KEYS and len(parts) > 1:
+            print(f"[sniff_csv] time-axis header '{parts[0].strip()}' "
+                  f"at row {i} → data starts at row {i + 1}", flush=True)
+            return delimiter, i + 1
+
+        # Strategy B: large row, no letters, mostly numeric
+        if len(parts) < 10:
+            continue
+        has_alpha = any(
+            any(c.isalpha() for c in p.strip())
+            for p in parts if p.strip()
+        )
+        if has_alpha:
+            continue
+        numeric = sum(1 for p in parts if _is_float(p.strip()))
+        if numeric >= 0.8 * len(parts):
+            print(f"[sniff_csv] numeric data at row {i} "
+                  f"({len(parts)} fields, {numeric} numeric)", flush=True)
+            return delimiter, i
+
+    print("[sniff_csv] WARNING: no data row in first 300 lines → skiprows=0", flush=True)
+    return delimiter, 0
 
 
 def load_csv(fpath: Path) -> np.ndarray:
     """
     Load one CSV file and return normalised signals as (n_signals, 512).
-    Per-file normalisation: subtract file mean, divide by file std.
-    Labels are not loaded — this is inference-only.
+
+    Accepts multiple GPR CSV formats:
+      - SDNET2021: metadata header + Time_ns row + 512×N amplitude block
+      - Simple: rows of amplitude samples (one A-scan per row)
+      - Transposed: columns are A-scans
+
+    Normalisation: subtract file mean, divide by file std.
     """
-    raw        = pd.read_csv(fpath, header=None).values
-    n_signals  = int(raw[0, 4])
-    data_start = _find_data_start(raw)
-    amp_block  = raw[data_start:data_start + N_SAMPLES, 0:n_signals + 1].astype(np.float32)
+    delimiter, skiprows = _sniff_csv(fpath)
+    print(f"[load_csv] delimiter={repr(delimiter)} skiprows={skiprows}", flush=True)
 
-    if amp_block.shape[0] < N_SAMPLES:
-        pad = np.zeros((N_SAMPLES - amp_block.shape[0], amp_block.shape[1]), dtype=np.float32)
-        amp_block = np.vstack([amp_block, pad])
+    # Read directly as float32 — no Python string-object overhead
+    try:
+        df = pd.read_csv(
+            fpath, header=None, sep=delimiter,
+            skiprows=skiprows, dtype=np.float32,
+            on_bad_lines="skip",
+        )
+    except Exception as exc:
+        raise ValueError(f"pd.read_csv failed: {exc}")
 
-    amps = (amp_block[:, 1:] - DC_OFFSET) * _TAPER[:, np.newaxis]
+    df.dropna(axis=1, how="all", inplace=True)
+    df.dropna(axis=0, how="all", inplace=True)
+    if df.empty:
+        raise ValueError("No numeric data found in CSV")
 
-    # Spatial average (radius=2) — matches cnn.py pre-processing
-    n = amps.shape[1]
-    amps_avg = np.empty_like(amps)
-    for i in range(n):
-        amps_avg[:, i] = amps[:, max(0, i - 2):i + 3].mean(axis=1)
+    data_array = df.to_numpy(dtype=np.float32, na_value=0.0)
+    del df
+    gc.collect()
 
-    # Per-file normalisation
-    amps_avg = (amps_avg - amps_avg.mean()) / (amps_avg.std() + 1e-8)
-    return amps_avg.T   # (n_signals, 512)
+    print(f"[load_csv] raw shape: {data_array.shape}", flush=True)
 
+    # ── Auto-detect orientation ───────────────────────────────────────────────
+    rows, cols = data_array.shape
 
-# ── Resolve input files ───────────────────────────────────────────────────────
-
-def resolve_inputs(argv: list[str]) -> list[Path]:
-    if argv:
-        paths = [Path(p) for p in argv]
-        # If a single directory was given, glob it
-        if len(paths) == 1 and paths[0].is_dir():
-            found = sorted(paths[0].rglob("FILE____*.csv"))
-            if not found:
-                sys.exit(f"No FILE____*.csv files found in {paths[0]}")
-            return found
-        # Otherwise treat each argument as a file
-        missing = [p for p in paths if not p.exists()]
-        if missing:
-            sys.exit(f"File(s) not found: {missing}")
-        return paths
+    if 400 <= rows <= 600:
+        # Rows ≈ N_SAMPLES → rows are time-samples, columns are A-scans.
+        # Column 0 may be a Time_ns axis (small floats) — drop if so.
+        col0 = data_array[:, 0]
+        if np.abs(col0).max() < 500:
+            print("[load_csv] Dropping time/index column 0", flush=True)
+            data_array = np.ascontiguousarray(data_array[:, 1:])
+        amps = np.ascontiguousarray(data_array.T)   # (n_scans, 512)
+        del data_array
+    elif 400 <= cols <= 600:
+        col0 = data_array[:, 0]
+        if np.abs(col0).max() < rows + 2:
+            print("[load_csv] Dropping row-index column 0", flush=True)
+            amps = np.ascontiguousarray(data_array[:, 1:])
+            del data_array
+        else:
+            amps = data_array
+    elif rows > cols:
+        amps = np.ascontiguousarray(data_array.T)
+        del data_array
     else:
-        # Fall back to INPUT_PATH default
-        found = sorted(INPUT_PATH.rglob("FILE____*.csv"))
-        if not found:
-            sys.exit(f"No FILE____*.csv files found in {INPUT_PATH}")
-        return found
+        amps = data_array
+    gc.collect()
+
+    n_signals, n_samples = amps.shape
+    if n_signals == 0:
+        raise ValueError("No A-scan signals found in CSV")
+
+    # ── Pad / truncate to N_SAMPLES ───────────────────────────────────────────
+    if n_samples > N_SAMPLES:
+        amps = np.ascontiguousarray(amps[:, :N_SAMPLES])
+    elif n_samples < N_SAMPLES:
+        amps = np.pad(amps, ((0, 0), (0, N_SAMPLES - n_samples)), mode="constant")
+
+    # ── DC offset + Hann taper (in-place) ────────────────────────────────────
+    if np.abs(amps.mean()) > 1000:
+        amps -= DC_OFFSET
+    amps *= _TAPER[np.newaxis, :]
+
+    # ── Spatial averaging radius=2 ────────────────────────────────────────────
+    amps_avg = np.empty_like(amps)
+    for i in range(n_signals):
+        amps_avg[i] = amps[max(0, i - 2):i + 3].mean(axis=0)
+    del amps
+    gc.collect()
+
+    # ── Per-file z-score normalisation (in-place) ─────────────────────────────
+    std = amps_avg.std()
+    if std < 1e-8:
+        raise ValueError("Signal has no variation (constant values)")
+    amps_avg -= amps_avg.mean()
+    amps_avg /= std
+
+    print(f"[load_csv] done: {n_signals} signals normalised", flush=True)
+    return amps_avg   # (n_signals, 512)
 
 
 # ── Inference ─────────────────────────────────────────────────────────────────
 
-def run_inference(model: nn.Module, signals: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def run_inference(
+    model: nn.Module,
+    signals: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
     """
-    Run model on (n_signals, 512) array.
-    Returns:
-        preds  — int array of 0 (delaminated) or 1 (sound), shape (n,)
-        confs  — float array of confidence in predicted class, shape (n,)
-    """
-    tensor = torch.tensor(signals, dtype=torch.float32).unsqueeze(1)  # (n, 1, 512)
-    ds     = TensorDataset(tensor)
-    dl     = DataLoader(ds, batch_size=BATCH_SIZE, shuffle=False)
+    Run model on (n_signals, 512) array in batches of INFER_BATCH signals.
+    Never creates a tensor larger than INFER_BATCH × 512 × 4 bytes (~2 MB).
 
-    probs_list = []
+    Returns:
+        preds — int array, 1=sound / 0=delaminated, shape (n,)
+        confs — float array, confidence in predicted class, shape (n,)
+    """
+    probs_list: list[np.ndarray] = []
     model.eval()
     with torch.no_grad():
-        for (xb,) in dl:
-            logits = model(xb.to(DEVICE))
-            probs_list.append(logits.sigmoid().cpu().numpy())
+        for start in range(0, len(signals), INFER_BATCH):
+            batch_np = signals[start : start + INFER_BATCH]          # view
+            batch_t  = torch.tensor(batch_np, dtype=torch.float32).unsqueeze(1)
+            out      = model(batch_t.to(DEVICE)).sigmoid().cpu().numpy()
+            probs_list.append(out)
+            del batch_t, out
 
-    probs = np.concatenate(probs_list)            # P(sound)
-    preds = (probs >= THRESHOLD).astype(int)      # 1=sound, 0=delaminated
-    confs = np.where(preds == 1, probs, 1.0 - probs)   # confidence in predicted class
+    probs = np.concatenate(probs_list)
+    preds = (probs >= THRESHOLD).astype(int)
+    confs = np.where(preds == 1, probs, 1.0 - probs)
     return preds, confs
 
 
-# ── C-scan visualisation ──────────────────────────────────────────────────────
+# ── Results helper ────────────────────────────────────────────────────────────
 
-def save_cscan(file_preds: list[np.ndarray], file_confs: list[np.ndarray],
-               file_names: list[str], out_path: Path) -> None:
+def make_predictions_list(
+    file_names: list[str],
+    file_preds: list[np.ndarray],
+    file_confs: list[np.ndarray],
+) -> list[tuple[str, int, float]]:
     """
-    2-D C-scan heat map.
-      X axis = file index (scan line position along bridge)
-      Y axis = signal index within file
-      Green  = predicted sound  (intensity ∝ confidence)
-      Red    = predicted delaminated (intensity ∝ confidence)
+    Return predictions as a flat list of (filename, signal_index, confidence_score)
+    tuples, one entry per A-scan signal across all files.
+
+    confidence_score is the model's confidence in its predicted class:
+      - For sound signals (pred=1):       confidence = P(sound)
+      - For delaminated signals (pred=0): confidence = 1 - P(sound)
     """
-    n_files  = len(file_preds)
-    max_sigs = max(len(p) for p in file_preds)
-
-    # RGB image: background neutral grey
-    img = np.full((max_sigs, n_files, 3), 0.85, dtype=np.float32)
-
-    for col, (preds, confs) in enumerate(zip(file_preds, file_confs)):
-        for row, (pred, conf) in enumerate(zip(preds, confs)):
-            if pred == 1:          # sound → green channel
-                img[row, col] = [1 - conf * 0.9, 1.0, 1 - conf * 0.9]
-            else:                  # delaminated → red channel
-                img[row, col] = [1.0, 1 - conf * 0.9, 1 - conf * 0.9]
-
-    fig, ax = plt.subplots(figsize=(max(10, n_files * 0.35), 8))
-    ax.imshow(img, aspect="auto", origin="upper",
-              extent=[-0.5, n_files - 0.5, max_sigs - 0.5, -0.5])
-
-    ax.set_xlabel("Scan line (file index)", fontsize=11)
-    ax.set_ylabel("Signal index within scan line", fontsize=11)
-    ax.set_title("GPR Bridge Deck C-scan — Delamination Map", fontsize=13, fontweight="bold")
-
-    # Colour legend
-    from matplotlib.patches import Patch
-    ax.legend(
-        handles=[
-            Patch(facecolor=(0.1, 1.0, 0.1), label="Sound (confidence-weighted)"),
-            Patch(facecolor=(1.0, 0.1, 0.1), label="Delaminated (confidence-weighted)"),
-        ],
-        loc="upper right", fontsize=9,
-    )
-
-    # X-tick labels: show file names sparsely if many files
-    tick_step = max(1, n_files // 20)
-    ax.set_xticks(range(0, n_files, tick_step))
-    ax.set_xticklabels(
-        [Path(file_names[i]).name[:12] for i in range(0, n_files, tick_step)],
-        rotation=45, ha="right", fontsize=7,
-    )
-
-    plt.tight_layout()
-    fig.savefig(out_path, dpi=150)
-    plt.close(fig)
-    print(f"\n  C-scan saved → {out_path.resolve()}", flush=True)
+    results: list[tuple[str, int, float]] = []
+    for fname, preds, confs in zip(file_names, file_preds, file_confs):
+        for idx, (pred, conf) in enumerate(zip(preds, confs)):
+            results.append((fname, idx, float(conf)))
+    return results
 
 
-# ── ASTM D6087 condition map ──────────────────────────────────────────────────
+# ── C-scan rendering ──────────────────────────────────────────────────────────
 
-def generate_cscan_map(
+def render_cscan_b64(
     file_preds:  list[np.ndarray],
     file_confs:  list[np.ndarray],
     file_names:  list[str],
     bridge_name: str = "Bridge Deck",
-    ft_per_file: float = 1.0,     # longitudinal distance represented by one file (ft)
-    ft_per_sig:  float = 1.0,     # transverse offset represented by one signal (ft)
-    lane_offsets_ft: list[float] | None = None,  # Y positions of lane dividers
-    pier_file_indices: list[int]  | None = None,  # X positions (file indices) of piers
-    span_labels: list[tuple[int, int, str]] | None = None,  # [(start_fi, end_fi, label), ...]
-    out_stem:    str = "bridge_deck_condition",
-) -> None:
+    dpi:         int = 72,
+) -> str:
     """
-    Generate a professional ASTM D6087-style bridge deck condition map.
+    Render an ASTM D6087-style bridge deck condition map.
 
-    Parameters
-    ----------
-    file_preds        : per-file prediction arrays (1=sound, 0=delaminated)
-    file_confs        : per-file confidence arrays (confidence in predicted class)
-    file_names        : file path strings (used for axis labels)
-    bridge_name       : title string embedded in the header box
-    ft_per_file       : feet of bridge length per scan-line file
-    ft_per_sig        : feet of bridge width per signal within a file
-    lane_offsets_ft   : Y positions (ft) where lane-divider dashes are drawn
-    pier_file_indices : file indices where pier lines are drawn
-    span_labels       : list of (start_file_idx, end_file_idx, "Span N") tuples
-    out_stem          : output filename stem — saves <stem>.png and <stem>.pdf
+    Layout:
+      - 2D grid: X = file index (distance), Y = signal index (offset)
+      - RdYlGn_r colormap (red = delaminated, green = sound)
+      - gaussian_filter smoothing (sigma=2)
+      - Bridge outline rectangle
+      - Dashed lane markings at 20%, 40%, 60%, 80% of Y axis
+      - ASTM header box top-right
+      - Color legend / colorbar bottom
+      - Axis labels: Distance (ft) and Offset (ft)
+      - Figure size 24×10 inches, DPI=72 for web output
+
+    Grid is downsampled to MAX_GRID_ROWS × MAX_GRID_COLS before rendering
+    to cap memory usage regardless of input size.
+
+    Returns base64-encoded PNG string (no disk I/O).
     """
-    from matplotlib.patches import FancyBboxPatch, Rectangle, FancyArrowPatch
-    from matplotlib.lines import Line2D
-    import matplotlib.ticker as ticker
-    import matplotlib.patheffects as pe
-
     n_files  = len(file_preds)
     max_sigs = max(len(p) for p in file_preds)
 
-    # ── 1. Build delamination probability grid ────────────────────────────────
-    # Grid shape: (max_sigs, n_files)  — rows=offset, cols=distance
-    # Cell value: P(delaminated) = 1 - P(sound)
-    # Where pred==1 (sound):   P(delam) = 1 - confidence  (low)
-    # Where pred==0 (delam):   P(delam) = confidence       (high)
-    prob_grid = np.full((max_sigs, n_files), np.nan)
+    # ── Build P(delam) grid then downsample ───────────────────────────────────
+    prob_grid = np.full((max_sigs, n_files), np.nan, dtype=np.float32)
     for col, (preds, confs) in enumerate(zip(file_preds, file_confs)):
         for row, (pred, conf) in enumerate(zip(preds, confs)):
             prob_grid[row, col] = conf if pred == 0 else 1.0 - conf
 
-    # Fill NaN (padding for short files) with 0 before smoothing
+    if max_sigs > MAX_GRID_ROWS:
+        row_idx   = np.linspace(0, max_sigs - 1, MAX_GRID_ROWS, dtype=int)
+        prob_grid = prob_grid[row_idx, :]
+    if n_files > MAX_GRID_COLS:
+        col_idx   = np.linspace(0, n_files - 1, MAX_GRID_COLS, dtype=int)
+        prob_grid = prob_grid[:, col_idx]
+
+    grid_rows, grid_cols = prob_grid.shape
     nan_mask = np.isnan(prob_grid)
-    prob_grid_filled = np.where(nan_mask, 0.0, prob_grid)
+    filled   = np.where(nan_mask, 0.0, prob_grid)
+    smoothed = gaussian_filter(filled, sigma=2.0)
+    masked   = np.ma.array(smoothed, mask=nan_mask)
+    del filled, prob_grid
 
-    # Gaussian smoothing — creates natural blob-like delamination zones
-    smoothed = gaussian_filter(prob_grid_filled, sigma=(1.8, 1.8))
-    # Re-mask padding region so it shows as N/A
-    smoothed_masked = np.ma.array(smoothed, mask=nan_mask)
+    # ── Stats (use original counts for header text) ───────────────────────────
+    all_preds  = np.concatenate(file_preds)
+    total_sigs = len(all_preds)
+    n_delam    = int((all_preds == 0).sum())
+    pct_delam  = n_delam / total_sigs * 100 if total_sigs else 0.0
+    deck_area  = n_files * max_sigs
+    delam_area = deck_area * pct_delam / 100.0
+    del all_preds
 
-    # ── 2. Compute statistics ─────────────────────────────────────────────────
-    all_preds_flat = np.concatenate(file_preds)
-    total_sigs     = len(all_preds_flat)
-    n_delam        = int((all_preds_flat == 0).sum())
-    pct_delam_total = n_delam / total_sigs * 100 if total_sigs else 0.0
+    # ── Figure ────────────────────────────────────────────────────────────────
+    half  = grid_cols // 2
+    spans = [(0, half, "Span 1"), (half, grid_cols, "Span 2")]
 
-    # Deck area in ft² (approximate)
-    deck_length_ft = n_files  * ft_per_file
-    deck_width_ft  = max_sigs * ft_per_sig
-    deck_area_ft2  = deck_length_ft * deck_width_ft
-    delam_area_ft2 = deck_area_ft2 * pct_delam_total / 100.0
-
-    # Per-span stats
-    span_stats: list[dict] = []
-    if span_labels:
-        for (s_fi, e_fi, s_label) in span_labels:
-            s_fi = max(0, min(s_fi, n_files - 1))
-            e_fi = max(s_fi, min(e_fi, n_files))
-            span_preds = np.concatenate(file_preds[s_fi:e_fi]) if s_fi < e_fi else np.array([])
-            span_n     = len(span_preds)
-            span_del   = int((span_preds == 0).sum()) if span_n else 0
-            span_pct   = span_del / span_n * 100 if span_n else 0.0
-            span_area  = (e_fi - s_fi) * ft_per_file * deck_width_ft
-            span_stats.append({
-                "label":    s_label,
-                "start_fi": s_fi,
-                "end_fi":   e_fi,
-                "pct_delam": span_pct,
-                "area_ft2":  span_area,
-                "delam_ft2": span_area * span_pct / 100.0,
-            })
-
-    # ── 3. Figure layout ──────────────────────────────────────────────────────
     fig = plt.figure(figsize=(24, 10), facecolor="white")
+    ax  = fig.add_axes([0.06, 0.14, 0.70, 0.72])
 
-    # Main axes: leave room for header box on the right and legend below
-    ax = fig.add_axes([0.06, 0.14, 0.70, 0.72])   # [left, bottom, width, height]
-
-    # ── 4. Colour map — RdYlGn reversed (red=bad, green=good) ────────────────
     cmap = plt.cm.RdYlGn_r
-    # Clamp colours to match the three-zone scheme:
-    #   0.00–0.35 → green  (sound)
-    #   0.35–0.65 → yellow (uncertain)
-    #   0.65–1.00 → red    (delaminated)
     norm = mcolors.Normalize(vmin=0.0, vmax=1.0)
-
-    extent = [-0.5, n_files - 0.5, max_sigs - 0.5, -0.5]
-    im = ax.imshow(
-        smoothed_masked,
-        cmap=cmap,
-        norm=norm,
-        aspect="auto",
-        origin="upper",
-        extent=extent,
+    ax.imshow(
+        masked,
+        cmap=cmap, norm=norm,
+        aspect="auto", origin="upper",
+        extent=[-0.5, grid_cols - 0.5, grid_rows - 0.5, -0.5],
         interpolation="bilinear",
     )
 
-    # ── 5. Deck outline ───────────────────────────────────────────────────────
-    deck_rect = Rectangle(
-        (-0.5, -0.5), n_files, max_sigs,
+    # Bridge outline
+    ax.add_patch(Rectangle(
+        (-0.5, -0.5), grid_cols, grid_rows,
         linewidth=2.0, edgecolor="#1A1A1A", facecolor="none", zorder=5,
-    )
-    ax.add_patch(deck_rect)
+    ))
 
-    # ── 6. Lane markings — dashed horizontal lines ────────────────────────────
-    if lane_offsets_ft:
-        lane_sig_indices = [y / ft_per_sig for y in lane_offsets_ft]
-        for ly in lane_sig_indices:
-            ax.axhline(
-                ly, color="#333333", linewidth=1.1,
-                linestyle=(0, (8, 6)), alpha=0.75, zorder=4,
-            )
+    # Dashed lane markings at 20%, 40%, 60%, 80% of Y axis
+    for frac in (0.20, 0.40, 0.60, 0.80):
+        ax.axhline(
+            grid_rows * frac,
+            color="#333333", linewidth=1.1,
+            linestyle=(0, (8, 6)), alpha=0.75, zorder=4,
+        )
 
-    # ── 7. Pier markers — solid vertical lines with label ─────────────────────
-    if pier_file_indices:
-        for px in pier_file_indices:
-            ax.axvline(
-                px, color="#222266", linewidth=1.8,
-                linestyle="-", alpha=0.85, zorder=4,
-            )
-            ax.text(
-                px, -1.8, "PIER", ha="center", va="bottom",
-                fontsize=6.5, color="#222266", fontweight="bold",
-                clip_on=False,
-            )
+    # Pier at midpoint
+    ax.axvline(half, color="#222266", linewidth=1.8, linestyle="-", alpha=0.85, zorder=4)
+    ax.text(half, -1.8, "PIER", ha="center", va="bottom",
+            fontsize=6.5, color="#222266", fontweight="bold", clip_on=False)
 
-    # ── 8. Span labels — above the deck ───────────────────────────────────────
-    if span_labels:
-        for (s_fi, e_fi, s_label) in span_labels:
-            mid = (s_fi + e_fi) / 2.0
-            ax.text(
-                mid, -3.5, s_label, ha="center", va="bottom",
-                fontsize=9, color="#111111", fontweight="bold",
-                clip_on=False,
-            )
-            # Bracket lines
-            for xb in [s_fi, e_fi]:
-                ax.plot(
-                    [xb, xb], [-0.5, -2.8], color="#555555",
-                    linewidth=0.8, clip_on=False, zorder=3,
-                )
+    # Span bracket lines and labels
+    for s_fi, e_fi, s_label in spans:
+        mid = (s_fi + e_fi) / 2.0
+        ax.text(mid, -3.5, s_label, ha="center", va="bottom",
+                fontsize=9, color="#111111", fontweight="bold", clip_on=False)
+        for xb in [s_fi, e_fi]:
+            ax.plot([xb, xb], [-0.5, -2.8], color="#555555",
+                    linewidth=0.8, clip_on=False, zorder=3)
 
-    # ── 9. Axis labels and ticks ──────────────────────────────────────────────
-    ax.set_xlabel("Distance (feet)", fontsize=10, labelpad=6)
-    ax.set_ylabel("Offset (feet)",   fontsize=10, labelpad=6)
+    # Axis labels and ticks
+    ax.set_xlabel("Distance (ft)", fontsize=10, labelpad=6)
+    ax.set_ylabel("Offset (ft)",   fontsize=10, labelpad=6)
 
-    # Convert file-index ticks → feet
-    x_tick_fi  = np.linspace(0, n_files - 1, min(11, n_files), dtype=int)
-    ax.set_xticks(x_tick_fi)
-    ax.set_xticklabels([f"{v * ft_per_file:.0f}" for v in x_tick_fi], fontsize=8)
+    x_ticks = np.linspace(0, grid_cols - 1, min(11, grid_cols), dtype=int)
+    ax.set_xticks(x_ticks)
+    ax.set_xticklabels([str(v) for v in x_ticks], fontsize=8)
 
-    y_tick_si  = np.linspace(0, max_sigs - 1, min(9, max_sigs), dtype=int)
-    ax.set_yticks(y_tick_si)
-    ax.set_yticklabels([f"{v * ft_per_sig:.0f}" for v in y_tick_si], fontsize=8)
-
+    y_ticks = np.linspace(0, grid_rows - 1, min(9, grid_rows), dtype=int)
+    ax.set_yticks(y_ticks)
+    ax.set_yticklabels([str(v) for v in y_ticks], fontsize=8)
     ax.tick_params(direction="out", length=4, width=0.8)
-    for spine in ax.spines.values():
-        spine.set_linewidth(0.8)
 
-    # ── 10. Scale bar ─────────────────────────────────────────────────────────
-    sb_len_ft  = max(10, round(deck_length_ft * 0.15 / 10) * 10)   # ~15% of deck
-    sb_len_fi  = sb_len_ft / ft_per_file
-    sb_x0      = n_files * 0.04
-    sb_y       = max_sigs * 0.96
-    ax.annotate(
-        "", xy=(sb_x0 + sb_len_fi, sb_y), xytext=(sb_x0, sb_y),
-        arrowprops=dict(arrowstyle="<->", color="#111111", lw=1.2),
-        zorder=6,
-    )
-    ax.text(
-        sb_x0 + sb_len_fi / 2, sb_y + max_sigs * 0.025,
-        f"{sb_len_ft:.0f} ft", ha="center", va="bottom",
-        fontsize=7.5, color="#111111",
-    )
+    # Scale bar
+    sb_len = max(5, round(grid_cols * 0.15 / 5) * 5)
+    sb_x0  = grid_cols * 0.04
+    sb_y   = grid_rows * 0.96
+    ax.annotate("", xy=(sb_x0 + sb_len, sb_y), xytext=(sb_x0, sb_y),
+                arrowprops=dict(arrowstyle="<->", color="#111111", lw=1.2), zorder=6)
+    ax.text(sb_x0 + sb_len / 2, sb_y + grid_rows * 0.025, f"{sb_len} ft",
+            ha="center", va="bottom", fontsize=7.5)
 
-    # ── 11. North arrow ───────────────────────────────────────────────────────
-    na_x = n_files * 0.96
-    na_y = max_sigs * 0.88
-    ax.annotate(
-        "", xy=(na_x, na_y - max_sigs * 0.12), xytext=(na_x, na_y),
-        arrowprops=dict(arrowstyle="-|>", color="#111111", lw=1.4,
-                        mutation_scale=10),
-        zorder=6,
-    )
-    ax.text(na_x, na_y + max_sigs * 0.01, "N", ha="center", va="bottom",
-            fontsize=9, fontweight="bold", color="#111111")
+    # North arrow
+    na_x, na_y = grid_cols * 0.96, grid_rows * 0.88
+    ax.annotate("", xy=(na_x, na_y - grid_rows * 0.12), xytext=(na_x, na_y),
+                arrowprops=dict(arrowstyle="-|>", color="#111111", lw=1.4,
+                                mutation_scale=10), zorder=6)
+    ax.text(na_x, na_y + grid_rows * 0.01, "N", ha="center", va="bottom",
+            fontsize=9, fontweight="bold")
 
-    # ── 12. Header info box (top-right of figure) ─────────────────────────────
-    header_ax = fig.add_axes([0.775, 0.38, 0.205, 0.52])
-    header_ax.set_axis_off()
-
-    header_lines = [
-        ("BRIDGE DECK CONDITION ASSESSMENT", 11, "bold"),
-        ("GPR – CONCRETE DELAMINATION", 9,  "bold"),
-        ("", 6, "normal"),
-        (f"Structure: {bridge_name}", 8, "normal"),
-        (f"Survey Date: {datetime.date.today().strftime('%B %d, %Y')}", 8, "normal"),
-        (f"Standard: ASTM D6087", 8, "normal"),
-        ("", 5, "normal"),
-        (f"Deck Length:   {deck_length_ft:.0f} ft", 8, "normal"),
-        (f"Deck Width:    {deck_width_ft:.0f} ft", 8, "normal"),
-        (f"Total Area:    {deck_area_ft2:,.0f} ft²", 8, "normal"),
-        ("", 5, "normal"),
-        (f"Total Delam:   {pct_delam_total:.1f}%", 9, "bold"),
-        (f"Delam Area:    {delam_area_ft2:,.0f} ft²", 8, "normal"),
-    ]
-
-    header_ax.add_patch(FancyBboxPatch(
-        (0.0, 0.0), 1.0, 1.0,
-        boxstyle="round,pad=0.02",
+    # ── ASTM header box (top-right) ───────────────────────────────────────────
+    delam_color = "#C0392B" if pct_delam > 15 else ("#E67E22" if pct_delam > 5 else "#27AE60")
+    hdr = fig.add_axes([0.775, 0.38, 0.205, 0.52])
+    hdr.set_axis_off()
+    hdr.add_patch(FancyBboxPatch(
+        (0, 0), 1, 1, boxstyle="round,pad=0.02",
         linewidth=1.5, edgecolor="#333333", facecolor="#F5F5F5",
-        transform=header_ax.transAxes, zorder=0,
+        transform=hdr.transAxes,
     ))
-    header_ax.add_patch(Rectangle(
-        (0.0, 0.82), 1.0, 0.18,
-        transform=header_ax.transAxes,
-        facecolor="#1F3864", edgecolor="none", zorder=1,
+    hdr.add_patch(Rectangle(
+        (0, 0.82), 1, 0.18, transform=hdr.transAxes,
+        facecolor="#1F3864", edgecolor="none",
     ))
+    header_items = [
+        ("BRIDGE DECK CONDITION ASSESSMENT", 11, "bold",   0.95, "white"),
+        ("GPR – CONCRETE DELAMINATION",       9, "bold",   0.89, "white"),
+        (f"Structure:   {bridge_name}",        8, "normal", 0.79, "#111111"),
+        (f"Survey Date: {datetime.date.today().strftime('%B %d, %Y')}",
+                                               8, "normal", 0.72, "#111111"),
+        ("Standard:    ASTM D6087",            8, "normal", 0.65, "#111111"),
+        (f"Scan lines:  {n_files}",            8, "normal", 0.58, "#111111"),
+        (f"Signals:     {total_sigs:,}",       8, "normal", 0.51, "#111111"),
+        (f"Deck Area:   {deck_area:,.0f} ft²", 8, "normal", 0.44, "#111111"),
+        ("",                                   5, "normal", 0.37, "#111111"),
+        (f"Total Delam: {pct_delam:.1f}%",     9, "bold",   0.30, delam_color),
+        (f"Delam Area:  {delam_area:,.0f} ft²",8, "normal", 0.22, "#111111"),
+    ]
+    for text, fsize, fweight, y, color in header_items:
+        hdr.text(0.05, y, text, transform=hdr.transAxes,
+                 fontsize=fsize, fontweight=fweight, color=color, va="top")
 
-    y_pos = 0.95
-    for text, fsize, fweight in header_lines:
-        color = "white" if y_pos > 0.82 else "#111111"
-        header_ax.text(
-            0.05, y_pos, text,
-            transform=header_ax.transAxes,
-            fontsize=fsize, fontweight=fweight, color=color,
-            va="top", ha="left",
-        )
-        y_pos -= 0.06 if text == "" else 0.072
+    # ── Per-span summary (below header) ──────────────────────────────────────
+    orig_half  = n_files // 2
+    orig_spans = [(0, orig_half, "Span 1"), (orig_half, n_files, "Span 2")]
+    span_ax = fig.add_axes([0.775, 0.075, 0.205, 0.28])
+    span_ax.set_axis_off()
+    span_ax.add_patch(FancyBboxPatch(
+        (0, 0), 1, 1, boxstyle="round,pad=0.02",
+        linewidth=1.0, edgecolor="#AAAAAA", facecolor="#FAFAFA",
+        transform=span_ax.transAxes,
+    ))
+    span_ax.text(0.5, 0.95, "SPAN SUMMARY", transform=span_ax.transAxes,
+                 fontsize=8, fontweight="bold", color="#1F3864", ha="center", va="top")
+    for col_x, col_lbl in [(0.04, "Span"), (0.32, "Delam%"),
+                            (0.56, "Area ft²"), (0.78, "Delam ft²")]:
+        span_ax.text(col_x, 0.84, col_lbl, transform=span_ax.transAxes,
+                     fontsize=7, fontweight="bold", va="top")
+    row_y = 0.72
+    for s_fi, e_fi, s_label in orig_spans:
+        sp_preds = np.concatenate(file_preds[s_fi:e_fi]) if s_fi < e_fi else np.array([])
+        sp_n     = len(sp_preds)
+        sp_del   = int((sp_preds == 0).sum()) if sp_n else 0
+        sp_pct   = sp_del / sp_n * 100 if sp_n else 0.0
+        sp_area  = (e_fi - s_fi) * max_sigs
+        sp_da    = sp_area * sp_pct / 100.0
+        col      = "#C0392B" if sp_pct > 25 else ("#E67E22" if sp_pct > 10 else "#27AE60")
+        span_ax.text(0.04, row_y, s_label,           transform=span_ax.transAxes, fontsize=7, va="top")
+        span_ax.text(0.32, row_y, f"{sp_pct:.1f}%",  transform=span_ax.transAxes, fontsize=7, va="top",
+                     color=col, fontweight="bold")
+        span_ax.text(0.56, row_y, f"{sp_area:,.0f}", transform=span_ax.transAxes, fontsize=7, va="top")
+        span_ax.text(0.78, row_y, f"{sp_da:,.0f}",   transform=span_ax.transAxes, fontsize=7, va="top")
+        row_y -= 0.20
 
-    # ── 13. Per-span summary boxes (below header) ─────────────────────────────
-    if span_stats:
-        n_spans    = len(span_stats)
-        box_h      = 0.28 / n_spans
-        span_top   = 0.355
-        span_ax    = fig.add_axes([0.775, span_top - 0.28, 0.205, 0.30])
-        span_ax.set_axis_off()
-
-        span_ax.add_patch(FancyBboxPatch(
-            (0.0, 0.0), 1.0, 1.0,
-            boxstyle="round,pad=0.02",
-            linewidth=1.0, edgecolor="#AAAAAA", facecolor="#FAFAFA",
-            transform=span_ax.transAxes,
-        ))
-        span_ax.text(
-            0.5, 0.97, "SPAN SUMMARY",
-            transform=span_ax.transAxes,
-            fontsize=8, fontweight="bold", color="#1F3864",
-            ha="center", va="top",
-        )
-
-        col_headers = ["Span", "Delam%", "Area (ft²)", "Delam (ft²)"]
-        col_x       = [0.04, 0.30, 0.55, 0.78]
-        span_ax.text(0.04, 0.88, "Span",      transform=span_ax.transAxes, fontsize=7, fontweight="bold", va="top")
-        span_ax.text(0.30, 0.88, "Delam%",    transform=span_ax.transAxes, fontsize=7, fontweight="bold", va="top")
-        span_ax.text(0.55, 0.88, "Area ft²",  transform=span_ax.transAxes, fontsize=7, fontweight="bold", va="top")
-        span_ax.text(0.78, 0.88, "Delam ft²", transform=span_ax.transAxes, fontsize=7, fontweight="bold", va="top")
-
-        row_y = 0.80
-        for ss in span_stats:
-            pct   = ss["pct_delam"]
-            color = "#C0392B" if pct > 25 else ("#E67E22" if pct > 10 else "#27AE60")
-            span_ax.text(0.04, row_y, ss["label"],              transform=span_ax.transAxes, fontsize=7, va="top")
-            span_ax.text(0.30, row_y, f"{pct:.1f}%",            transform=span_ax.transAxes, fontsize=7, va="top", color=color, fontweight="bold")
-            span_ax.text(0.55, row_y, f"{ss['area_ft2']:,.0f}", transform=span_ax.transAxes, fontsize=7, va="top")
-            span_ax.text(0.78, row_y, f"{ss['delam_ft2']:,.0f}",transform=span_ax.transAxes, fontsize=7, va="top")
-            row_y -= 0.13
-
-    # ── 14. Colour legend bar at bottom ──────────────────────────────────────
+    # ── Colorbar ──────────────────────────────────────────────────────────────
     cbar_ax = fig.add_axes([0.06, 0.055, 0.70, 0.030])
-    sm      = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
-    cbar    = fig.colorbar(sm, cax=cbar_ax, orientation="horizontal")
+    cbar = fig.colorbar(sm, cax=cbar_ax, orientation="horizontal")
     cbar.set_label("Concrete Delamination Probability", fontsize=9, labelpad=4)
-    cbar.set_ticks([0.0, 0.175, 0.35, 0.50, 0.65, 0.825, 1.0])
-    cbar.set_ticklabels(["0%", "", "35%", "50%", "65%", "", "100%"], fontsize=7.5)
+    cbar.set_ticks([0.0, 0.35, 0.50, 0.65, 1.0])
+    cbar.set_ticklabels(["0%  (Sound)", "35%", "50%", "65%", "100%  (Delaminated)"],
+                        fontsize=7.5)
     cbar.outline.set_linewidth(0.8)
 
-    # Swatch labels below the colorbar
-    swatch_ax = fig.add_axes([0.06, 0.005, 0.70, 0.040])
-    swatch_ax.set_axis_off()
-    swatches = [
-        (0.02,  "#CCCCCC", "N/A"),
-        (0.18,  "#2ECC71", "Low  (Sound)"),
-        (0.44,  "#F39C12", "Medium (Uncertain)"),
-        (0.68,  "#E84040", "High  (Delaminated)"),
-    ]
-    for sx, sc, sl in swatches:
-        swatch_ax.add_patch(Rectangle(
-            (sx, 0.35), 0.035, 0.55,
-            transform=swatch_ax.transAxes,
-            facecolor=sc, edgecolor="#555555", linewidth=0.6,
-        ))
-        swatch_ax.text(
-            sx + 0.042, 0.62, sl,
-            transform=swatch_ax.transAxes,
-            fontsize=7.5, va="center",
-        )
+    # Color legend swatches
+    sw_ax = fig.add_axes([0.06, 0.005, 0.70, 0.040])
+    sw_ax.set_axis_off()
+    for sx, sc, sl in [
+        (0.02, "#CCCCCC", "N/A"),
+        (0.18, "#2ECC71", "Low  (Sound)"),
+        (0.44, "#F39C12", "Medium (Uncertain)"),
+        (0.68, "#E84040", "High  (Delaminated)"),
+    ]:
+        sw_ax.add_patch(Rectangle((sx, 0.35), 0.035, 0.55,
+                                   transform=sw_ax.transAxes,
+                                   facecolor=sc, edgecolor="#555555", linewidth=0.6))
+        sw_ax.text(sx + 0.042, 0.62, sl, transform=sw_ax.transAxes,
+                   fontsize=7.5, va="center")
 
-    # ── 15. Footnotes ─────────────────────────────────────────────────────────
-    footnotes = (
-        f"Survey performed in accordance with ASTM D6087 – Standard Test Method for Evaluating "
-        f"Asphalt-Covered Concrete Bridge Decks Using Ground Penetrating Radar.  |  "
-        f"Model threshold: P(delamination) > {1.0 - THRESHOLD:.2f}  |  "
-        f"Generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}  |  "
-        f"Total scan lines: {n_files}  |  Signals analysed: {total_sigs:,}"
-    )
+    # Footnote
     fig.text(
-        0.06, 0.002, footnotes,
+        0.06, 0.002,
+        f"Survey performed in accordance with ASTM D6087.  |  "
+        f"Threshold: P(delamination) > {1.0 - THRESHOLD:.2f}  |  "
+        f"Generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}",
         fontsize=6, color="#555555", va="bottom",
-        wrap=True,
     )
 
-    # ── 16. Save ──────────────────────────────────────────────────────────────
-    png_path = Path(f"{out_stem}.png")
-    pdf_path = Path(f"{out_stem}.pdf")
-
-    fig.savefig(png_path, dpi=300, bbox_inches="tight", facecolor="white")
-    fig.savefig(pdf_path, bbox_inches="tight", facecolor="white")
+    # ── Render to in-memory PNG (no disk I/O) ─────────────────────────────────
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight", facecolor="white")
     plt.close(fig)
-
-    print(f"\n  Condition map saved:", flush=True)
-    print(f"    PNG → {png_path.resolve()}", flush=True)
-    print(f"    PDF → {pdf_path.resolve()}", flush=True)
+    buf.seek(0)
+    return base64.b64encode(buf.read()).decode("utf-8")
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# ── CLI ───────────────────────────────────────────────────────────────────────
 
-def _render_astm_b64(file_preds, file_confs, file_names) -> str:
-    """
-    Render the ASTM D6087 condition map to an in-memory PNG and return
-    it as a base64 string suitable for embedding in JSON.
-    """
-    n_fi = len(file_preds)
-    half = n_fi // 2
-
-    # Temporarily redirect generate_cscan_map to write to a BytesIO buffer
-    # by patching savefig.  Simpler: build the figure here and grab bytes.
-    import io as _io
-
-    # Reuse generate_cscan_map but capture the PNG instead of writing to disk.
-    # We call it with a temp stem, then read & delete the file.
-    import tempfile, os
-    with tempfile.TemporaryDirectory() as td:
-        stem = os.path.join(td, "cscan")
-        generate_cscan_map(
-            file_preds        = file_preds,
-            file_confs        = file_confs,
-            file_names        = file_names,
-            bridge_name       = "Bridge Deck",
-            ft_per_file       = 1.0,
-            ft_per_sig        = 1.0,
-            lane_offsets_ft   = [len(file_preds[0]) * 0.33, len(file_preds[0]) * 0.66]
-                                  if file_preds else None,
-            pier_file_indices = [half],
-            span_labels       = [(0, half, "Span 1"), (half, n_fi, "Span 2")],
-            out_stem          = stem,
-        )
-        png_path = stem + ".png"
-        with open(png_path, "rb") as f:
-            return base64.b64encode(f.read()).decode("utf-8")
+def _resolve_inputs(argv: list[str]) -> list[Path]:
+    """Resolve CLI arguments to a list of CSV file paths."""
+    if not argv:
+        found = sorted(_DEFAULT_INPUT.rglob("FILE____*.csv"))
+        if not found:
+            sys.exit(f"No FILE____*.csv files found in {_DEFAULT_INPUT}")
+        return found
+    paths = [Path(p) for p in argv]
+    if len(paths) == 1 and paths[0].is_dir():
+        found = sorted(paths[0].rglob("FILE____*.csv"))
+        if not found:
+            sys.exit(f"No FILE____*.csv files found in {paths[0]}")
+        return found
+    missing = [p for p in paths if not p.exists()]
+    if missing:
+        sys.exit(f"File(s) not found: {missing}")
+    return paths
 
 
 def main() -> None:
-    # ── CLI argument parsing ──────────────────────────────────────────────────
     parser = argparse.ArgumentParser(description="Verus GPR Inference")
     parser.add_argument("--input",     help="Input folder or CSV file(s)")
     parser.add_argument("--model",     help="Path to model .pth file")
-    parser.add_argument("--threshold", type=float, default=None,
-                        help="Detection threshold (default 0.65)")
-    parser.add_argument("--output",    help="Write JSON results to this file path")
+    parser.add_argument("--threshold", type=float, default=None)
+    parser.add_argument("--output",    help="Write JSON results to this path")
+    parser.add_argument("--dpi",       type=int, default=72,
+                        help="C-scan PNG DPI (default 72 for web)")
     parser.add_argument("inputs",      nargs="*",
-                        help="Positional CSV files / folder (alternative to --input)")
+                        help="Positional CSV files / folder")
     args = parser.parse_args()
 
-    # Resolve model path and threshold overrides from CLI
-    model_path = Path(args.model) if args.model else MODEL_PATH
-    threshold  = args.threshold   if args.threshold is not None else THRESHOLD
-
-    # Resolve input files
-    if args.input:
-        csv_files = resolve_inputs([args.input])
-    elif args.inputs:
-        csv_files = resolve_inputs(args.inputs)
-    else:
-        csv_files = resolve_inputs([])
-
+    model_path = Path(args.model) if args.model else _DEFAULT_MODEL
     if not model_path.exists():
         sys.exit(f"Model not found: {model_path}")
 
+    global THRESHOLD
+    if args.threshold is not None:
+        THRESHOLD = args.threshold
+
+    csv_files = _resolve_inputs([args.input] if args.input else args.inputs)
+
     print("=" * 60, flush=True)
-    print("GPR Bridge Deck Inference", flush=True)
+    print("Verus GPR Bridge Deck Inference", flush=True)
     print(f"  Model      : {model_path}", flush=True)
     print(f"  Device     : {DEVICE}", flush=True)
-    print(f"  Threshold  : {threshold}", flush=True)
+    print(f"  Threshold  : {THRESHOLD}", flush=True)
     print(f"  Input files: {len(csv_files)}", flush=True)
     print("=" * 60, flush=True)
 
     model = CNN1D().to(DEVICE)
-    model.load_state_dict(torch.load(model_path, map_location=DEVICE))
+    model.load_state_dict(torch.load(model_path, map_location=DEVICE, weights_only=False))
     model.eval()
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"\n  Loaded model — {n_params:,} trainable parameters", flush=True)
 
-    # ── Per-file inference ────────────────────────────────────────────────────
-    print(f"\n  {'File':36} {'Signals':>8} {'Sound%':>8} {'Delam%':>8} {'Avg conf':>9}", flush=True)
-    print(f"  {'-'*73}", flush=True)
-
-    t0 = time.perf_counter()
-
+    t0         = time.perf_counter()
     file_preds: list[np.ndarray] = []
     file_confs: list[np.ndarray] = []
     file_names: list[str]        = []
     per_file_summary: list[dict] = []
     total_sigs = 0
+
+    print(f"\n  {'File':36} {'Signals':>8} {'Sound%':>8} {'Delam%':>8}", flush=True)
+    print(f"  {'-'*63}", flush=True)
 
     for fpath in csv_files:
         try:
@@ -691,15 +639,16 @@ def main() -> None:
             continue
 
         preds, confs = run_inference(model, signals)
+        del signals
+        gc.collect()
 
         n       = len(preds)
         n_snd   = int(preds.sum())
-        n_del   = n - n_snd
+        pct_del = (n - n_snd) / n * 100
         pct_snd = n_snd / n * 100
-        pct_del = n_del / n * 100
 
         tag = f"{fpath.parent.name}/{fpath.name}"
-        print(f"  {tag:36} {n:>8,} {pct_snd:>7.1f}% {pct_del:>7.1f}% {float(confs.mean()):>8.3f}", flush=True)
+        print(f"  {tag:36} {n:>8,} {pct_snd:>7.1f}% {pct_del:>7.1f}%", flush=True)
 
         file_preds.append(preds)
         file_confs.append(confs)
@@ -712,29 +661,20 @@ def main() -> None:
         total_sigs += n
 
     elapsed = time.perf_counter() - t0
-
-    # ── Aggregate stats ───────────────────────────────────────────────────────
-    all_preds = np.concatenate(file_preds)
-    tot_del   = int((all_preds == 0).sum())
-    tot_snd   = total_sigs - tot_del
-    delam_pct = round(tot_del / total_sigs * 100, 2) if total_sigs else 0.0
-    sound_pct = round(100.0 - delam_pct, 2)
+    all_preds   = np.concatenate(file_preds)
+    delam_pct   = round(int((all_preds == 0).sum()) / total_sigs * 100, 2)
+    sound_pct   = round(100.0 - delam_pct, 2)
 
     print(f"\n{'=' * 60}", flush=True)
-    print("OVERALL SUMMARY", flush=True)
-    print(f"{'=' * 60}", flush=True)
-    print(f"  Files analysed : {len(file_preds)}", flush=True)
-    print(f"  Total signals  : {total_sigs:,}", flush=True)
-    print(f"  Sound          : {tot_snd:,}  ({sound_pct:.1f}%)", flush=True)
-    print(f"  Delaminated    : {tot_del:,}  ({delam_pct:.1f}%)", flush=True)
-    print(f"  Time           : {elapsed:.2f} s", flush=True)
+    print(f"  Files: {len(file_preds)}  |  Signals: {total_sigs:,}  |  "
+          f"Sound: {sound_pct}%  |  Delam: {delam_pct}%  |  "
+          f"Time: {elapsed:.2f}s", flush=True)
 
-    # ── C-scan images ─────────────────────────────────────────────────────────
-    save_cscan(file_preds, file_confs, file_names, CSCAN_OUT)
+    # C-scan + predictions list
+    print("\n  Rendering C-scan …", flush=True)
+    cscan_b64    = render_cscan_b64(file_preds, file_confs, file_names, dpi=args.dpi)
+    predictions  = make_predictions_list(file_names, file_preds, file_confs)
 
-    cscan_b64 = _render_astm_b64(file_preds, file_confs, file_names)
-
-    # ── JSON output (frontend format) ─────────────────────────────────────────
     output = {
         "signals_analyzed":  total_sigs,
         "delamination_pct":  delam_pct,
@@ -742,15 +682,17 @@ def main() -> None:
         "analysis_time_sec": round(elapsed, 2),
         "cscan_image":       cscan_b64,
         "per_file_summary":  per_file_summary,
+        "predictions_count": len(predictions),
     }
 
     if args.output:
         out_path = Path(args.output)
         out_path.write_text(json.dumps(output, indent=2))
-        print(f"\n  Results JSON → {out_path.resolve()}", flush=True)
+        print(f"  Results JSON → {out_path.resolve()}", flush=True)
     else:
-        # Print JSON to stdout so callers can capture it
-        print("\n" + json.dumps(output, indent=2))
+        print("\n" + json.dumps({k: v for k, v in output.items()
+                                 if k != "cscan_image"}, indent=2))
+        print(f'  "cscan_image": "<{len(cscan_b64)} chars base64>"')
 
 
 if __name__ == "__main__":
