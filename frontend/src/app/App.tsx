@@ -5,6 +5,13 @@ import { Upload, Check, X, Loader2, Download, Circle, Radio, Waves, Thermometer,
 // fetch calls are relative (e.g. /health) and the Vite proxy forwards them to
 // http://localhost:10000.  In production the env var is not set, so it falls
 // back to the Render URL.
+const STATUS_MESSAGES = [
+  'Waking up server...',
+  'Loading AI model...',
+  'Processing GPR signals...',
+  'Generating C-scan map...',
+];
+
 const PYTHON_SERVER_URL =
   import.meta.env.VITE_API_URL !== undefined
     ? import.meta.env.VITE_API_URL          // '' in dev → relative URLs
@@ -104,6 +111,7 @@ export default function App() {
   const [isDragging, setIsDragging] = useState(false);
   const [serverStatus, setServerStatus] = useState<'online' | 'warming' | 'offline'>('offline');
   const [slowRequest, setSlowRequest] = useState(false);
+  const [statusMsgIndex, setStatusMsgIndex] = useState(0);
   const [notifyEmail, setNotifyEmail] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -133,6 +141,18 @@ export default function App() {
 
     checkHealth();
   }, []);
+
+  // Cycle status messages every 4 seconds while analyzing
+  useEffect(() => {
+    if (!isAnalyzing) {
+      setStatusMsgIndex(0);
+      return;
+    }
+    const interval = setInterval(() => {
+      setStatusMsgIndex(i => (i + 1) % STATUS_MESSAGES.length);
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [isAnalyzing]);
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -508,16 +528,30 @@ export default function App() {
                     {/* Loading state */}
                     {isAnalyzing && (
                       <div className="space-y-2">
+                        <style>{`
+                          @keyframes verus-bar {
+                            0%   { transform: translateX(-100%); }
+                            100% { transform: translateX(350%); }
+                          }
+                        `}</style>
                         <p className="text-xs text-center font-medium" style={{ color: '#6C757D' }}>
-                          Processing GPR signals...
+                          {STATUS_MESSAGES[statusMsgIndex]}
                         </p>
-                        {slowRequest && (
-                          <div className="p-3 border-2" style={{ borderColor: '#F39C12', background: '#FFF3CD' }}>
-                            <p className="text-xs text-center font-medium" style={{ color: '#856404' }}>
-                              Waking up server, this may take up to 90 seconds on first request...
-                            </p>
-                          </div>
-                        )}
+                        <div style={{
+                          width: '100%',
+                          height: '6px',
+                          borderRadius: '3px',
+                          background: '#DEE2E6',
+                          overflow: 'hidden',
+                        }}>
+                          <div style={{
+                            height: '100%',
+                            width: '40%',
+                            borderRadius: '3px',
+                            background: '#1a2f5a',
+                            animation: 'verus-bar 1.8s ease-in-out infinite',
+                          }} />
+                        </div>
                       </div>
                     )}
                   </div>
