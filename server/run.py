@@ -310,6 +310,35 @@ def make_predictions_list(
     return results
 
 
+# ── Optimal threshold selection ───────────────────────────────────────────────
+
+def _otsu_threshold(probs: np.ndarray, bins: int = 256) -> float:
+    """
+    Otsu's method: find the P(sound) threshold that maximises the
+    between-class variance of the probability distribution.
+
+    Works without ground-truth labels — it finds the natural valley
+    between the sound and delaminated populations in the P(sound)
+    histogram.  Clipped to [0.30, 0.85] to stay physically reasonable
+    if one class dominates and the histogram is nearly unimodal.
+    """
+    counts, edges = np.histogram(probs, bins=bins, range=(0.0, 1.0))
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    total = float(counts.sum())
+    if total == 0:
+        return 0.5
+
+    w0  = np.cumsum(counts) / total                           # weight ≤ t
+    mu0 = np.cumsum(centers * counts) / np.maximum(np.cumsum(counts), 1)
+    mu_all = float(np.sum(centers * counts) / total)
+    w1  = 1.0 - w0
+    mu1 = np.where(w1 > 0, (mu_all - w0 * mu0) / w1, mu_all)
+
+    between_var = w0 * w1 * (mu0 - mu1) ** 2
+    t = float(centers[np.argmax(between_var)])
+    return float(np.clip(t, 0.30, 0.85))
+
+
 # ── C-scan rendering ──────────────────────────────────────────────────────────
 
 def render_cscan_b64(
@@ -366,20 +395,36 @@ def render_cscan_b64(
 
     grid_lat, grid_long = prob_grid.shape   # (lateral rows, longitudinal cols)
 
+    # ── Stats + optimal threshold ─────────────────────────────────────────────
+    all_preds  = np.concatenate(file_preds)
+    all_confs  = np.concatenate(file_confs)
+    total_sigs = len(all_preds)
+
+    # Reconstruct raw P(sound) from (pred, conf) pairs across all files, then
+    # find the Otsu-optimal threshold for THIS dataset.  This adapts to each
+    # bridge — noise level, rebar depth, pavement overlay thickness all shift
+    # the bimodal P(sound) distribution, and a fixed threshold would be wrong.
+    all_psound = np.where(all_preds == 1, all_confs, 1.0 - all_confs)
+    T = _otsu_threshold(all_psound)
+    del all_psound, all_confs
+
+    n_delam   = int((all_preds == 0).sum())
+    pct_delam = n_delam / total_sigs * 100 if total_sigs else 0.0
+    del all_preds
+
+    print(f"[render] Otsu threshold: {T:.4f}  (fixed THRESHOLD={THRESHOLD})",
+          flush=True)
+
     # ── Threshold-centred rescaling ───────────────────────────────────────────
-    # The model's decision boundary is THRESHOLD (0.65).  Signals classified as
-    # delaminated have P(sound) in [0, THRESHOLD), which without rescaling maps
-    # to yellow-green on the colormap — visually misleading when delam% is high.
+    # Pin the Otsu boundary to 0.5 (colormap midpoint) so that every signal
+    # the model labels delaminated always falls in the warm half (red/orange/
+    # yellow) and every sound signal in the cool half (green/cyan/blue),
+    # regardless of confidence magnitude.
     #
-    # Rescale so THRESHOLD → 0.5 (colormap midpoint):
-    #   P(sound) in [0,   T] → display in [0,   0.5]  (red / orange / yellow)
-    #   P(sound) in [T,   1] → display in [0.5, 1.0]  (green / cyan / blue)
-    #
-    # Result: every delaminated prediction always falls in the warm half of the
-    # scale regardless of confidence; every sound prediction in the cool half.
-    T        = THRESHOLD   # 0.65
+    #   P(sound) in [0, T] → display in [0.0, 0.5]
+    #   P(sound) in [T, 1] → display in [0.5, 1.0]
     nan_mask = np.isnan(prob_grid)
-    p        = np.where(nan_mask, T, prob_grid)   # fill NaN with midpoint
+    p        = np.where(nan_mask, T, prob_grid)   # fill NaN with boundary
     display  = np.where(
         p <= T,
         0.5 * p / T,                          # [0, T] → [0, 0.5]
@@ -387,13 +432,6 @@ def render_cscan_b64(
     )
     masked = np.ma.array(display, mask=nan_mask)
     del prob_grid, p, display
-
-    # ── Stats ─────────────────────────────────────────────────────────────────
-    all_preds  = np.concatenate(file_preds)
-    total_sigs = len(all_preds)
-    n_delam    = int((all_preds == 0).sum())
-    pct_delam  = n_delam / total_sigs * 100 if total_sigs else 0.0
-    del all_preds
 
     # ── Colormap: deep red → orange → yellow → green → cyan → blue → violet ───
     # Matches Sensoft/IRIS and FHWA LTBP spectral attenuation scale.
@@ -424,7 +462,7 @@ def render_cscan_b64(
     hdr = (
         f"Structure: {bridge_name}    Survey: {survey_date}\n"
         f"Standard: ASTM D6087    Scan lines: {n_files}\n"
-        f"Signals: {total_sigs}    Delamination: {pct_delam:.1f}%"
+        f"Signals: {total_sigs}    Threshold: {T:.3f} (Otsu)    Delamination: {pct_delam:.1f}%"
     )
     fig.text(0.07, 0.91, hdr,
              ha='left', va='top', fontsize=7, color='#333333',
