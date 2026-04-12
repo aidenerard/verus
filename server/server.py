@@ -79,8 +79,9 @@ def _resolve_model_path() -> Path:
 
 
 MODEL_PATH   = _resolve_model_path()
-MAX_FILE_MB  = 50    # per-file upload limit
-MAX_TOTAL_MB = 200   # total upload limit across all files
+MAX_FILE_MB  = 50    # per-file upload limit (~9.7 MB per SDNET file, well within)
+MAX_TOTAL_MB = 500   # total upload limit — files are processed one-at-a-time so
+                     # only per-file RAM matters, but cap total to prevent abuse
 
 
 # ── App + startup ─────────────────────────────────────────────────────────────
