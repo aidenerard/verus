@@ -11,7 +11,7 @@ import { Progress } from './components/ui/progress';
 const PYTHON_SERVER_URL =
   import.meta.env.VITE_API_URL !== undefined
     ? import.meta.env.VITE_API_URL          // '' in dev → relative URLs
-    : 'https://verus-0j5j.onrender.com';   // production fallback
+    : 'https://verus-server.onrender.com';  // production fallback
 
 type InspectionMethod = 'gpr' | 'impact-echo' | 'infrared' | 'sounding';
 
