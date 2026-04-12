@@ -12,7 +12,21 @@ Startup behaviour
 Endpoints
 ---------
   GET  /health    → liveness check
+  GET  /memory    → RAM usage via psutil
   POST /analyze   → multipart CSV upload → JSON + base64 C-scan PNG
+
+Memory budget (Render free tier = 512 MB RAM)
+---------------------------------------------
+  Python runtime + uvicorn + torch idle:  ~150 MB
+  Model weights (CNN1D, 86 k params):     ~  1 MB
+  One SDNET file loaded (16 383 × 512 × 4 bytes float32):  ~33 MB
+  Spatial averaging peak (amps + amps_avg simultaneously): ~66 MB
+  Inference batch (INFER_BATCH = 1 000 signals):           ~ 2 MB
+  C-scan grid downsampled to 500 × 100:                    ~  0.4 MB
+  C-scan PNG at 72 DPI (14 × 6 in):                        ~ 5 MB
+  ─────────────────────────────────────────────────────────────────
+  Peak total (processing one file at a time):              ~225 MB
+  Headroom to 512 MB limit:                                ~287 MB ✓
 """
 
 import gc
@@ -28,12 +42,12 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import psutil
 from scipy.signal import windows as sig_windows
 from scipy.ndimage import gaussian_filter
 
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
 
 import matplotlib
 matplotlib.use("Agg")
@@ -63,12 +77,16 @@ def _resolve_model_path() -> Path:
             return candidates[0]
     return Path("model.pth")
 
-MODEL_PATH = _resolve_model_path()
-THRESHOLD  = 0.65        # P(sound) < THRESHOLD → delaminated
-DC_OFFSET  = 32768
-N_SAMPLES  = 512
-BATCH_SIZE = 256
-DEVICE     = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+MODEL_PATH       = _resolve_model_path()
+THRESHOLD        = 0.65    # P(sound) < THRESHOLD → delaminated
+DC_OFFSET        = 32768
+N_SAMPLES        = 512
+INFER_BATCH      = 1000    # max signals per torch forward pass (~2 MB each)
+MAX_FILE_MB      = 50      # per-file upload limit
+MAX_TOTAL_MB     = 500     # total upload limit across all files
+MAX_GRID_ROWS    = 500     # C-scan grid rows (signal axis), downsampled if larger
+MAX_GRID_COLS    = 100     # C-scan grid cols (file axis), downsampled if larger
+DEVICE           = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 _TAPER       = np.ones(N_SAMPLES, dtype=np.float32)
 _TAPER[410:] = sig_windows.hann(204)[102:].astype(np.float32)
@@ -308,18 +326,24 @@ def run_inference(
     signals: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
+    Batch inference — never materialises more than INFER_BATCH signals as a
+    torch tensor at once (~2 MB per batch) to stay within Render's RAM limit.
+
     Returns:
         preds — int array, 1=sound / 0=delaminated, shape (n,)
         confs — float array, confidence in predicted class, shape (n,)
     """
-    tensor = torch.tensor(signals, dtype=torch.float32).unsqueeze(1)
-    dl     = DataLoader(TensorDataset(tensor), batch_size=BATCH_SIZE, shuffle=False)
-
+    n = len(signals)
     probs_list: list[np.ndarray] = []
     model.eval()
     with torch.no_grad():
-        for (xb,) in dl:
-            probs_list.append(model(xb.to(DEVICE)).sigmoid().cpu().numpy())
+        for start in range(0, n, INFER_BATCH):
+            # Slice → small tensor → forward → back to numpy → delete tensor
+            batch_np = signals[start : start + INFER_BATCH]          # view, not copy
+            batch_t  = torch.tensor(batch_np, dtype=torch.float32).unsqueeze(1)
+            out      = model(batch_t.to(DEVICE)).sigmoid().cpu().numpy()
+            probs_list.append(out)
+            del batch_t, out                                          # free immediately
 
     probs = np.concatenate(probs_list)
     preds = (probs >= THRESHOLD).astype(int)
@@ -342,18 +366,30 @@ def render_cscan(
     n_files  = len(file_preds)
     max_sigs = max(len(p) for p in file_preds)
 
-    # Build P(delam) grid
-    prob_grid = np.full((max_sigs, n_files), np.nan)
+    # Build full P(delam) grid then downsample to MAX_GRID_ROWS × MAX_GRID_COLS
+    # so the numpy array and matplotlib canvas stay small regardless of input size.
+    prob_grid = np.full((max_sigs, n_files), np.nan, dtype=np.float32)
     for col, (preds, confs) in enumerate(zip(file_preds, file_confs)):
         for row, (pred, conf) in enumerate(zip(preds, confs)):
             prob_grid[row, col] = conf if pred == 0 else 1.0 - conf
 
+    # Downsample rows (signal axis) if larger than MAX_GRID_ROWS
+    if max_sigs > MAX_GRID_ROWS:
+        row_idx   = np.linspace(0, max_sigs - 1, MAX_GRID_ROWS, dtype=int)
+        prob_grid = prob_grid[row_idx, :]
+    # Downsample cols (file axis) if larger than MAX_GRID_COLS
+    if n_files > MAX_GRID_COLS:
+        col_idx   = np.linspace(0, n_files - 1, MAX_GRID_COLS, dtype=int)
+        prob_grid = prob_grid[:, col_idx]
+
+    grid_rows, grid_cols = prob_grid.shape
     nan_mask = np.isnan(prob_grid)
     filled   = np.where(nan_mask, 0.0, prob_grid)
     smoothed = gaussian_filter(filled, sigma=(1.8, 1.8))
     masked   = np.ma.array(smoothed, mask=nan_mask)
+    del filled, prob_grid
 
-    # Stats
+    # Stats (use original un-downsampled counts for labels/header)
     all_preds  = np.concatenate(file_preds)
     total_sigs = len(all_preds)
     n_delam    = int((all_preds == 0).sum())
@@ -361,9 +397,9 @@ def render_cscan(
     deck_area  = n_files * max_sigs
     delam_area = deck_area * pct_delam / 100.0
 
-    # Span split at midpoint
-    half  = n_files // 2
-    spans = [(0, half, "Span 1"), (half, n_files, "Span 2")]
+    # Span split at midpoint (use grid_cols for visual, n_files for labels)
+    half  = grid_cols // 2
+    spans = [(0, half, "Span 1"), (half, grid_cols, "Span 2")]
 
     fig = plt.figure(figsize=(14, 6), facecolor="white")
     ax  = fig.add_axes([0.06, 0.14, 0.70, 0.72])
@@ -374,20 +410,20 @@ def render_cscan(
         masked,
         cmap=cmap, norm=norm,
         aspect="auto", origin="upper",
-        extent=[-0.5, n_files - 0.5, max_sigs - 0.5, -0.5],
+        extent=[-0.5, grid_cols - 0.5, grid_rows - 0.5, -0.5],
         interpolation="bilinear",
     )
 
     # Deck outline
     ax.add_patch(Rectangle(
-        (-0.5, -0.5), n_files, max_sigs,
+        (-0.5, -0.5), grid_cols, grid_rows,
         linewidth=2.0, edgecolor="#1A1A1A", facecolor="none", zorder=5,
     ))
 
     # Lane markings at 1/3 and 2/3 width
     for frac in (0.33, 0.66):
         ax.axhline(
-            max_sigs * frac,
+            grid_rows * frac,
             color="#333333", linewidth=1.1,
             linestyle=(0, (8, 6)), alpha=0.75, zorder=4,
         )
@@ -406,35 +442,35 @@ def render_cscan(
             ax.plot([xb, xb], [-0.5, -2.8], color="#555555",
                     linewidth=0.8, clip_on=False, zorder=3)
 
-    # Axis labels and ticks
+    # Axis labels and ticks (labels show original signal/file counts)
     ax.set_xlabel("Distance (feet)", fontsize=10, labelpad=6)
     ax.set_ylabel("Offset (feet)",   fontsize=10, labelpad=6)
 
-    x_ticks = np.linspace(0, n_files - 1, min(11, n_files), dtype=int)
+    x_ticks = np.linspace(0, grid_cols - 1, min(11, grid_cols), dtype=int)
     ax.set_xticks(x_ticks)
     ax.set_xticklabels([str(v) for v in x_ticks], fontsize=8)
 
-    y_ticks = np.linspace(0, max_sigs - 1, min(9, max_sigs), dtype=int)
+    y_ticks = np.linspace(0, grid_rows - 1, min(9, grid_rows), dtype=int)
     ax.set_yticks(y_ticks)
     ax.set_yticklabels([str(v) for v in y_ticks], fontsize=8)
 
     ax.tick_params(direction="out", length=4, width=0.8)
 
     # Scale bar (~15% of deck length)
-    sb_len = max(5, round(n_files * 0.15 / 5) * 5)
-    sb_x0  = n_files * 0.04
-    sb_y   = max_sigs * 0.96
+    sb_len = max(5, round(grid_cols * 0.15 / 5) * 5)
+    sb_x0  = grid_cols * 0.04
+    sb_y   = grid_rows * 0.96
     ax.annotate("", xy=(sb_x0 + sb_len, sb_y), xytext=(sb_x0, sb_y),
                 arrowprops=dict(arrowstyle="<->", color="#111111", lw=1.2), zorder=6)
-    ax.text(sb_x0 + sb_len / 2, sb_y + max_sigs * 0.025, f"{sb_len} ft",
+    ax.text(sb_x0 + sb_len / 2, sb_y + grid_rows * 0.025, f"{sb_len} ft",
             ha="center", va="bottom", fontsize=7.5)
 
     # North arrow
-    na_x, na_y = n_files * 0.96, max_sigs * 0.88
-    ax.annotate("", xy=(na_x, na_y - max_sigs * 0.12), xytext=(na_x, na_y),
+    na_x, na_y = grid_cols * 0.96, grid_rows * 0.88
+    ax.annotate("", xy=(na_x, na_y - grid_rows * 0.12), xytext=(na_x, na_y),
                 arrowprops=dict(arrowstyle="-|>", color="#111111", lw=1.4,
                                 mutation_scale=10), zorder=6)
-    ax.text(na_x, na_y + max_sigs * 0.01, "N", ha="center", va="bottom",
+    ax.text(na_x, na_y + grid_rows * 0.01, "N", ha="center", va="bottom",
             fontsize=9, fontweight="bold")
 
     # ── Header box (top-right) ────────────────────────────────────────────────
@@ -483,8 +519,11 @@ def render_cscan(
         span_ax.text(col_x, 0.84, col_lbl, transform=span_ax.transAxes,
                      fontsize=7, fontweight="bold", va="top")
 
+    # Span summary uses original file_preds (not downsampled grid indices)
+    orig_half   = n_files // 2
+    orig_spans  = [(0, orig_half, "Span 1"), (orig_half, n_files, "Span 2")]
     row_y = 0.72
-    for s_fi, e_fi, s_label in spans:
+    for s_fi, e_fi, s_label in orig_spans:
         sp_preds = np.concatenate(file_preds[s_fi:e_fi]) if s_fi < e_fi else np.array([])
         sp_n     = len(sp_preds)
         sp_del   = int((sp_preds == 0).sum()) if sp_n else 0
@@ -624,6 +663,17 @@ def health() -> dict:
     }
 
 
+@app.get("/memory")
+def memory() -> dict:
+    vm = psutil.virtual_memory()
+    return {
+        "ram_used_mb":   round(vm.used   / 1024 ** 2, 1),
+        "ram_total_mb":  round(vm.total  / 1024 ** 2, 1),
+        "ram_percent":   vm.percent,
+        "ram_free_mb":   round(vm.available / 1024 ** 2, 1),
+    }
+
+
 @app.post("/analyze")
 async def analyze(files: list[UploadFile] = File(...)) -> JSONResponse:
     print(f"[analyze] Received request: {len(files)} file(s)", flush=True)
@@ -636,19 +686,41 @@ async def analyze(files: list[UploadFile] = File(...)) -> JSONResponse:
     tmpdir = Path(tempfile.mkdtemp(prefix="verus_infer_"))
     try:
         t0 = time.perf_counter()
+        vm = psutil.virtual_memory()
+        print(f"[analyze] RAM at start: {vm.used//1024**2} MB used / "
+              f"{vm.total//1024**2} MB total ({vm.percent:.1f}%)", flush=True)
 
         file_preds: list[np.ndarray] = []
         file_confs: list[np.ndarray] = []
+        file_names: list[str]        = []
         per_file_summary: list[dict] = []
-        total_sigs = 0
+        total_sigs   = 0
+        total_bytes  = 0
 
         for i, upload in enumerate(files):
-            fname = upload.filename or "upload.csv"
+            fname = upload.filename or f"upload_{i}.csv"
             print(f"[analyze] File {i+1}/{len(files)}: {fname}", flush=True)
-            dest = tmpdir / fname
+
             content = await upload.read()
+            file_mb = len(content) / 1024 ** 2
+
+            # ── Per-file size guard ───────────────────────────────────────────
+            if file_mb > MAX_FILE_MB:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"{fname} is {file_mb:.1f} MB — limit is {MAX_FILE_MB} MB per file.",
+                )
+            total_bytes += len(content)
+            if total_bytes / 1024 ** 2 > MAX_TOTAL_MB:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"Total upload exceeds {MAX_TOTAL_MB} MB. "
+                           "Please upload one bridge at a time.",
+                )
+
+            dest = tmpdir / fname
             dest.write_bytes(content)
-            del content  # free upload bytes immediately
+            del content                                   # free upload bytes now
 
             try:
                 signals = load_csv(dest)
@@ -658,18 +730,23 @@ async def analyze(files: list[UploadFile] = File(...)) -> JSONResponse:
                     detail=f"Could not parse {fname}: {exc}",
                 )
 
-            print(f"[analyze]   → {signals.shape[0]} signals loaded, running inference …", flush=True)
+            print(f"[analyze]   → {signals.shape[0]} signals loaded, "
+                  f"running inference in batches of {INFER_BATCH} …", flush=True)
             preds, confs = run_inference(_model, signals)
-            del signals  # free signal array after inference
+            del signals                                   # free after inference
+            dest.unlink(missing_ok=True)                  # delete temp file now
             gc.collect()
 
             n         = len(preds)
             n_delam   = int((preds == 0).sum())
             delam_pct = round(n_delam / n * 100, 2) if n else 0.0
-            print(f"[analyze]   → done: {n} signals, {delam_pct}% delam", flush=True)
+            vm2 = psutil.virtual_memory()
+            print(f"[analyze]   → {n} signals, {delam_pct}% delam | "
+                  f"RAM: {vm2.used//1024**2} MB ({vm2.percent:.1f}%)", flush=True)
 
             file_preds.append(preds)
             file_confs.append(confs)
+            file_names.append(fname)
             per_file_summary.append({
                 "filename":  fname,
                 "signals":   n,
@@ -680,17 +757,16 @@ async def analyze(files: list[UploadFile] = File(...)) -> JSONResponse:
         # Aggregate stats
         all_preds       = np.concatenate(file_preds)
         n_del_total     = int((all_preds == 0).sum())
+        del all_preds
         delam_pct_total = round(n_del_total / total_sigs * 100, 2) if total_sigs else 0.0
         sound_pct_total = round(100.0 - delam_pct_total, 2)
 
         # Render C-scan PNG → base64
-        print(f"[analyze] Rendering C-scan for {len(file_preds)} files, "
-              f"{total_sigs} signals total …", flush=True)
+        print(f"[analyze] Rendering C-scan: {len(file_preds)} files, "
+              f"{total_sigs:,} signals (grid capped at "
+              f"{MAX_GRID_ROWS}×{MAX_GRID_COLS}) …", flush=True)
         try:
-            png_bytes = render_cscan(
-                file_preds, file_confs,
-                [f.filename or "" for f in files],
-            )
+            png_bytes = render_cscan(file_preds, file_confs, file_names)
             cscan_b64 = base64.b64encode(png_bytes).decode("utf-8")
             print(f"[analyze] C-scan rendered OK ({len(png_bytes)//1024} KB)", flush=True)
         except Exception as render_exc:
@@ -698,7 +774,6 @@ async def analyze(files: list[UploadFile] = File(...)) -> JSONResponse:
             cscan_b64 = ""
 
         elapsed = round(time.perf_counter() - t0, 3)
-
         return JSONResponse({
             "signals_analyzed":  total_sigs,
             "delamination_pct":  delam_pct_total,
