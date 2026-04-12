@@ -25,7 +25,6 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from scipy.signal import windows as sig_windows
 from scipy.ndimage import gaussian_filter
 
 import torch
@@ -38,16 +37,13 @@ import matplotlib.colors as mcolors
 from matplotlib.patches import FancyBboxPatch, Rectangle
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-THRESHOLD    = 0.65       # P(sound) < THRESHOLD → delaminated
-DC_OFFSET    = 32768
-N_SAMPLES    = 512
-INFER_BATCH  = 1000       # max signals per torch forward pass (~2 MB each)
-MAX_GRID_ROWS = 500       # C-scan grid rows, downsampled if larger
-MAX_GRID_COLS = 100       # C-scan grid cols, downsampled if larger
-DEVICE       = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-_TAPER       = np.ones(N_SAMPLES, dtype=np.float32)
-_TAPER[410:] = sig_windows.hann(204)[102:].astype(np.float32)
+THRESHOLD     = 0.65       # P(sound) < THRESHOLD → delaminated
+DC_OFFSET     = 32768
+N_SAMPLES     = 512
+INFER_BATCH   = 1000       # max signals per torch forward pass (~2 MB each)
+MAX_GRID_ROWS = 200        # C-scan Y axis (signals), downsampled if larger
+MAX_GRID_COLS = 500        # C-scan X axis (files),   downsampled if larger
+DEVICE        = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # CLI-only defaults (not used when imported as a module)
 _DEFAULT_MODEL = Path("models/model_v13.pth")
@@ -185,7 +181,7 @@ def load_csv(fpath: Path) -> np.ndarray:
       - Simple: rows of amplitude samples (one A-scan per row)
       - Transposed: columns are A-scans
 
-    Normalisation: subtract file mean, divide by file std.
+    Normalisation: per-signal z-score (each row gets its own mean/std).
     """
     delimiter, skiprows = _sniff_csv(fpath)
     print(f"[load_csv] delimiter={repr(delimiter)} skiprows={skiprows}", flush=True)
@@ -248,27 +244,18 @@ def load_csv(fpath: Path) -> np.ndarray:
     elif n_samples < N_SAMPLES:
         amps = np.pad(amps, ((0, 0), (0, N_SAMPLES - n_samples)), mode="constant")
 
-    # ── DC offset + Hann taper (in-place) ────────────────────────────────────
+    # ── DC offset correction (in-place) ──────────────────────────────────────
     if np.abs(amps.mean()) > 1000:
         amps -= DC_OFFSET
-    amps *= _TAPER[np.newaxis, :]
 
-    # ── Spatial averaging radius=2 ────────────────────────────────────────────
-    amps_avg = np.empty_like(amps)
-    for i in range(n_signals):
-        amps_avg[i] = amps[max(0, i - 2):i + 3].mean(axis=0)
-    del amps
-    gc.collect()
-
-    # ── Per-file z-score normalisation (in-place) ─────────────────────────────
-    std = amps_avg.std()
-    if std < 1e-8:
-        raise ValueError("Signal has no variation (constant values)")
-    amps_avg -= amps_avg.mean()
-    amps_avg /= std
+    # ── Per-signal z-score normalisation (each A-scan independently) ─────────
+    mean = amps.mean(axis=1, keepdims=True)
+    std  = amps.std(axis=1,  keepdims=True) + 1e-8
+    amps -= mean
+    amps /= std
 
     print(f"[load_csv] done: {n_signals} signals normalised", flush=True)
-    return amps_avg   # (n_signals, 512)
+    return amps   # (n_signals, 512)
 
 
 # ── Inference ─────────────────────────────────────────────────────────────────
@@ -387,7 +374,7 @@ def render_cscan_b64(
     half  = grid_cols // 2
     spans = [(0, half, "Span 1"), (half, grid_cols, "Span 2")]
 
-    fig = plt.figure(figsize=(24, 10), facecolor="white")
+    fig = plt.figure(figsize=(20, 8), facecolor="white")
     ax  = fig.add_axes([0.06, 0.14, 0.70, 0.72])
 
     cmap = plt.cm.RdYlGn_r
@@ -406,8 +393,8 @@ def render_cscan_b64(
         linewidth=2.0, edgecolor="#1A1A1A", facecolor="none", zorder=5,
     ))
 
-    # Dashed lane markings at 20%, 40%, 60%, 80% of Y axis
-    for frac in (0.20, 0.40, 0.60, 0.80):
+    # Dashed lane markings at 25%, 50%, 75% of Y axis
+    for frac in (0.25, 0.50, 0.75):
         ax.axhline(
             grid_rows * frac,
             color="#333333", linewidth=1.1,
