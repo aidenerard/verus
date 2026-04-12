@@ -1,0 +1,13 @@
+# Use this for LOCAL development only (Mac/Linux).
+# For Render deployment, use requirements.txt (has torch+cpu for smaller image).
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+python-multipart==0.0.7
+numpy==1.26.4
+pandas==2.1.4
+scipy==1.12.0
+matplotlib==3.8.2
+pillow==10.2.0
+psutil==5.9.8
+gdown==4.7.1
+torch==2.2.2
