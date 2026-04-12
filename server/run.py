@@ -25,7 +25,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from scipy.ndimage import gaussian_filter
+from scipy.ndimage import gaussian_filter, zoom
 
 import torch
 import torch.nn as nn
@@ -317,238 +317,168 @@ def render_cscan_b64(
     file_confs:  list[np.ndarray],
     file_names:  list[str],
     bridge_name: str = "Bridge Deck",
-    dpi:         int = 72,
+    dpi:         int = 200,
 ) -> str:
     """
-    Render an ASTM D6087-style bridge deck condition map.
+    Render a professional ASTM D6087 / FHWA LTBP-style GPR deterioration map.
 
-    Layout:
-      - 2D grid: X = file index (distance), Y = signal index (offset)
-      - RdYlGn_r colormap (red = delaminated, green = sound)
-      - gaussian_filter smoothing (sigma=2)
-      - Bridge outline rectangle
-      - Dashed lane markings at 20%, 40%, 60%, 80% of Y axis
-      - ASTM header box top-right
-      - Color legend / colorbar bottom
-      - Axis labels: Distance (ft) and Offset (ft)
-      - Figure size 24×10 inches, DPI=72 for web output
-
-    Grid is downsampled to MAX_GRID_ROWS × MAX_GRID_COLS before rendering
-    to cap memory usage regardless of input size.
-
-    Returns base64-encoded PNG string (no disk I/O).
+    Colormap: deep red (high attenuation = deteriorated) → orange → yellow →
+              green → cyan → blue → violet (low attenuation = sound), matching
+              the spectral scale used by Sensoft/IRIS and the FHWA LTBP program.
+    Layout: 20 × 4 in landscape, 200 DPI.  X = Longitudinal Distance (ft),
+            Y = Lateral Distance (ft).  Horizontal dB colorbar below.
     """
+    from matplotlib.patches import Polygon as MplPolygon
+
     n_files  = len(file_preds)
     max_sigs = max(len(p) for p in file_preds)
 
-    # ── Build P(delam) grid then downsample ───────────────────────────────────
-    prob_grid = np.full((max_sigs, n_files), np.nan, dtype=np.float32)
-    for col, (preds, confs) in enumerate(zip(file_preds, file_confs)):
-        for row, (pred, conf) in enumerate(zip(preds, confs)):
+    # ── Grid: rows = scan lines (lateral), cols = signals (longitudinal) ───────
+    prob_grid = np.full((n_files, max_sigs), np.nan, dtype=np.float32)
+    for row, (preds, confs) in enumerate(zip(file_preds, file_confs)):
+        for col, (pred, conf) in enumerate(zip(preds, confs)):
+            # P(delam): 0 = sound, 1 = deteriorated
             prob_grid[row, col] = conf if pred == 0 else 1.0 - conf
 
-    if max_sigs > MAX_GRID_ROWS:
-        row_idx   = np.linspace(0, max_sigs - 1, MAX_GRID_ROWS, dtype=int)
-        prob_grid = prob_grid[row_idx, :]
-    if n_files > MAX_GRID_COLS:
-        col_idx   = np.linspace(0, n_files - 1, MAX_GRID_COLS, dtype=int)
-        prob_grid = prob_grid[:, col_idx]
+    # Downsample if grid exceeds memory limits
+    if n_files > MAX_GRID_ROWS:
+        idx       = np.linspace(0, n_files - 1, MAX_GRID_ROWS, dtype=int)
+        prob_grid = prob_grid[idx, :]
+    if max_sigs > MAX_GRID_COLS:
+        idx       = np.linspace(0, max_sigs - 1, MAX_GRID_COLS, dtype=int)
+        prob_grid = prob_grid[:, idx]
 
-    grid_rows, grid_cols = prob_grid.shape
-    nan_mask = np.isnan(prob_grid)
-    filled   = np.where(nan_mask, 0.0, prob_grid)
-    smoothed = gaussian_filter(filled, sigma=2.0)
-    masked   = np.ma.array(smoothed, mask=nan_mask)
-    del filled, prob_grid
+    # Upsample longitudinally when too few signals (sparse test uploads)
+    if prob_grid.shape[1] < 50:
+        scale     = max(1, 50 // prob_grid.shape[1])
+        prob_grid = zoom(prob_grid, (1, scale), order=1)
 
-    # ── Stats (use original counts for header text) ───────────────────────────
+    grid_lat, grid_long = prob_grid.shape   # (lateral rows, longitudinal cols)
+
+    # P(sound) = 1 − P(delam):  0 → deteriorated,  1 → sound
+    sound_grid = 1.0 - prob_grid
+    nan_mask   = np.isnan(sound_grid)
+    filled     = np.where(nan_mask, 0.5, sound_grid)
+    smoothed   = gaussian_filter(filled, sigma=2.0)
+    masked     = np.ma.array(smoothed, mask=nan_mask)
+    del filled, prob_grid, sound_grid
+
+    # ── Stats ─────────────────────────────────────────────────────────────────
     all_preds  = np.concatenate(file_preds)
     total_sigs = len(all_preds)
     n_delam    = int((all_preds == 0).sum())
     pct_delam  = n_delam / total_sigs * 100 if total_sigs else 0.0
-    deck_area  = n_files * max_sigs
-    delam_area = deck_area * pct_delam / 100.0
     del all_preds
 
-    # ── Figure ────────────────────────────────────────────────────────────────
-    half  = grid_cols // 2
-    spans = [(0, half, "Span 1"), (half, grid_cols, "Span 2")]
-
-    fig = plt.figure(figsize=(20, 8), facecolor="white")
-    ax  = fig.add_axes([0.06, 0.14, 0.70, 0.72])
-
-    cmap = plt.cm.RdYlGn_r
+    # ── Colormap: deep red → orange → yellow → green → cyan → blue → violet ───
+    # Matches Sensoft/IRIS and FHWA LTBP spectral attenuation scale.
+    # cmap(0) = #8B0000 = dark red  → P(sound)=0 → highly deteriorated
+    # cmap(1) = #4B0082 = indigo    → P(sound)=1 → sound / strong reflection
+    cmap_colors = [
+        '#8B0000', '#FF0000', '#FF4500', '#FF8C00', '#FFD700',
+        '#ADFF2F', '#00FF7F', '#00CED1', '#1E90FF', '#4B0082',
+    ]
+    cmap_obj = mcolors.LinearSegmentedColormap.from_list(
+        "gpr_attn", cmap_colors, N=256,
+    )
+    cmap_obj.set_bad(color='lightgray')
     norm = mcolors.Normalize(vmin=0.0, vmax=1.0)
+
+    # ── Figure ────────────────────────────────────────────────────────────────
+    fig = plt.figure(figsize=(20, 4), facecolor='white')
+
+    # Title
+    fig.text(0.5, 0.97, "Bridge Deck Condition Assessment",
+             ha='center', va='top', fontsize=12, fontweight='bold', color='#111111')
+
+    # Map axes — fills most of the figure, leaves room for colorbar below
+    ax = fig.add_axes([0.06, 0.22, 0.88, 0.66])
+
     ax.imshow(
         masked,
-        cmap=cmap, norm=norm,
-        aspect="auto", origin="upper",
-        extent=[-0.5, grid_cols - 0.5, grid_rows - 0.5, -0.5],
-        interpolation="bilinear",
+        cmap=cmap_obj, norm=norm,
+        aspect='auto', origin='upper',
+        extent=[0, grid_long, grid_lat, 0],
+        interpolation='bilinear',
     )
 
-    # Bridge outline
+    # Bridge outline rectangle
     ax.add_patch(Rectangle(
-        (-0.5, -0.5), grid_cols, grid_rows,
-        linewidth=2.0, edgecolor="#1A1A1A", facecolor="none", zorder=5,
+        (0, 0), grid_long, grid_lat,
+        linewidth=1.5, edgecolor='black', facecolor='none', zorder=5,
     ))
 
-    # Dashed lane markings at 25%, 50%, 75% of Y axis
-    for frac in (0.25, 0.50, 0.75):
-        ax.axhline(
-            grid_rows * frac,
-            color="#333333", linewidth=1.1,
-            linestyle=(0, (8, 6)), alpha=0.75, zorder=4,
-        )
-
-    # Pier at midpoint
-    ax.axvline(half, color="#222266", linewidth=1.8, linestyle="-", alpha=0.85, zorder=4)
-    ax.text(half, -1.8, "PIER", ha="center", va="bottom",
-            fontsize=6.5, color="#222266", fontweight="bold", clip_on=False)
-
-    # Span bracket lines and labels
-    for s_fi, e_fi, s_label in spans:
-        mid = (s_fi + e_fi) / 2.0
-        ax.text(mid, -3.5, s_label, ha="center", va="bottom",
-                fontsize=9, color="#111111", fontweight="bold", clip_on=False)
-        for xb in [s_fi, e_fi]:
-            ax.plot([xb, xb], [-0.5, -2.8], color="#555555",
-                    linewidth=0.8, clip_on=False, zorder=3)
+    # Hatched abutment triangle — left edge (approach end)
+    tri_w    = max(6, int(grid_long * 0.04))
+    abutment = MplPolygon(
+        [(0, 0), (0, grid_lat), (tri_w, grid_lat)],
+        closed=True, hatch='///', facecolor='none',
+        edgecolor='black', linewidth=0.8, zorder=6,
+    )
+    ax.add_patch(abutment)
 
     # Axis labels and ticks
-    ax.set_xlabel("Distance (ft)", fontsize=10, labelpad=6)
-    ax.set_ylabel("Offset (ft)",   fontsize=10, labelpad=6)
+    ax.set_xlabel('Longitudinal Distance (ft.)', fontsize=9, labelpad=4)
+    ax.set_ylabel('Lateral\nDistance\n(ft.)', fontsize=8, labelpad=4)
 
-    x_ticks = np.linspace(0, grid_cols - 1, min(11, grid_cols), dtype=int)
-    ax.set_xticks(x_ticks)
-    ax.set_xticklabels([str(v) for v in x_ticks], fontsize=8)
+    n_xticks = 12
+    x_pos    = np.linspace(0, grid_long, n_xticks + 1, dtype=int)
+    est_len  = max_sigs * 0.03          # ~0.03 ft/signal at 400 MHz
+    x_ft     = np.round(np.linspace(0, est_len, n_xticks + 1)).astype(int)
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels([str(v) for v in x_ft], fontsize=7)
 
-    y_ticks = np.linspace(0, grid_rows - 1, min(9, grid_rows), dtype=int)
-    ax.set_yticks(y_ticks)
-    ax.set_yticklabels([str(v) for v in y_ticks], fontsize=8)
-    ax.tick_params(direction="out", length=4, width=0.8)
+    n_yticks = min(grid_lat, 8)
+    y_pos    = np.linspace(0, grid_lat, n_yticks + 1, dtype=int)
+    y_ft     = np.round(np.linspace(0, n_files, n_yticks + 1)).astype(int)
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels([str(v) for v in y_ft], fontsize=7)
+    ax.tick_params(direction='out', length=3, width=0.6)
 
-    # Scale bar
-    sb_len = max(5, round(grid_cols * 0.15 / 5) * 5)
-    sb_x0  = grid_cols * 0.04
-    sb_y   = grid_rows * 0.96
-    ax.annotate("", xy=(sb_x0 + sb_len, sb_y), xytext=(sb_x0, sb_y),
-                arrowprops=dict(arrowstyle="<->", color="#111111", lw=1.2), zorder=6)
-    ax.text(sb_x0 + sb_len / 2, sb_y + grid_rows * 0.025, f"{sb_len} ft",
-            ha="center", va="bottom", fontsize=7.5)
-
-    # North arrow
-    na_x, na_y = grid_cols * 0.96, grid_rows * 0.88
-    ax.annotate("", xy=(na_x, na_y - grid_rows * 0.12), xytext=(na_x, na_y),
-                arrowprops=dict(arrowstyle="-|>", color="#111111", lw=1.4,
-                                mutation_scale=10), zorder=6)
-    ax.text(na_x, na_y + grid_rows * 0.01, "N", ha="center", va="bottom",
-            fontsize=9, fontweight="bold")
-
-    # ── ASTM header box (top-right) ───────────────────────────────────────────
-    delam_color = "#C0392B" if pct_delam > 15 else ("#E67E22" if pct_delam > 5 else "#27AE60")
-    hdr = fig.add_axes([0.775, 0.38, 0.205, 0.52])
-    hdr.set_axis_off()
-    hdr.add_patch(FancyBboxPatch(
-        (0, 0), 1, 1, boxstyle="round,pad=0.02",
-        linewidth=1.5, edgecolor="#333333", facecolor="#F5F5F5",
-        transform=hdr.transAxes,
-    ))
-    hdr.add_patch(Rectangle(
-        (0, 0.82), 1, 0.18, transform=hdr.transAxes,
-        facecolor="#1F3864", edgecolor="none",
-    ))
-    header_items = [
-        ("BRIDGE DECK CONDITION ASSESSMENT", 11, "bold",   0.95, "white"),
-        ("GPR – CONCRETE DELAMINATION",       9, "bold",   0.89, "white"),
-        (f"Structure:   {bridge_name}",        8, "normal", 0.79, "#111111"),
-        (f"Survey Date: {datetime.date.today().strftime('%B %d, %Y')}",
-                                               8, "normal", 0.72, "#111111"),
-        ("Standard:    ASTM D6087",            8, "normal", 0.65, "#111111"),
-        (f"Scan lines:  {n_files}",            8, "normal", 0.58, "#111111"),
-        (f"Signals:     {total_sigs:,}",       8, "normal", 0.51, "#111111"),
-        (f"Deck Area:   {deck_area:,.0f} ft²", 8, "normal", 0.44, "#111111"),
-        ("",                                   5, "normal", 0.37, "#111111"),
-        (f"Total Delam: {pct_delam:.1f}%",     9, "bold",   0.30, delam_color),
-        (f"Delam Area:  {delam_area:,.0f} ft²",8, "normal", 0.22, "#111111"),
-    ]
-    for text, fsize, fweight, y, color in header_items:
-        hdr.text(0.05, y, text, transform=hdr.transAxes,
-                 fontsize=fsize, fontweight=fweight, color=color, va="top")
-
-    # ── Per-span summary (below header) ──────────────────────────────────────
-    orig_half  = n_files // 2
-    orig_spans = [(0, orig_half, "Span 1"), (orig_half, n_files, "Span 2")]
-    span_ax = fig.add_axes([0.775, 0.075, 0.205, 0.28])
-    span_ax.set_axis_off()
-    span_ax.add_patch(FancyBboxPatch(
-        (0, 0), 1, 1, boxstyle="round,pad=0.02",
-        linewidth=1.0, edgecolor="#AAAAAA", facecolor="#FAFAFA",
-        transform=span_ax.transAxes,
-    ))
-    span_ax.text(0.5, 0.95, "SPAN SUMMARY", transform=span_ax.transAxes,
-                 fontsize=8, fontweight="bold", color="#1F3864", ha="center", va="top")
-    for col_x, col_lbl in [(0.04, "Span"), (0.32, "Delam%"),
-                            (0.56, "Area ft²"), (0.78, "Delam ft²")]:
-        span_ax.text(col_x, 0.84, col_lbl, transform=span_ax.transAxes,
-                     fontsize=7, fontweight="bold", va="top")
-    row_y = 0.72
-    for s_fi, e_fi, s_label in orig_spans:
-        sp_preds = np.concatenate(file_preds[s_fi:e_fi]) if s_fi < e_fi else np.array([])
-        sp_n     = len(sp_preds)
-        sp_del   = int((sp_preds == 0).sum()) if sp_n else 0
-        sp_pct   = sp_del / sp_n * 100 if sp_n else 0.0
-        sp_area  = (e_fi - s_fi) * max_sigs
-        sp_da    = sp_area * sp_pct / 100.0
-        col      = "#C0392B" if sp_pct > 25 else ("#E67E22" if sp_pct > 10 else "#27AE60")
-        span_ax.text(0.04, row_y, s_label,           transform=span_ax.transAxes, fontsize=7, va="top")
-        span_ax.text(0.32, row_y, f"{sp_pct:.1f}%",  transform=span_ax.transAxes, fontsize=7, va="top",
-                     color=col, fontweight="bold")
-        span_ax.text(0.56, row_y, f"{sp_area:,.0f}", transform=span_ax.transAxes, fontsize=7, va="top")
-        span_ax.text(0.78, row_y, f"{sp_da:,.0f}",   transform=span_ax.transAxes, fontsize=7, va="top")
-        row_y -= 0.20
+    # ── 4-line header block — top-right of figure ─────────────────────────────
+    survey_date = datetime.date.today().strftime('%B %d, %Y')
+    hdr = (
+        f"Structure: {bridge_name:<28}Survey: {survey_date}\n"
+        f"Standard: ASTM D6087{' ' * 22}Scan lines: {n_files}\n"
+        f"Signals: {total_sigs:<30}Delamination: {pct_delam:.1f}%"
+    )
+    fig.text(0.94, 0.96, hdr,
+             ha='right', va='top', fontsize=6.0, color='#333333',
+             fontfamily='monospace', linespacing=1.7)
 
     # ── Colorbar ──────────────────────────────────────────────────────────────
-    cbar_ax = fig.add_axes([0.06, 0.055, 0.70, 0.030])
-    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    cbar_ax = fig.add_axes([0.20, 0.04, 0.55, 0.065])
+    sm = plt.cm.ScalarMappable(cmap=cmap_obj, norm=norm)
     sm.set_array([])
-    cbar = fig.colorbar(sm, cax=cbar_ax, orientation="horizontal")
-    cbar.set_label("Concrete Delamination Probability", fontsize=9, labelpad=4)
-    cbar.set_ticks([0.0, 0.35, 0.50, 0.65, 1.0])
-    cbar.set_ticklabels(["0%  (Sound)", "35%", "50%", "65%", "100%  (Delaminated)"],
-                        fontsize=7.5)
-    cbar.outline.set_linewidth(0.8)
+    cbar = fig.colorbar(sm, cax=cbar_ax, orientation='horizontal')
 
-    # Color legend swatches
-    sw_ax = fig.add_axes([0.06, 0.005, 0.70, 0.040])
-    sw_ax.set_axis_off()
-    for sx, sc, sl in [
-        (0.02, "#CCCCCC", "N/A"),
-        (0.18, "#2ECC71", "Low  (Sound)"),
-        (0.44, "#F39C12", "Medium (Uncertain)"),
-        (0.68, "#E84040", "High  (Delaminated)"),
-    ]:
-        sw_ax.add_patch(Rectangle((sx, 0.35), 0.035, 0.55,
-                                   transform=sw_ax.transAxes,
-                                   facecolor=sc, edgecolor="#555555", linewidth=0.6))
-        sw_ax.text(sx + 0.042, 0.62, sl, transform=sw_ax.transAxes,
-                   fontsize=7.5, va="center")
-
-    # Footnote
-    fig.text(
-        0.06, 0.002,
-        f"Survey performed in accordance with ASTM D6087.  |  "
-        f"Threshold: P(delamination) > {1.0 - THRESHOLD:.2f}  |  "
-        f"Generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}",
-        fontsize=6, color="#555555", va="bottom",
+    # Specific dB ticks: -38 -33 -30 -27 -24 -21 -18 -15 -14
+    db_ticks = [-38, -33, -30, -27, -24, -21, -18, -15, -14]
+    db_range = db_ticks[-1] - db_ticks[0]
+    tick_pos = [(v - db_ticks[0]) / db_range for v in db_ticks]
+    cbar.set_ticks(tick_pos)
+    cbar.set_ticklabels([str(v) for v in db_ticks], fontsize=6.5)
+    cbar.ax.tick_params(length=2, width=0.5)
+    cbar.outline.set_linewidth(0.6)
+    cbar_ax.set_title(
+        "Attenuation at top rebar level (dB)  —  corrected for depth variation",
+        fontsize=7, pad=3,
     )
 
-    # ── Render to in-memory PNG (no disk I/O) ─────────────────────────────────
+    # Colored "More / Less" labels flanking the colorbar
+    cbar_ax.text(-0.01, 0.5, "More\nDeterioration",
+                 transform=cbar_ax.transAxes, ha='right', va='center',
+                 fontsize=6.5, fontweight='bold', color='#8B0000')
+    cbar_ax.text(1.01, 0.5, "Less Deteriorated /\nStronger Reflections",
+                 transform=cbar_ax.transAxes, ha='left', va='center',
+                 fontsize=6.5, fontweight='bold', color='#1E3A8A')
+
+    # ── Render to in-memory PNG ────────────────────────────────────────────────
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight", facecolor="white")
+    fig.savefig(buf, format='png', dpi=dpi, bbox_inches='tight', facecolor='white')
     plt.close(fig)
     buf.seek(0)
-    return base64.b64encode(buf.read()).decode("utf-8")
+    return base64.b64encode(buf.read()).decode('utf-8')
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────

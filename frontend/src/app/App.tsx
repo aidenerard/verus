@@ -1,8 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Upload, Check, X, ChevronDown, Loader2, Download, FileText, Circle, Radio, Waves, Thermometer, Speaker } from 'lucide-react';
-import { Button } from './components/ui/button';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './components/ui/collapsible';
-import { Progress } from './components/ui/progress';
+import { Upload, Check, X, Loader2, Download, Circle, Radio, Waves, Thermometer, Speaker } from 'lucide-react';
 
 // In dev mode (npm run dev), VITE_API_URL is set to '' in .env.local so all
 // fetch calls are relative (e.g. /health) and the Vite proxy forwards them to
@@ -105,7 +102,6 @@ export default function App() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [isDragging, setIsDragging] = useState(false);
-  const [reportOpen, setReportOpen] = useState(false);
   const [serverStatus, setServerStatus] = useState<'online' | 'warming' | 'offline'>('offline');
   const [slowRequest, setSlowRequest] = useState(false);
   const [notifyEmail, setNotifyEmail] = useState('');
@@ -247,7 +243,6 @@ export default function App() {
       console.log('Analysis result:', result);
 
       setAnalysisResult(result);
-      setReportOpen(true);
       setIsAnalyzing(false);
       setSlowRequest(false);
       setServerStatus('online'); // Server is clearly online after successful response
@@ -358,325 +353,287 @@ export default function App() {
         {/* Main Panel */}
         <div className="flex-1 p-8">
           {activeMethod === 'gpr' ? (
-            <div className="grid grid-cols-12 gap-8">
-              {/* Left Panel - Upload & Settings */}
-              <div className="col-span-4 space-y-6">
-            {/* Upload Section */}
-            <div className="border-2" style={{ borderColor: '#DEE2E6', background: '#FFFFFF' }}>
-              <div className="px-6 py-4 border-b-2" style={{ borderColor: '#DEE2E6', background: '#F8F9FA' }}>
-                <h2 className="text-sm font-bold uppercase tracking-wide" style={{ color: '#2C3E50' }}>
-                  Data Upload
-                </h2>
-              </div>
-              <div className="p-6">
-                <div
-                  className={`border-2 border-dashed cursor-pointer transition-all ${
-                    isDragging ? 'border-[#0D47A1] bg-[#E3F2FD]' : 'border-[#DEE2E6] bg-[#F8F9FA]'
-                  }`}
-                  style={{ padding: '32px' }}
-                  onDragOver={handleDragOver}
-                  onDragLeave={handleDragLeave}
-                  onDrop={handleDrop}
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  <div className="flex flex-col items-center gap-3">
-                    <Upload className="w-10 h-10" style={{ color: '#6C757D' }} />
-                    <div className="text-center">
-                      <p className="text-sm font-semibold" style={{ color: '#2C3E50' }}>
-                        Upload GPR Signal Files
-                      </p>
-                      <p className="text-xs mt-1" style={{ color: '#6C757D' }}>
-                        Select multiple CSV files • Drag & drop supported
-                      </p>
-                      <p className="text-xs mt-1" style={{ color: '#9CA3AF', fontStyle: 'italic' }}>
-                        (Open folder and select all CSV files, not the folder itself)
-                      </p>
-                    </div>
-                  </div>
-                </div>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  multiple
-                  accept=".csv"
-                  onChange={handleFileSelect}
-                  className="hidden"
-                />
+            <div className="w-full">
+              {!analysisResult ? (
+                /* ── Pre-analysis: centered compact stack ── */
+                <div className="flex justify-center">
+                  <div className="w-full space-y-6" style={{ maxWidth: 600 }}>
 
-                {/* File List */}
-                {files.length > 0 && (
-                  <div className="mt-4 space-y-2">
-                    {files.map((file) => (
-                      <div
-                        key={file.name}
-                        className="flex items-center justify-between p-3 border"
-                        style={{ borderColor: '#DEE2E6', background: '#FFFFFF' }}
-                      >
-                        <div className="flex items-center gap-3 flex-1 min-w-0">
-                          <Check className="w-4 h-4 flex-shrink-0" style={{ color: '#2ECC71' }} />
-                          <div className="min-w-0 flex-1">
-                            <p className="text-sm font-medium truncate" style={{ color: '#2C3E50' }}>
-                              {file.name}
-                            </p>
-                            <p className="text-xs" style={{ color: '#6C757D' }}>
-                              {(file.file.size / 1024).toFixed(1)} KB
-                            </p>
+                    {/* Upload Section */}
+                    <div className="border-2" style={{ borderColor: '#DEE2E6', background: '#FFFFFF' }}>
+                      <div className="px-6 py-4 border-b-2" style={{ borderColor: '#DEE2E6', background: '#F8F9FA' }}>
+                        <h2 className="text-sm font-bold uppercase tracking-wide" style={{ color: '#2C3E50' }}>
+                          Data Upload
+                        </h2>
+                      </div>
+                      <div className="p-6">
+                        <div
+                          className={`border-2 border-dashed cursor-pointer transition-all ${
+                            isDragging ? 'border-[#0D47A1] bg-[#E3F2FD]' : 'border-[#DEE2E6] bg-[#F8F9FA]'
+                          }`}
+                          style={{ padding: '32px' }}
+                          onDragOver={handleDragOver}
+                          onDragLeave={handleDragLeave}
+                          onDrop={handleDrop}
+                          onClick={() => fileInputRef.current?.click()}
+                        >
+                          <div className="flex flex-col items-center gap-3">
+                            <Upload className="w-10 h-10" style={{ color: '#6C757D' }} />
+                            <div className="text-center">
+                              <p className="text-sm font-semibold" style={{ color: '#2C3E50' }}>
+                                Upload GPR Signal Files
+                              </p>
+                              <p className="text-xs mt-1" style={{ color: '#6C757D' }}>
+                                Select multiple CSV files • Drag & drop supported
+                              </p>
+                              <p className="text-xs mt-1" style={{ color: '#9CA3AF', fontStyle: 'italic' }}>
+                                (Open folder and select all CSV files, not the folder itself)
+                              </p>
+                            </div>
                           </div>
                         </div>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            removeFile(file.name);
-                          }}
-                          className="p-1 hover:bg-gray-100"
-                        >
-                          <X className="w-4 h-4" style={{ color: '#6C757D' }} />
-                        </button>
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          multiple
+                          accept=".csv"
+                          onChange={handleFileSelect}
+                          className="hidden"
+                        />
+
+                        {/* File List */}
+                        {files.length > 0 && (
+                          <div className="mt-4 space-y-2">
+                            {files.map((file) => (
+                              <div
+                                key={file.name}
+                                className="flex items-center justify-between p-3 border"
+                                style={{ borderColor: '#DEE2E6', background: '#FFFFFF' }}
+                              >
+                                <div className="flex items-center gap-3 flex-1 min-w-0">
+                                  <Check className="w-4 h-4 flex-shrink-0" style={{ color: '#2ECC71' }} />
+                                  <div className="min-w-0 flex-1">
+                                    <p className="text-sm font-medium truncate" style={{ color: '#2C3E50' }}>
+                                      {file.name}
+                                    </p>
+                                    <p className="text-xs" style={{ color: '#6C757D' }}>
+                                      {(file.file.size / 1024).toFixed(1)} KB
+                                    </p>
+                                  </div>
+                                </div>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    removeFile(file.name);
+                                  }}
+                                  className="p-1 hover:bg-gray-100"
+                                >
+                                  <X className="w-4 h-4" style={{ color: '#6C757D' }} />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Analysis Configuration */}
-            <div className="border-2" style={{ borderColor: '#DEE2E6', background: '#FFFFFF' }}>
-              <div className="px-6 py-4 border-b-2" style={{ borderColor: '#DEE2E6', background: '#F8F9FA' }}>
-                <h2 className="text-sm font-bold uppercase tracking-wide" style={{ color: '#2C3E50' }}>
-                  Analysis Configuration
-                </h2>
-              </div>
-              <div className="p-6 space-y-4">
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6C757D' }}>
-                      AI Model Version
-                    </label>
-                    <div className="flex items-center gap-2">
-                      <Circle
-                        className="w-2 h-2"
-                        fill={serverStatus === 'online' ? '#2ECC71' : serverStatus === 'warming' ? '#F39C12' : '#E74C3C'}
-                        stroke="none"
-                      />
-                      <span className="text-xs" style={{ color: '#6C757D' }}>
-                        {serverStatus === 'online' ? 'Online' : serverStatus === 'warming' ? 'Server warming up' : 'Offline'}
-                      </span>
                     </div>
-                  </div>
-                  <div className="px-4 py-3 border-2" style={{ borderColor: '#DEE2E6', background: '#F8F9FA' }}>
-                    <p className="text-sm font-medium" style={{ color: '#2C3E50' }}>
-                      model_v13.pth
-                    </p>
-                  </div>
-                  <p className="text-xs mt-2" style={{ color: '#6C757D' }}>
-                    Latest model automatically selected
-                  </p>
-                </div>
 
-                <div className="pt-4 border-t" style={{ borderColor: '#DEE2E6' }}>
-                  <div className="flex justify-between text-xs mb-1">
-                    <span style={{ color: '#6C757D' }}>Detection Threshold:</span>
-                    <span className="font-bold" style={{ color: '#2C3E50' }}>0.65 (Optimal)</span>
-                  </div>
-                  <div className="flex justify-between text-xs">
-                    <span style={{ color: '#6C757D' }}>Analysis Standard:</span>
-                    <span className="font-bold" style={{ color: '#2C3E50' }}>ASTM D6087</span>
-                  </div>
-                </div>
-              </div>
-            </div>
+                    {/* Analysis Configuration */}
+                    <div className="border-2" style={{ borderColor: '#DEE2E6', background: '#FFFFFF' }}>
+                      <div className="px-6 py-4 border-b-2" style={{ borderColor: '#DEE2E6', background: '#F8F9FA' }}>
+                        <h2 className="text-sm font-bold uppercase tracking-wide" style={{ color: '#2C3E50' }}>
+                          Analysis Configuration
+                        </h2>
+                      </div>
+                      <div className="p-6 space-y-4">
+                        <div>
+                          <div className="flex items-center justify-between mb-2">
+                            <label className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6C757D' }}>
+                              AI Model Version
+                            </label>
+                            <div className="flex items-center gap-2">
+                              <Circle
+                                className="w-2 h-2"
+                                fill={serverStatus === 'online' ? '#2ECC71' : serverStatus === 'warming' ? '#F39C12' : '#E74C3C'}
+                                stroke="none"
+                              />
+                              <span className="text-xs" style={{ color: '#6C757D' }}>
+                                {serverStatus === 'online' ? 'Online' : serverStatus === 'warming' ? 'Server warming up' : 'Offline'}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="px-4 py-3 border-2" style={{ borderColor: '#DEE2E6', background: '#F8F9FA' }}>
+                            <p className="text-sm font-medium" style={{ color: '#2C3E50' }}>
+                              model_v13.pth
+                            </p>
+                          </div>
+                          <p className="text-xs mt-2" style={{ color: '#6C757D' }}>
+                            Latest model automatically selected
+                          </p>
+                        </div>
 
-            {/* Run Analysis Button */}
-            <button
-              onClick={handleAnalyze}
-              disabled={files.length === 0 || isAnalyzing}
-              className="w-full py-4 text-sm font-bold uppercase tracking-wide transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-              style={{
-                background: files.length === 0 || isAnalyzing ? '#DEE2E6' : '#0D47A1',
-                color: files.length === 0 || isAnalyzing ? '#6C757D' : '#FFFFFF',
-                border: files.length === 0 || isAnalyzing ? '2px solid #DEE2E6' : '2px solid #0D47A1',
-              }}
-            >
-              {isAnalyzing ? (
-                <div className="flex items-center justify-center gap-2">
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  <span>Analyzing {files.length} {files.length === 1 ? 'file' : 'files'}...</span>
-                </div>
-              ) : (
-                'Run Analysis'
-              )}
-            </button>
+                        <div className="pt-4 border-t" style={{ borderColor: '#DEE2E6' }}>
+                          <div className="flex justify-between text-xs mb-1">
+                            <span style={{ color: '#6C757D' }}>Detection Threshold:</span>
+                            <span className="font-bold" style={{ color: '#2C3E50' }}>0.65 (Optimal)</span>
+                          </div>
+                          <div className="flex justify-between text-xs">
+                            <span style={{ color: '#6C757D' }}>Analysis Standard:</span>
+                            <span className="font-bold" style={{ color: '#2C3E50' }}>ASTM D6087</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
 
-            {/* Loading state with slow request warning */}
-            {isAnalyzing && (
-              <div className="space-y-2">
-                <p className="text-xs text-center font-medium" style={{ color: '#6C757D' }}>
-                  Processing GPR signals...
-                </p>
-                {slowRequest && (
-                  <div className="p-3 border-2" style={{ borderColor: '#F39C12', background: '#FFF3CD' }}>
-                    <p className="text-xs text-center font-medium" style={{ color: '#856404' }}>
-                      Waking up server, this may take up to 90 seconds on first request...
-                    </p>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Right Panel - Results */}
-          <div className="col-span-8">
-            {!analysisResult ? (
-              <div className="h-full min-h-[600px] flex items-center justify-center border-2"
-                   style={{ borderColor: '#DEE2E6', background: '#F8F9FA' }}>
-                <div className="text-center p-12">
-                  <FileText className="w-16 h-16 mx-auto mb-4" style={{ color: '#ADB5BD' }} />
-                  <h3 className="text-lg font-bold mb-2" style={{ color: '#2C3E50' }}>
-                    Ready for Analysis
-                  </h3>
-                  <p className="text-sm" style={{ color: '#6C757D' }}>
-                    Upload GPR signal files and run analysis to generate C-scan report
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-6">
-                {/* C-Scan Map Display */}
-                <div className="border-2" style={{ borderColor: '#DEE2E6', background: '#FFFFFF' }}>
-                  <div className="px-6 py-4 border-b-2 flex items-center justify-between"
-                       style={{ borderColor: '#DEE2E6', background: '#F8F9FA' }}>
-                    <h2 className="text-sm font-bold uppercase tracking-wide" style={{ color: '#2C3E50' }}>
-                      C-Scan Analysis Map
-                    </h2>
+                    {/* Run Analysis Button */}
                     <button
-                      className="px-4 py-2 text-xs font-bold uppercase tracking-wide flex items-center gap-2"
-                      style={{ background: '#0D47A1', color: '#FFFFFF' }}
+                      onClick={handleAnalyze}
+                      disabled={files.length === 0 || isAnalyzing}
+                      className="w-full py-5 text-base font-bold uppercase tracking-widest transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                      style={{
+                        background: files.length === 0 || isAnalyzing ? '#DEE2E6' : '#0D47A1',
+                        color: files.length === 0 || isAnalyzing ? '#6C757D' : '#FFFFFF',
+                        border: files.length === 0 || isAnalyzing ? '2px solid #DEE2E6' : '2px solid #0D47A1',
+                      }}
                     >
-                      <Download className="w-4 h-4" />
-                      Export PNG
+                      {isAnalyzing ? (
+                        <div className="flex items-center justify-center gap-2">
+                          <Loader2 className="w-5 h-5 animate-spin" />
+                          <span>Analyzing {files.length} {files.length === 1 ? 'file' : 'files'}...</span>
+                        </div>
+                      ) : (
+                        'Run Analysis'
+                      )}
                     </button>
-                  </div>
-                  <div className="p-6">
-                    {analysisResult.cscan_image ? (
-                      <img
-                        src={`data:image/png;base64,${analysisResult.cscan_image}`}
-                        alt="C-Scan Analysis Map"
-                        className="w-full border"
-                        style={{ borderColor: '#DEE2E6' }}
-                      />
-                    ) : (
-                      <div className="w-full h-96 flex items-center justify-center border-2 border-dashed"
-                           style={{ borderColor: '#DEE2E6', background: '#F8F9FA' }}>
-                        <p className="text-sm" style={{ color: '#6C757D' }}>
-                          C-scan visualization not available
+
+                    {/* Loading state */}
+                    {isAnalyzing && (
+                      <div className="space-y-2">
+                        <p className="text-xs text-center font-medium" style={{ color: '#6C757D' }}>
+                          Processing GPR signals...
                         </p>
+                        {slowRequest && (
+                          <div className="p-3 border-2" style={{ borderColor: '#F39C12', background: '#FFF3CD' }}>
+                            <p className="text-xs text-center font-medium" style={{ color: '#856404' }}>
+                              Waking up server, this may take up to 90 seconds on first request...
+                            </p>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
                 </div>
+              ) : (
+                /* ── Post-analysis: full-width results ── */
+                <div className="space-y-6">
 
-                {/* Summary Statistics */}
-                <div className="grid grid-cols-4 gap-4">
-                  <StatCard
-                    label="Signals Analyzed"
-                    value={analysisResult.signals_analyzed.toLocaleString()}
-                  />
-                  <StatCard
-                    label="Delamination"
-                    value={`${analysisResult.delamination_pct.toFixed(1)}%`}
-                    alert
-                  />
-                  <StatCard
-                    label="Sound"
-                    value={`${analysisResult.sound_pct.toFixed(1)}%`}
-                  />
-                  <StatCard
-                    label="Analysis Time"
-                    value={`${analysisResult.analysis_time_sec.toFixed(1)}s`}
-                  />
-                </div>
-
-                {/* ASTM Report */}
-                <Collapsible open={reportOpen} onOpenChange={setReportOpen}>
+                  {/* C-Scan Image — full width */}
                   <div className="border-2" style={{ borderColor: '#DEE2E6', background: '#FFFFFF' }}>
-                    <CollapsibleTrigger className="w-full">
-                      <div className="flex items-center justify-between px-6 py-4 hover:bg-gray-50 transition-colors">
-                        <h3 className="text-sm font-bold uppercase tracking-wide" style={{ color: '#2C3E50' }}>
-                          ASTM D6087 Condition Assessment Report
-                        </h3>
-                        <ChevronDown
-                          className={`w-5 h-5 transition-transform ${reportOpen ? 'rotate-180' : ''}`}
-                          style={{ color: '#6C757D' }}
-                        />
-                      </div>
-                    </CollapsibleTrigger>
-                    <CollapsibleContent>
-                      <div className="px-6 py-4 border-t-2 space-y-6" style={{ borderColor: '#DEE2E6' }}>
-                        {/* Report Header */}
-                        <div className="space-y-2 text-sm">
-                          <div className="flex justify-between">
-                            <span className="font-bold" style={{ color: '#6C757D' }}>Bridge ID:</span>
-                            <span style={{ color: '#2C3E50' }}>BR-2024-001</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="font-bold" style={{ color: '#6C757D' }}>Analysis Date:</span>
-                            <span style={{ color: '#2C3E50' }}>
-                              {new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
-                            </span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="font-bold" style={{ color: '#6C757D' }}>Model Version:</span>
-                            <span style={{ color: '#2C3E50' }}>model_v13.pth</span>
-                          </div>
-                        </div>
-
-                        {/* Per-File Summary Table */}
-                        <div>
-                          <h4 className="text-xs font-bold uppercase tracking-wide mb-3" style={{ color: '#2C3E50' }}>
-                            File Analysis Summary
-                          </h4>
-                          <div className="border-2" style={{ borderColor: '#DEE2E6' }}>
-                            <table className="w-full text-sm">
-                              <thead>
-                                <tr style={{ background: '#F8F9FA' }}>
-                                  <th className="text-left p-3 font-bold text-xs uppercase" style={{ color: '#6C757D' }}>File</th>
-                                  <th className="text-right p-3 font-bold text-xs uppercase" style={{ color: '#6C757D' }}>Signals</th>
-                                  <th className="text-right p-3 font-bold text-xs uppercase" style={{ color: '#6C757D' }}>Delamination %</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {analysisResult.per_file_summary.map((file, idx) => (
-                                  <tr key={idx} style={{ borderTop: '1px solid #DEE2E6' }}>
-                                    <td className="p-3" style={{ color: '#2C3E50' }}>{file.filename}</td>
-                                    <td className="text-right p-3" style={{ color: '#6C757D' }}>{file.signals.toLocaleString()}</td>
-                                    <td className="text-right p-3">
-                                      <span className="font-bold" style={{ color: file.delam_pct > 10 ? '#E74C3C' : '#2C3E50' }}>
-                                        {file.delam_pct.toFixed(1)}%
-                                      </span>
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        </div>
-
-                        {/* Export Button */}
+                    <div className="px-6 py-4 border-b-2 flex items-center justify-between"
+                         style={{ borderColor: '#DEE2E6', background: '#F8F9FA' }}>
+                      <h2 className="text-sm font-bold uppercase tracking-wide" style={{ color: '#2C3E50' }}>
+                        C-Scan Condition Map
+                      </h2>
+                      <div className="flex items-center gap-3">
+                        {analysisResult.cscan_image && (
+                          <a
+                            href={`data:image/png;base64,${analysisResult.cscan_image}`}
+                            download="cscan_map.png"
+                            className="px-4 py-2 text-xs font-bold uppercase tracking-wide flex items-center gap-2"
+                            style={{ background: '#0D47A1', color: '#FFFFFF' }}
+                          >
+                            <Download className="w-4 h-4" />
+                            Export PNG
+                          </a>
+                        )}
                         <button
-                          className="w-full py-3 text-sm font-bold uppercase tracking-wide flex items-center justify-center gap-2"
-                          style={{ background: '#0D47A1', color: '#FFFFFF' }}
+                          onClick={() => { setAnalysisResult(null); setFiles([]); }}
+                          className="px-4 py-2 text-xs font-bold uppercase tracking-wide"
+                          style={{ border: '2px solid #DEE2E6', color: '#6C757D', background: '#FFFFFF' }}
                         >
-                          <Download className="w-5 h-5" />
-                          Export PDF Report
+                          New Analysis
                         </button>
                       </div>
-                    </CollapsibleContent>
+                    </div>
+                    <div className="p-4">
+                      {analysisResult.cscan_image ? (
+                        <img
+                          src={`data:image/png;base64,${analysisResult.cscan_image}`}
+                          alt="C-Scan Condition Map"
+                          className="w-full"
+                          style={{ minWidth: 900, display: 'block' }}
+                        />
+                      ) : (
+                        <div className="w-full h-64 flex items-center justify-center border-2 border-dashed"
+                             style={{ borderColor: '#DEE2E6', background: '#F8F9FA' }}>
+                          <p className="text-sm" style={{ color: '#6C757D' }}>
+                            C-scan visualization not available
+                          </p>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </Collapsible>
+
+                  {/* Stats Bar — 4 boxes */}
+                  <div className="grid grid-cols-4 gap-4">
+                    <StatCard
+                      label="Signals Analyzed"
+                      value={analysisResult.signals_analyzed.toLocaleString()}
+                    />
+                    <StatCard
+                      label="Delamination"
+                      value={`${analysisResult.delamination_pct.toFixed(1)}%`}
+                      alert
+                    />
+                    <StatCard
+                      label="Sound"
+                      value={`${analysisResult.sound_pct.toFixed(1)}%`}
+                    />
+                    <StatCard
+                      label="Analysis Time"
+                      value={`${analysisResult.analysis_time_sec.toFixed(1)}s`}
+                    />
+                  </div>
+
+                  {/* Per-File Breakdown Table */}
+                  <div className="border-2" style={{ borderColor: '#DEE2E6', background: '#FFFFFF' }}>
+                    <div className="px-6 py-4 border-b-2" style={{ borderColor: '#DEE2E6', background: '#F8F9FA' }}>
+                      <h3 className="text-sm font-bold uppercase tracking-wide" style={{ color: '#2C3E50' }}>
+                        Per-File Breakdown
+                      </h3>
+                    </div>
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr style={{ background: '#F8F9FA', borderBottom: '2px solid #DEE2E6' }}>
+                          <th className="text-left px-6 py-3 font-bold text-xs uppercase" style={{ color: '#6C757D' }}>File</th>
+                          <th className="text-right px-6 py-3 font-bold text-xs uppercase" style={{ color: '#6C757D' }}>Signals</th>
+                          <th className="text-right px-6 py-3 font-bold text-xs uppercase" style={{ color: '#6C757D' }}>Delamination %</th>
+                          <th className="text-right px-6 py-3 font-bold text-xs uppercase" style={{ color: '#6C757D' }}>Sound %</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {analysisResult.per_file_summary.map((file, idx) => (
+                          <tr key={idx} style={{ borderTop: '1px solid #DEE2E6' }}>
+                            <td className="px-6 py-3 font-mono text-xs" style={{ color: '#2C3E50' }}>{file.filename}</td>
+                            <td className="text-right px-6 py-3" style={{ color: '#6C757D' }}>{file.signals.toLocaleString()}</td>
+                            <td className="text-right px-6 py-3">
+                              <span className="font-bold" style={{ color: file.delam_pct > 10 ? '#E74C3C' : '#2C3E50' }}>
+                                {file.delam_pct.toFixed(1)}%
+                              </span>
+                            </td>
+                            <td className="text-right px-6 py-3">
+                              <span className="font-bold" style={{ color: '#2C3E50' }}>
+                                {(100 - file.delam_pct).toFixed(1)}%
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
                 </div>
               )}
             </div>
-          </div>
           ) : (
             /* In Development View */
             <div className="flex items-center justify-center min-h-[calc(100vh-120px)]">
