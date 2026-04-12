@@ -112,6 +112,7 @@ export default function App() {
   const [serverStatus, setServerStatus] = useState<'online' | 'warming' | 'offline'>('offline');
   const [slowRequest, setSlowRequest] = useState(false);
   const [statusMsgIndex, setStatusMsgIndex] = useState(0);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [notifyEmail, setNotifyEmail] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -196,15 +197,18 @@ export default function App() {
     }));
 
     setFiles(prev => [...prev, ...uploadedFiles]);
+    setErrorMsg(null);
   };
 
   const removeFile = (fileName: string) => {
     setFiles(prev => prev.filter(f => f.name !== fileName));
+    setErrorMsg(null);
   };
 
   const handleAnalyze = async () => {
     setIsAnalyzing(true);
     setSlowRequest(false);
+    setErrorMsg(null);
 
     // Set slow request warning after 5 seconds
     const slowTimeout = setTimeout(() => {
@@ -235,25 +239,25 @@ export default function App() {
       if (!response.ok) {
         // Handle 503 hibernate-wake-error from Render
         if (response.status === 503) {
-          alert('Server is waking up from sleep (Render free tier). This can take up to 2 minutes.\n\nPlease:\n1. Wait 2 minutes\n2. Try uploading again\n\nOR go to Render dashboard and click "Restart Service" to wake it up immediately.');
+          setErrorMsg('Server is waking up from sleep (Render free tier). This can take up to 2 minutes — wait, then try again.');
           setIsAnalyzing(false);
           setSlowRequest(false);
           setServerStatus('warming');
           return;
         }
 
-        let errorMsg = 'Unknown error';
+        let httpErrorMsg = 'Unknown error';
         try {
-          const error = await response.json();
-          console.error('[ANALYZE] Error response:', error);
-          errorMsg = error.detail || error.error || error.stderr || JSON.stringify(error);
+          const errJson = await response.json();
+          console.error('[ANALYZE] Error response:', errJson);
+          httpErrorMsg = errJson.detail || errJson.error || errJson.stderr || JSON.stringify(errJson);
         } catch {
           const errorText = await response.text();
           console.error('[ANALYZE] Error text:', errorText);
-          errorMsg = errorText || `HTTP ${response.status} error`;
+          httpErrorMsg = errorText || `HTTP ${response.status} error`;
         }
-        console.error('Analysis failed:', errorMsg);
-        alert(`Analysis failed:\n\n${errorMsg}\n\nThis might mean your CSV files aren't in the expected GPR format. Check browser console for details.`);
+        console.error('Analysis failed:', httpErrorMsg);
+        setErrorMsg(`Analysis failed: ${httpErrorMsg}`);
         setIsAnalyzing(false);
         setSlowRequest(false);
         return;
@@ -272,15 +276,14 @@ export default function App() {
       console.error('Error during analysis:', error);
 
       if (error instanceof Error && error.name === 'TimeoutError') {
-        alert('Analysis timed out after 5 minutes. This may happen if:\n\n1. Server is cold-starting (wait 90 seconds and try again)\n2. Too many files uploaded (try with fewer files)\n3. Server needs more resources\n\nCheck the Render dashboard logs for details.');
+        setErrorMsg('Analysis timed out after 5 minutes. The server may still be starting up — wait 90 seconds and try again, or upload fewer files.');
       } else if (error instanceof TypeError && error.message.includes('fetch')) {
-        // Network error or CORS issue
-        alert('Cannot connect to server. This usually means:\n\n1. Server is asleep (Render free tier) - wait 2 minutes and retry\n2. Network connection issue\n3. CORS error\n\nTry:\n• Wait 2 minutes, then upload again\n• Go to Render dashboard → Click "Restart Service"\n• Check browser console for CORS errors');
+        setErrorMsg('Cannot connect to server. The server may be asleep (Render free tier) — wait 2 minutes and try again.');
         setServerStatus('warming');
       } else if (error instanceof Error) {
-        alert(`Analysis failed: ${error.message}\n\nCheck browser console for details.`);
+        setErrorMsg(`Analysis failed: ${error.message}`);
       } else {
-        alert('Analysis failed. Please check your connection and try again.');
+        setErrorMsg('Analysis failed. Please check your connection and try again.');
       }
 
       setIsAnalyzing(false);
@@ -524,6 +527,21 @@ export default function App() {
                         'Run Analysis'
                       )}
                     </button>
+
+                    {/* Inline error card — replaces browser alert() */}
+                    {errorMsg && !isAnalyzing && (
+                      <div className="flex items-start gap-2 p-3"
+                           style={{ background: '#FFF5F5', border: '1.5px solid #E53E3E', borderRadius: '4px' }}>
+                        <X className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: '#E53E3E' }} />
+                        <p className="text-xs leading-relaxed" style={{ color: '#742A2A' }}>
+                          {errorMsg}
+                        </p>
+                        <button onClick={() => setErrorMsg(null)} className="ml-auto flex-shrink-0"
+                                style={{ color: '#E53E3E', lineHeight: 1 }}>
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    )}
 
                     {/* Loading state */}
                     {isAnalyzing && (
