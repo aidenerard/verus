@@ -5,12 +5,20 @@ Generates synthetic GPR bridge-deck A-scan signals using a physics-based
 Ricker wavelet model.  Runs on CPU with numpy only — no GPU, no gprMax.
 Target: <60 seconds for 50,000 signals.
 
-Output format (SDNET2021-like):
-  513 columns per row: [sample_0, sample_1, ..., sample_511, label]
-  label  : 0 = sound,  1 = delaminated
-  Values : integer counts, DC offset = 32,768  (uint16 range [0, 65535])
-  ±3,000 counts around DC
-  No header row.
+Output format (exact SDNET2021 layout — loadable by cnn.py without changes):
+  Each file is a (521, n_signals+1) integer CSV:
+    Row 0, col 4     : n_signals
+    Row 7, cols 1..n : labels  (1 = sound,  2 = delaminated)
+    Rows 9..520      : amplitude data — col 0 = 0 (placeholder),
+                       cols 1..n = A-scan amplitudes as uint16 counts
+                       (DC offset 32,768, peak ±3,000 counts)
+  Files are split into chunks of MAX_SIGS_PER_FILE (≤1,000) and saved as:
+    synthetic_data/synthetic_sound/FILE____001.csv  …  (sound)
+    synthetic_data/synthetic_delam/FILE____001.csv  …  (delaminated)
+
+  Labels as read by cnn.py load_csv:
+    raw_labels = row7[1:n+1]
+    labels = (raw_labels == 1).astype(int)   ← 1→sound(1), 2→delaminated(0)
 """
 
 import time
@@ -23,18 +31,18 @@ import matplotlib.pyplot as plt
 
 # ── Output directory ───────────────────────────────────────────────────────────
 OUT_DIR = Path("~/Desktop/verus/synthetic_data").expanduser()
-OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── Constants ──────────────────────────────────────────────────────────────────
-N_SAMPLES  = 512
-T_MAX_NS   = 12.0                                   # time window (ns)
-T          = np.linspace(0, T_MAX_NS, N_SAMPLES)    # (512,) time axis in ns
-DC_OFFSET  = 32_768
-MAX_COUNTS = 3_000
+N_SAMPLES          = 512
+T_MAX_NS           = 12.0
+T                  = np.linspace(0, T_MAX_NS, N_SAMPLES)    # (512,) ns
+DC_OFFSET          = 32_768
+MAX_COUNTS         = 3_000
+MAX_SIGS_PER_FILE  = 1_000    # match SDNET2021 file-size convention
 
 N_CLASS1   = 30_000    # sound signals
 N_CLASS2   = 20_000    # delaminated signals
-BATCH_SIZE = 1_000     # signals per generation batch
+BATCH_SIZE = 1_000     # generation batch size
 
 RNG = np.random.default_rng(42)
 
@@ -72,7 +80,7 @@ def generate_batch(n_sound: int, n_delam: int) -> tuple[np.ndarray, np.ndarray]:
 
     Returns:
         signals : (n_sound + n_delam, N_SAMPLES) int32 with DC offset
-        labels  : (n_sound + n_delam,) int32, 0=sound / 1=delaminated
+        labels  : (n_sound + n_delam,) int32, 1=sound / 2=delaminated (SDNET convention)
     """
     B = n_sound + n_delam
     if B == 0:
@@ -133,9 +141,10 @@ def generate_batch(n_sound: int, n_delam: int) -> tuple[np.ndarray, np.ndarray]:
     output   = np.round(scaled).astype(np.int32) + DC_OFFSET
     output   = np.clip(output, 0, 65535)
 
+    # SDNET label convention: 1=sound, 2=delaminated
     labels = np.concatenate([
-        np.zeros(n_sound, dtype=np.int32),
-        np.ones(n_delam,  dtype=np.int32),
+        np.ones(n_sound, dtype=np.int32),       # sound      → 1
+        np.full(n_delam, 2, dtype=np.int32),    # delaminated → 2
     ])
     return output, labels
 
@@ -158,6 +167,59 @@ def generate_class(n_total: int, is_delaminated: bool,
         done += b
         print(f"  {label_name:12}  [{done:>7,} / {n_total:>7,}]", flush=True)
     return np.concatenate(X_chunks), np.concatenate(y_chunks)
+
+
+# ── SDNET2021 file writer ──────────────────────────────────────────────────────
+
+def save_as_sdnet(signals: np.ndarray, labels: np.ndarray,
+                  out_subdir: Path) -> int:
+    """
+    Save signals in exact SDNET2021 CSV format loadable by cnn.py.
+
+    File layout  (521 rows × (n+1) cols):
+      Row 0   : [0, 0, 0, 0, n, 0, ...]   ← n = n_signals in this file
+      Rows 1-6: all zeros
+      Row 7   : [0, lbl_1, lbl_2, ..., lbl_n]
+      Row 8   : all zeros
+      Rows 9-520: amplitude columns — col 0 = 0, cols 1..n = A-scan amps
+                  shape (512 time samples) × n signals (transposed from signals)
+
+    Args:
+        signals   : (N, 512) int32 with DC offset
+        labels    : (N,) int32, 1=sound or 2=delaminated
+        out_subdir: directory to write FILE____NNN.csv files into
+
+    Returns:
+        Number of files written.
+    """
+    out_subdir.mkdir(parents=True, exist_ok=True)
+    N = len(signals)
+    n_files = 0
+
+    for start in range(0, N, MAX_SIGS_PER_FILE):
+        end      = min(start + MAX_SIGS_PER_FILE, N)
+        sigs_blk = signals[start:end]   # (n, 512)
+        lbl_blk  = labels[start:end]    # (n,)
+        n        = len(sigs_blk)
+
+        # Build (521, n+1) integer grid
+        grid = np.zeros((521, n + 1), dtype=np.int32)
+
+        # Row 0, col 4: number of signals
+        grid[0, 4] = n
+
+        # Row 7, cols 1..n: labels
+        grid[7, 1 : n + 1] = lbl_blk
+
+        # Rows 9..520: amplitude data
+        # sigs_blk is (n, 512); transposed → (512, n); write to cols 1..n
+        grid[9 : 9 + N_SAMPLES, 1 : n + 1] = sigs_blk.T.astype(np.int32)
+
+        n_files += 1
+        fname = out_subdir / f"FILE____{n_files:03d}.csv"
+        np.savetxt(fname, grid, delimiter=",", fmt="%d")
+
+    return n_files
 
 
 # ── Validation helpers ─────────────────────────────────────────────────────────
@@ -189,7 +251,6 @@ def plot_samples(X1: np.ndarray, X2: np.ndarray, out_path: Path) -> None:
     idx2 = RNG.choice(len(X2), 3, replace=False)
 
     for col, (i1, i2) in enumerate(zip(idx1, idx2)):
-        # Top row — sound
         ax = axes[0, col]
         ax.plot(T, X1[i1].astype(np.float64) - DC_OFFSET,
                 color="#1a2f5a", linewidth=0.8)
@@ -199,7 +260,6 @@ def plot_samples(X1: np.ndarray, X2: np.ndarray, out_path: Path) -> None:
         ax.axhline(0, color="gray", linewidth=0.4, linestyle="--")
         ax.tick_params(labelsize=7)
 
-        # Bottom row — delaminated
         ax = axes[1, col]
         ax.plot(T, X2[i2].astype(np.float64) - DC_OFFSET,
                 color="#c0392b", linewidth=0.8)
@@ -216,18 +276,65 @@ def plot_samples(X1: np.ndarray, X2: np.ndarray, out_path: Path) -> None:
     print(f"\n  Waveform plot saved → {out_path}", flush=True)
 
 
+# ── Smoke test: verify one saved file round-trips through cnn.py load_csv ─────
+
+def smoke_test_roundtrip(out_subdir: Path, expected_sdnet_label: int) -> None:
+    """
+    Load the first FILE____001.csv back with the same logic as cnn.py load_csv
+    and assert the shape and label values are correct.
+    """
+    import pandas as pd
+    fpath = out_subdir / "FILE____001.csv"
+    if not fpath.exists():
+        print("  [smoke test] FILE____001.csv not found — skipping", flush=True)
+        return
+
+    raw       = pd.read_csv(fpath, header=None).values
+    n_sigs    = int(raw[0, 4])
+    raw_lbls  = raw[7, 1 : n_sigs + 1].astype(int)
+    data_row  = None
+    for row in range(9, 14):
+        try:
+            val = float(raw[row, 0])
+            if not np.isnan(val):
+                data_row = row
+                break
+        except (ValueError, TypeError):
+            continue
+    if data_row is None:
+        print("  [smoke test] FAIL — cannot locate amplitude rows", flush=True)
+        return
+
+    amp_block = raw[data_row : data_row + N_SAMPLES, 0 : n_sigs + 1].astype(np.float32)
+    amps      = (amp_block[:, 1:] - DC_OFFSET).T          # (n, 512)
+
+    ok_shape  = amp_block.shape == (N_SAMPLES, n_sigs + 1)
+    ok_labels = np.all(raw_lbls == expected_sdnet_label)
+    ok_amp    = np.abs(amps).max() <= MAX_COUNTS + 5      # tiny rounding margin
+
+    print(f"\n  [smoke test] {fpath.name}", flush=True)
+    print(f"    n_signals = {n_sigs}  {'✓' if n_sigs <= MAX_SIGS_PER_FILE else '✗'}", flush=True)
+    print(f"    amp shape  = {amp_block.shape}  {'✓' if ok_shape else '✗'}", flush=True)
+    print(f"    labels all = {expected_sdnet_label}  {'✓' if ok_labels else '✗'} "
+          f"(sample: {raw_lbls[:5]})", flush=True)
+    print(f"    amp range  = [{amps.min():.0f}, {amps.max():.0f}]  "
+          f"{'✓' if ok_amp else '✗'}", flush=True)
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Main
 # ═══════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
     print("=" * 60, flush=True)
-    print("Verus Synthetic GPR Data Generator (V16 / CPU-only)", flush=True)
+    print("Verus Synthetic GPR Data Generator (V17 / CPU-only)", flush=True)
     print(f"  Sound signals     : {N_CLASS1:,}", flush=True)
     print(f"  Delaminated       : {N_CLASS2:,}", flush=True)
     print(f"  Total             : {N_CLASS1 + N_CLASS2:,}", flush=True)
     print(f"  Batch size        : {BATCH_SIZE:,}", flush=True)
+    print(f"  Max sigs/file     : {MAX_SIGS_PER_FILE:,}", flush=True)
     print(f"  Output directory  : {OUT_DIR}", flush=True)
+    print(f"  Format            : SDNET2021 (521×(n+1) per file)", flush=True)
     print("=" * 60, flush=True)
 
     t_start = time.perf_counter()
@@ -242,29 +349,18 @@ if __name__ == "__main__":
     t_gen = time.perf_counter() - t_start
     print(f"\n  Generation complete in {t_gen:.1f}s", flush=True)
 
-    # ── Assemble output arrays (signal + label column) ─────────────────────────
-    data1 = np.concatenate([X1, y1[:, np.newaxis]], axis=1)   # (30000, 513)
-    data2 = np.concatenate([X2, y2[:, np.newaxis]], axis=1)   # (20000, 513)
+    # ── Save in SDNET2021 format ───────────────────────────────────────────────
+    sound_dir = OUT_DIR / "synthetic_sound"
+    delam_dir = OUT_DIR / "synthetic_delam"
 
-    combined      = np.concatenate([data1, data2], axis=0)    # (50000, 513)
-    shuffle_idx   = RNG.permutation(len(combined))
-    combined      = combined[shuffle_idx]
+    print(f"\nSaving SDNET2021 files …", flush=True)
+    n1 = save_as_sdnet(X1, y1, sound_dir)
+    print(f"  Saved {n1} sound file(s)        → {sound_dir}/FILE____001.csv … "
+          f"FILE____{n1:03d}.csv  [{X1.shape[0]:,} signals]", flush=True)
 
-    # ── Save ───────────────────────────────────────────────────────────────────
-    print(f"\nSaving files …", flush=True)
-
-    p1 = OUT_DIR / "synthetic_fast_class1.csv"
-    p2 = OUT_DIR / "synthetic_fast_class2.csv"
-    pc = OUT_DIR / "synthetic_combined.csv"
-
-    np.savetxt(p1, data1,    delimiter=",", fmt="%d")
-    print(f"  Saved class1 (sound)        → {p1}  [{data1.shape}]", flush=True)
-
-    np.savetxt(p2, data2,    delimiter=",", fmt="%d")
-    print(f"  Saved class2 (delaminated)  → {p2}  [{data2.shape}]", flush=True)
-
-    np.savetxt(pc, combined, delimiter=",", fmt="%d")
-    print(f"  Saved combined (shuffled)   → {pc}  [{combined.shape}]", flush=True)
+    n2 = save_as_sdnet(X2, y2, delam_dir)
+    print(f"  Saved {n2} delaminated file(s)  → {delam_dir}/FILE____001.csv … "
+          f"FILE____{n2:03d}.csv  [{X2.shape[0]:,} signals]", flush=True)
 
     # ── Validation ─────────────────────────────────────────────────────────────
     print(f"\n{'─'*60}", flush=True)
@@ -290,6 +386,10 @@ if __name__ == "__main__":
         print(f"    ✗ WARNING: delaminated energy not higher than sound "
               f"(ratio={ratio:.2f}). Check physics parameters.", flush=True)
 
+    # Round-trip smoke tests
+    smoke_test_roundtrip(sound_dir, expected_sdnet_label=1)
+    smoke_test_roundtrip(delam_dir, expected_sdnet_label=2)
+
     # Waveform plot
     plot_samples(X1, X2, OUT_DIR / "sample_waveforms.png")
 
@@ -300,4 +400,6 @@ if __name__ == "__main__":
     print(f"  Throughput  : {(N_CLASS1+N_CLASS2)/t_total:,.0f} signals/second", flush=True)
     print(f"  {'✓ UNDER 60s' if t_total < 60 else '✗ EXCEEDED 60s'}  "
           f"({t_total:.1f}s)", flush=True)
+    print(f"  Sound files     : {n1}  ({X1.shape[0]:,} signals in {sound_dir.name}/)", flush=True)
+    print(f"  Delam files     : {n2}  ({X2.shape[0]:,} signals in {delam_dir.name}/)", flush=True)
     print("=" * 60, flush=True)
