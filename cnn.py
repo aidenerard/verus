@@ -49,7 +49,10 @@ torch.manual_seed(42)
 np.random.seed(42)
 
 # ── Configuration ──────────────────────────────────────────────────────────────
-DATA_FOLDER = Path("~/Desktop/verus/all_bridges_csv").expanduser()
+DATA_FOLDERS = [
+    Path("/kaggle/input/datasets/aidenerard/all-bridges-csv/all_bridges_csv"),
+    Path("/kaggle/input/verus-synthetic/synthetic_data"),
+]
 MODEL_PATH  = Path("/content/drive/MyDrive/fluxspace_gpr_data/model.pth")
 
 DC_OFFSET = 32768
@@ -304,11 +307,21 @@ def select_threshold(y_true: np.ndarray, y_prob: np.ndarray,
 
 # ── Step 1: Discover files ─────────────────────────────────────────────────────
 
-csv_files = sorted(DATA_FOLDER.rglob("FILE____*.csv"))
+csv_files = []
+for folder in DATA_FOLDERS:
+    if folder.exists():
+        found = sorted(folder.rglob("FILE____*.csv"))
+        csv_files.extend(found)
+        print(f"  {folder.name}: {len(found)} files")
+    else:
+        print(f"  WARNING: {folder} not found, skipping")
+
+csv_files = sorted(set(csv_files))
+print(f"  Total CSV files: {len(csv_files)}")
+
 if not csv_files:
-    sys.exit(f"No FILE____*.csv files found in {DATA_FOLDER}")
-print(f"Found {len(csv_files)} CSV files in {DATA_FOLDER.name}  "
-      f"device={DEVICE}", flush=True)
+    sys.exit("No FILE____*.csv files found in any DATA_FOLDERS")
+print(f"Found {len(csv_files)} CSV files  device={DEVICE}", flush=True)
 
 
 # ── Step 2: File-level grouped split ──────────────────────────────────────────
@@ -373,7 +386,7 @@ if MODEL_PATH.exists():
         batch_size=256, shuffle=False,
     )
     m = evaluate(model, eval_dl, threshold=0.5)
-    print_metrics(m, label=f"EVALUATION — {DATA_FOLDER.name}  (threshold=0.50)")
+    print_metrics(m, label=f"EVALUATION — combined data  (threshold=0.50)")
     best_t = select_threshold(m['y_true'], m['y_prob'])
     m2 = evaluate(model, eval_dl, threshold=best_t)
     print_metrics(m2, label=f"EVALUATION — threshold={best_t:.2f} (val-selected)")
