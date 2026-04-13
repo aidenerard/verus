@@ -186,7 +186,7 @@ class CNN1D(nn.Module):
         self.attn = TemporalAttention(128)
         self.head = nn.Sequential(
             nn.Linear(128, 128), nn.ReLU(),
-            nn.Dropout(0.3),
+            nn.Dropout(0.5),
             nn.Linear(128, 1),
         )
 
@@ -219,6 +219,7 @@ def augment_batch(xb: torch.Tensor) -> torch.Tensor:
     """Per-sample augmentations (training only)."""
     B, K, T = xb.shape
     xb = xb + xb.std(dim=-1, keepdim=True) * 0.01 * torch.randn_like(xb)
+    xb = xb + torch.randn_like(xb) * 0.02
     xb = xb * torch.empty(B, 1, 1, device=xb.device).uniform_(0.95, 1.05)
     out    = torch.zeros_like(xb)
     shifts = torch.randint(-5, 6, (B,)).tolist()
@@ -426,7 +427,10 @@ else:
         # If sound (y=1) is majority: pos_weight > 1 (up-weight sound loss).
         n_delam    = int((y_train == 0).sum())
         n_sound    = int((y_train == 1).sum())
-        pos_weight = torch.tensor([n_delam / max(n_sound, 1)], dtype=torch.float32).to(DEVICE)
+        # V15: fixed pos_weight=2.0 to push FPR down toward 10% target.
+        # Higher pos_weight penalises false positives (sound predicted as delam)
+        # more heavily; data-derived ratio (~0.565) was too low to correct FPR.
+        pos_weight = torch.tensor([2.0], dtype=torch.float32).to(DEVICE)
         criterion  = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
         print(f"\nClass balance: {delam_frac*100:.1f}% delaminated  "
               f"→ BCEWithLogitsLoss pos_weight={pos_weight.item():.3f}  [DEBUG]",
@@ -449,8 +453,10 @@ else:
     # the focal term (gamma=2) dramatically shrinks gradients for easy examples,
     # making the effective learning rate feel much larger for hard examples.
     optimizer = torch.optim.Adam(model.parameters(), lr=3e-4, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='min', factor=0.5, patience=4, min_lr=1e-5,
+    # V15: StepLR halves every 15 epochs — slower decay gives the model more
+    # time at each LR level before being forced to fine-tune.
+    scheduler = torch.optim.lr_scheduler.StepLR(
+        optimizer, step_size=15, gamma=0.5,
     )
 
     # ── Sanity check: one forward pass before training ─────────────────────────
@@ -524,7 +530,7 @@ else:
                 probs_v.append(logits.sigmoid().cpu().numpy())
                 trues_v.append(yb.cpu().numpy())
         val_loss /= len(y_val)
-        scheduler.step(val_loss)
+        scheduler.step()
 
         y_prob_v = np.concatenate(probs_v)
         y_true_v = np.concatenate(trues_v).astype(int)
