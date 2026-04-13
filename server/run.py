@@ -40,7 +40,9 @@ from matplotlib.patches import FancyBboxPatch, Rectangle
 THRESHOLD     = 0.65       # P(sound) < THRESHOLD → delaminated
 DC_OFFSET     = 32768
 N_SAMPLES     = 512
-INFER_BATCH   = 1000       # max signals per torch forward pass (~2 MB each)
+INFER_BATCH   = 256        # max signals per torch forward pass.
+                           # Conv2 intermediate: (B,128,256)×4 bytes.
+                           # B=1000 → 131 MB spike; B=256 → 33 MB. Fits 512 MB.
 MAX_GRID_ROWS = 200        # C-scan Y axis (signals), downsampled if larger
 MAX_GRID_COLS = 500        # C-scan X axis (files),   downsampled if larger
 DEVICE        = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -346,7 +348,7 @@ def render_cscan_b64(
     file_confs:  list[np.ndarray],
     file_names:  list[str],
     bridge_name: str = "Bridge Deck",
-    dpi:         int = 150,
+    dpi:         int = 100,
 ) -> str:
     """
     Render a professional ASTM D6087 / FHWA LTBP-style GPR deterioration map.
@@ -458,7 +460,7 @@ def render_cscan_b64(
     norm = mcolors.Normalize(vmin=0.0, vmax=1.0)
 
     # ── Figure ────────────────────────────────────────────────────────────────
-    fig = plt.figure(figsize=(20, 5), facecolor='white')
+    fig = plt.figure(figsize=(16, 4), facecolor='white')
     fig.subplots_adjust(left=0.07, right=0.97, top=0.82, bottom=0.20)
 
     # Title — centred above everything
