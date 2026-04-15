@@ -1,12 +1,16 @@
 """
 combine_bscan_parts.py
 ──────────────────────
-Runs locally on Mac. Combines the 20 downloaded Kaggle CSV parts into
-SDNET2021-format FILE____NNN.csv files loadable by cnn.py.
+Combines the 20 Kaggle CSV parts into SDNET2021-format FILE____NNN.csv
+files loadable by cnn.py. Auto-detects Kaggle vs local environment.
 
-Usage:
+Usage (local):
     cd <folder containing this script and the synthetic_bscan_c*.csv files>
     python combine_bscan_parts.py
+
+Usage (Kaggle):
+    python /kaggle/input/.../combine_bscan_parts.py
+    (part CSVs are expected in /kaggle/working)
 
 Input CSVs (no header, integer values):
     synthetic_bscan_c1_p01.csv … c1_p10.csv   (sound,       label col = 1)
@@ -24,15 +28,24 @@ Output (SDNET2021 format, loadable by cnn.py without changes):
         Rows 9..520   : amplitude data  (col 0 = 0, cols 1..n = A-scans)
 """
 
+import os
 import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
+# ── Auto-detect environment ───────────────────────────────────────────────────
+if os.path.exists('/kaggle/working'):
+    WORKING_DIR = Path('/kaggle/working')
+    print("Running in Kaggle mode")
+else:
+    WORKING_DIR = Path(__file__).parent
+    print("Running in local mode")
+
+OUTPUT_DIR = WORKING_DIR / 'combined_output'
+
 # ── Configuration ─────────────────────────────────────────────────────────────
-HERE            = Path(__file__).parent
-OUT_ROOT        = HERE / "combined_output"
 MAX_PER_FILE    = 1000
 N_SAMPLES       = 512
 DC_OFFSET       = 32_768
@@ -42,11 +55,11 @@ DC_OFFSET       = 32_768
 
 def load_parts(glob_pattern: str) -> tuple:
     """
-    Load all CSV parts matching the pattern.
+    Load all CSV parts matching the pattern from WORKING_DIR.
     Each CSV has no header: 512 amplitude cols + 1 label col.
     Returns (signals, labels) as numpy arrays.
     """
-    paths = sorted(HERE.glob(glob_pattern))
+    paths = sorted(WORKING_DIR.glob(glob_pattern))
     if not paths:
         return np.empty((0, N_SAMPLES), dtype=np.int32), np.empty(0, dtype=np.int32)
 
@@ -103,17 +116,22 @@ def save_sdnet(signals: np.ndarray, labels: np.ndarray, out_dir: Path) -> int:
 
 print("=" * 60, flush=True)
 print("combine_bscan_parts.py", flush=True)
-print(f"  Source dir : {HERE}", flush=True)
-print(f"  Output dir : {OUT_ROOT}", flush=True)
+print(f"  Source dir : {WORKING_DIR}", flush=True)
+print(f"  Output dir : {OUTPUT_DIR}", flush=True)
 print("=" * 60, flush=True)
+
+print(f"\nLooking for part files in: {WORKING_DIR}", flush=True)
+print("Files found in directory:", flush=True)
+for f in sorted(WORKING_DIR.glob("synthetic_bscan_c*.csv")):
+    print(f"  {f.name}", flush=True)
 
 # Load
 print("\nLoading Class 1 (sound) parts …", flush=True)
-c1_paths = sorted(HERE.glob("synthetic_bscan_c1_p*.csv"))
+c1_paths = sorted(WORKING_DIR.glob("synthetic_bscan_c1_p*.csv"))
 X1, y1   = load_parts("synthetic_bscan_c1_p*.csv")
 
 print("\nLoading Class 2 (delaminated) parts …", flush=True)
-c2_paths = sorted(HERE.glob("synthetic_bscan_c2_p*.csv"))
+c2_paths = sorted(WORKING_DIR.glob("synthetic_bscan_c2_p*.csv"))
 X2, y2   = load_parts("synthetic_bscan_c2_p*.csv")
 
 print(f"\nClass 1 parts found: {len(c1_paths)}", flush=True)
@@ -122,14 +140,14 @@ print(f"Total Class 1 signals: {len(X1):,}", flush=True)
 print(f"Total Class 2 signals: {len(X2):,}", flush=True)
 
 if len(X1) == 0 and len(X2) == 0:
-    sys.exit("No part CSVs found. Place synthetic_bscan_c*_p*.csv files in the same directory as this script.")
+    sys.exit(f"No part CSVs found. Expected synthetic_bscan_c*_p*.csv files in: {WORKING_DIR}")
 
 # Save
 print("\nSaving SDNET2021 files …", flush=True)
-n_sound = save_sdnet(X1, y1, OUT_ROOT / "synthetic_sound")
-n_delam = save_sdnet(X2, y2, OUT_ROOT / "synthetic_delam")
+n_sound = save_sdnet(X1, y1, OUTPUT_DIR / "synthetic_sound")
+n_delam = save_sdnet(X2, y2, OUTPUT_DIR / "synthetic_delam")
 
 print(f"\nSound files created: {n_sound}", flush=True)
 print(f"Delam files created: {n_delam}", flush=True)
-print(f"Output saved to {OUT_ROOT}/", flush=True)
+print(f"Output saved to {OUTPUT_DIR}/", flush=True)
 print("=" * 60, flush=True)
