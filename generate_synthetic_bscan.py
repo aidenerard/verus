@@ -24,13 +24,6 @@ Usage (Colab / Linux)
 import subprocess
 import sys
 
-# Install pycuda if not available
-try:
-    import pycuda
-except ImportError:
-    subprocess.run([sys.executable, '-m', 'pip', 'install',
-                   'pycuda'], check=True)
-
 # Force colorama reinstall (required for gprMax on Colab)
 subprocess.run([sys.executable, '-m', 'pip', 'install',
                '--force-reinstall', 'colorama'], check=True)
@@ -60,7 +53,7 @@ except ImportError as e:
     sys.exit(1)
 
 # ── Configuration ─────────────────────────────────────────────────────────────
-OUTPUT_DIR    = Path("/content/drive/MyDrive/fluxspace/fluxspace_gpr_data/synthetic_data")
+OUTPUT_DIR    = Path("/kaggle/working/synthetic_data")
 N_SIM_CLASS1  = 470          # 470 × 64 = 30,080  Class-1 A-scans
 N_SIM_CLASS2  = 313          # 313 × 64 = 20,032  Class-2 A-scans
 N_ASCAN       = 64           # A-scans per B-scan simulation
@@ -192,12 +185,7 @@ def run_bscan(infile: Path) -> None:
     extract_bscan().
     """
     from gprMax.gprMax import api as gprmax_api
-
-    try:
-        gprmax_api(str(infile), n=N_ASCAN, gpu=[0])
-    except Exception:
-        # Fall back to CPU if no GPU is available
-        gprmax_api(str(infile), n=N_ASCAN)
+    gprmax_api(str(infile), n=N_ASCAN)
 
 
 def extract_bscan(infile: Path) -> list[np.ndarray]:
