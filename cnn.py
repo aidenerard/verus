@@ -1,8 +1,8 @@
-# V16 — Production architecture for Verus
-# Focal loss + balanced sampler + raw waveforms
-# Scales correctly with additional bridge data
+# V17 — Production architecture for Verus
+# Focal loss (alpha=0.75) + balanced sampler + raw+envelope dual-channel input
+# Crops to samples 200–450 (250 samples) to exclude pre-signal noise floor
 """
-GPR bridge-deck delamination — 1D-CNN, single-trace input.
+GPR bridge-deck delamination — 1D-CNN, dual-channel input.
 
 Label convention (throughout this file and the server):
   model output = P(sound) via sigmoid
@@ -15,12 +15,15 @@ FILE-LEVEL split  Each CSV goes entirely into one split. Adjacent traces
   within a scan line are spatially correlated; a random trace-level split
   leaks near-duplicate samples into both train and test.
 
-Per-signal z-score  Each A-scan normalised over its own 512 time samples.
-  Preserves relative amplitude differences between scan lines (attenuation
-  info) and matches server/run.py inference exactly.
+Per-signal z-score  Each A-scan normalised over its own 512 time samples
+  before envelope computation and cropping.
 
-FocalLoss  alpha*(1-pt)^gamma*bce down-weights easy examples and focuses
-  training on hard, ambiguous signals. No pos_weight needed.
+Dual-channel input  Channel 0 = z-scored raw waveform. Channel 1 = Hilbert
+  envelope amplitude. Crops samples 200–450 (250 samples) to focus on the
+  reflection window and exclude the pre-signal noise floor.
+
+FocalLoss  alpha=0.75 up-weights the delaminated class (minority).
+  gamma=2.0 down-weights easy examples. No pos_weight needed.
 
 WeightedRandomSampler  Each training batch is class-balanced by sampling
   each class with probability 1/class_count. Replaces pos_weight tuning.
@@ -36,7 +39,7 @@ warnings.filterwarnings("ignore")
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from scipy.signal import windows as sig_windows
+from scipy.signal import windows as sig_windows, hilbert
 from sklearn.metrics import average_precision_score
 
 import torch
@@ -51,13 +54,14 @@ np.random.seed(42)
 # ── Configuration ──────────────────────────────────────────────────────────────
 DATA_FOLDERS = [
     Path("/kaggle/input/datasets/aidenerard/all-bridges-csv/all_bridges_csv"),
-    Path("/kaggle/input/verus-synthetic/synthetic_data"),
 ]
-MODEL_PATH  = Path("/content/drive/MyDrive/fluxspace_gpr_data/model.pth")
+MODEL_PATH  = Path("/kaggle/working/model.pth")
 
-DC_OFFSET = 32768
-N_SAMPLES = 512
-DEVICE    = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DC_OFFSET  = 32768
+N_SAMPLES  = 512          # raw samples loaded from CSV
+CROP_START = 200          # crop window start (exclude pre-signal noise floor)
+CROP_END   = 450          # crop window end  → 250 samples into model
+DEVICE     = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 _TAPER       = np.ones(N_SAMPLES, dtype=np.float32)
 _TAPER[410:] = sig_windows.hann(204)[102:].astype(np.float32)
@@ -106,11 +110,24 @@ def load_csv(fpath: Path) -> tuple[np.ndarray, np.ndarray]:
 
 
 def load_files(fpaths: list[Path]) -> tuple[np.ndarray, np.ndarray]:
-    """Load files and return X: (n, 1, N_SAMPLES), y: (n,)."""
+    """
+    Load files and return X: (n, 2, 250), y: (n,).
+
+    Channel 0: z-scored raw waveform, cropped to samples CROP_START:CROP_END.
+    Channel 1: Hilbert envelope of the z-scored raw, same crop.
+    """
     all_X, all_y = [], []
     for fpath in fpaths:
-        amps, labels = load_csv(fpath)
-        all_X.append(amps[:, np.newaxis, :])   # (n, 1, 512)
+        amps, labels = load_csv(fpath)          # (n, 512) z-scored float32
+
+        # Hilbert envelope on full 512-sample z-scored signal
+        envelope = np.abs(hilbert(amps, axis=1)).astype(np.float32)  # (n, 512)
+
+        # Stack channels then crop → (n, 2, 250)
+        x = np.stack([amps, envelope], axis=1)           # (n, 2, 512)
+        x = x[:, :, CROP_START:CROP_END]                 # (n, 2, 250)
+
+        all_X.append(x)
         all_y.append(labels)
         nd  = int((labels == 0).sum())
         ns  = int(labels.sum())
@@ -133,11 +150,11 @@ class TemporalAttention(nn.Module):
 
 class CNN1D(nn.Module):
     """
-    1D-CNN on raw 512-sample A-scan waveforms.
-    in_channels=1 (single trace input).
+    1D-CNN on dual-channel 250-sample A-scan input.
+    in_channels=2: channel 0 = raw z-scored waveform, channel 1 = Hilbert envelope.
     Output logit → sigmoid = P(sound).
     """
-    def __init__(self, in_channels: int = 1):
+    def __init__(self, in_channels: int = 2):
         super().__init__()
         self.conv = nn.Sequential(
             nn.Conv1d(in_channels, 32,  kernel_size=7, padding=3), nn.ReLU(),
@@ -164,9 +181,9 @@ class FocalLoss(nn.Module):
     """
     Binary focal loss.
     alpha*(1-pt)^gamma*bce — down-weights easy examples, focuses on hard ones.
-    alpha=0.25, gamma=2.0 are the RetinaNet defaults and work well here.
+    alpha=0.75 up-weights the delaminated (minority) class.
     """
-    def __init__(self, alpha: float = 0.25, gamma: float = 2.0):
+    def __init__(self, alpha: float = 0.75, gamma: float = 2.0):
         super().__init__()
         self.alpha = alpha
         self.gamma = gamma
@@ -183,18 +200,18 @@ def augment_batch(xb: torch.Tensor) -> torch.Tensor:
     """
     Strong per-sample augmentations (training only).
     Each transform applied independently with 50% probability per sample.
-    Input: (B, 1, T)
+    Input: (B, C, T) — C=2: channel 0 = raw, channel 1 = envelope.
     """
     B, C, T = xb.shape
     dev = xb.device
 
-    # Gaussian noise
+    # Gaussian noise — both channels
     mask = torch.rand(B, device=dev) < 0.5
     if mask.any():
         xb = xb.clone()
         xb[mask] = xb[mask] + torch.randn_like(xb[mask]) * 0.05
 
-    # Amplitude scale
+    # Amplitude scale — both channels (preserves raw/envelope ratio)
     mask = torch.rand(B, device=dev) < 0.5
     if mask.any():
         scale = torch.empty(int(mask.sum()), 1, 1, device=dev).uniform_(0.7, 1.3)
@@ -207,10 +224,10 @@ def augment_batch(xb: torch.Tensor) -> torch.Tensor:
         for i, s in zip(mask_idx.tolist(), shifts):
             xb[i] = torch.roll(xb[i], s, dims=-1)
 
-    # Polarity flip
+    # Polarity flip — raw channel only (channel 0); envelope is unsigned
     mask = torch.rand(B, device=dev) < 0.5
     if mask.any():
-        xb[mask] = -xb[mask]
+        xb[mask, 0:1] = -xb[mask, 0:1]
 
     return xb
 
@@ -369,9 +386,9 @@ else:
 
 # ── Step 4: Build or load model ────────────────────────────────────────────────
 
-model    = CNN1D(in_channels=1).to(DEVICE)
+model    = CNN1D(in_channels=2).to(DEVICE)
 n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-print(f"\nCNN1D  in_channels=1  params={n_params:,}", flush=True)
+print(f"\nCNN1D  in_channels=2  crop={CROP_START}:{CROP_END}  params={n_params:,}", flush=True)
 
 
 # ═══ Evaluation branch ════════════════════════════════════════════════════════
@@ -429,11 +446,11 @@ else:
     )
 
     # ── Loss, optimiser, scheduler ─────────────────────────────────────────────
-    criterion = FocalLoss(alpha=0.25, gamma=2.0)
+    criterion = FocalLoss(alpha=0.75, gamma=2.0)
     optimizer = torch.optim.Adam(model.parameters(), lr=3e-4, weight_decay=1e-4)
     scheduler = CosineAnnealingLR(optimizer, T_max=60, eta_min=1e-6)
 
-    print(f"\nFocalLoss(alpha=0.25, gamma=2.0)  "
+    print(f"\nFocalLoss(alpha=0.75, gamma=2.0)  "
           f"CosineAnnealingLR(T_max=60, eta_min=1e-6)  lr=3e-4", flush=True)
 
     # ── Training loop ──────────────────────────────────────────────────────────
@@ -528,6 +545,8 @@ else:
     print_metrics(m_tbs, label=f"TEST SET — threshold={best_t:.2f} (val-selected F1-max)")
 
     print(f"\n─── Deployment note ───────────────────────────────────────────", flush=True)
-    print(f"  V16 uses in_channels=1 — server/run.py CNN1D is already compatible.", flush=True)
-    print(f"  Set THRESHOLD = {best_t:.2f} in server/run.py", flush=True)
-    print(f"  run_inference already handles (n, 512) → unsqueeze(1) → (n, 1, 512).", flush=True)
+    print(f"  V17 uses in_channels=2 — server/run.py must be updated:", flush=True)
+    print(f"    1. CNN1D(in_channels=2) in run.py", flush=True)
+    print(f"    2. Inference pipeline: compute Hilbert envelope, stack channels,", flush=True)
+    print(f"       crop samples {CROP_START}:{CROP_END} → shape (n, 2, {CROP_END-CROP_START})", flush=True)
+    print(f"    3. Set THRESHOLD = {best_t:.2f}", flush=True)
