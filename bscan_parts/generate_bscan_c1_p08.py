@@ -280,7 +280,8 @@ def save_csv(signals: list, label: int, outpath: Path) -> None:
 print("=" * 64, flush=True)
 print(f"Part {PART_NUM} | Class {CLASS_LABEL} | Sims {SIM_START}-{SIM_END}", flush=True)
 print(f"  Simulations : {SIM_END - SIM_START} × {N_ASCAN} A-scans = up to {(SIM_END - SIM_START) * N_ASCAN:,} signals", flush=True)
-print(f"  Output      : {OUTPUT_DIR / f\'synthetic_bscan_c{CLASS_LABEL}_p{PART_NUM:02d}.csv\'}", flush=True)
+out_fname = f"synthetic_bscan_c{CLASS_LABEL}_p{PART_NUM:02d}.csv"
+print(f"  Output      : {OUTPUT_DIR / out_fname}", flush=True)
 print("=" * 64, flush=True)
 
 _tmpdir = Path(tempfile.mkdtemp(prefix="gpr_bscan_"))
