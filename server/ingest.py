@@ -33,6 +33,12 @@ from typing import Optional
 
 import numpy as np
 
+# ── Optional heavy dependencies — checked at call time, not import time ───────
+# readgssi and segyio are only required when the corresponding format is used.
+# We deliberately do NOT import them at module level so that the server starts
+# successfully even if they are not installed; a clear RuntimeError is raised
+# when the format is actually requested.
+
 # ── Format metadata ───────────────────────────────────────────────────────────
 #
 # All extensions are stored lowercase.  Every membership check must normalise
@@ -181,14 +187,31 @@ def convert_dzt(file_path: Path, upload_dir: Path) -> tuple[Path, Optional[dict]
     Only channel 0 is extracted (most bridge decks are single-channel).
     Companion .dzg file is parsed for GPS if present in upload_dir.
     """
+    print(f"[INGEST] convert_dzt: reading {file_path.name} …", flush=True)
+
+    # ── Import readgssi — must be listed in requirements.txt ─────────────────
     try:
         from readgssi import readgssi as rgssi
-    except ImportError:
-        import subprocess
-        subprocess.run([sys.executable, "-m", "pip", "install", "readgssi"], check=True)
-        from readgssi import readgssi as rgssi
+    except ImportError as exc:
+        raise RuntimeError(
+            "readgssi is not installed on this server. "
+            "Add 'readgssi>=0.0.18' to requirements.txt and redeploy."
+        ) from exc
 
-    header, data, _ = rgssi.readdzt(str(file_path))
+    # ── Parse the DZT binary ──────────────────────────────────────────────────
+    try:
+        header, data, _ = rgssi.readdzt(str(file_path))
+    except Exception as exc:
+        raise ValueError(
+            f"readgssi could not parse {file_path.name}: {exc}"
+        ) from exc
+
+    print(
+        f"[INGEST] convert_dzt: readdzt OK — "
+        f"data.shape={data.shape}, header keys={list(header.keys())[:8]}",
+        flush=True,
+    )
+
     nchan   = int(header.get("nchan",    1))
     samples = int(header.get("rh_nsamp", data.shape[0]))
 
@@ -197,8 +220,11 @@ def convert_dzt(file_path: Path, upload_dir: Path) -> tuple[Path, Optional[dict]
         data = np.fliplr(data)
 
     # De-interleave: channel k → data[:, k::nchan]
-    ch0 = data[:, 0::nchan]            # (samples_per_scan, n_traces)
+    ch0      = data[:, 0::nchan]        # (samples_per_scan, n_traces)
     n_traces = ch0.shape[1]
+
+    if n_traces == 0:
+        raise ValueError(f"DZT file {file_path.name} contains 0 traces after de-interleave.")
 
     if samples != 512:
         amps = np.stack([resample_to_512(ch0[:, i], samples) for i in range(n_traces)])
@@ -206,7 +232,11 @@ def convert_dzt(file_path: Path, upload_dir: Path) -> tuple[Path, Optional[dict]
         amps = ch0.T.astype(np.float32)  # (n_traces, 512)
 
     csv_path = upload_dir / (file_path.stem + "_ch0.csv")
+    print(f"[INGEST] convert_dzt: writing CSV → {csv_path.name} ({n_traces} traces)", flush=True)
     _write_csv(csv_path, amps)
+
+    if not csv_path.exists():
+        raise RuntimeError(f"CSV write failed — {csv_path} does not exist after _write_csv.")
 
     # GPS: case-insensitive search for companion .dzg in upload_dir then source dir
     dzg_path = _find_companion(file_path.stem, ".dzg", upload_dir, file_path.parent)
@@ -214,7 +244,7 @@ def convert_dzt(file_path: Path, upload_dir: Path) -> tuple[Path, Optional[dict]
     gps      = _gps_summary(coords)
 
     print(
-        f"[ingest] DZT → {csv_path.name}: {n_traces} traces, "
+        f"[INGEST] DZT → {csv_path.name}: {n_traces} traces, "
         f"ch0/{nchan} ch, {samples} samp/scan, GPS={'yes' if gps else 'no'}",
         flush=True,
     )
@@ -334,10 +364,11 @@ def convert_segy(file_path: Path, upload_dir: Path) -> tuple[Path, Optional[dict
     """
     try:
         import segyio
-    except ImportError:
-        import subprocess
-        subprocess.run([sys.executable, "-m", "pip", "install", "segyio"], check=True)
-        import segyio
+    except ImportError as exc:
+        raise RuntimeError(
+            "segyio is not installed on this server. "
+            "Add 'segyio>=1.9.12' to requirements.txt and redeploy."
+        ) from exc
 
     amps_list: list[np.ndarray] = []
     src_x_list: list[float]    = []
@@ -404,9 +435,20 @@ def detect_and_convert(
     Returns
     -------
     (csv_path, gps_data_or_None)
+
+    Raises
+    ------
+    ValueError  – unsupported extension or corrupt/unreadable file
+    RuntimeError – required library not installed (readgssi, segyio)
     """
     ext = file_path.suffix.lower()
+    print(
+        f"[INGEST] detect_and_convert called for: {file_path}, ext={ext}",
+        flush=True,
+    )
+
     if ext == ".csv":
+        print(f"[INGEST] CSV pass-through: {file_path.name}", flush=True)
         return file_path, None
     elif ext == ".dzt":
         return convert_dzt(file_path, upload_dir)
