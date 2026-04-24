@@ -4,7 +4,7 @@ import VerusLogo from '../components/VerusLogo';
 import { useAuth } from '../../context/AuthContext';
 
 export default function SignupPage() {
-  const { login } = useAuth();
+  const { signup } = useAuth();
   const navigate = useNavigate();
 
   const [name, setName]         = useState('');
@@ -14,17 +14,20 @@ export default function SignupPage() {
   const [agreed, setAgreed]     = useState(false);
   const [error, setError]       = useState('');
 
-  const handleSubmit = (e: FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError('');
 
-    if (!name.trim())            { setError('Please enter your name.'); return; }
-    if (!email.includes('@'))    { setError('Please enter a valid email address.'); return; }
-    if (password.length < 6)     { setError('Password must be at least 6 characters.'); return; }
-    if (!agreed)                 { setError('Please agree to the Terms of Service.'); return; }
+    if (!name.trim())         { setError('Please enter your name.'); return; }
+    if (!email.includes('@')) { setError('Please enter a valid email address.'); return; }
+    if (password.length < 6)  { setError('Password must be at least 6 characters.'); return; }
+    if (!agreed)              { setError('Please agree to the Terms of Service.'); return; }
 
-    // No real auth yet — accept any credentials
-    login(email, name.trim());
+    const { error: authError } = await signup(email, password, name.trim(), company.trim() || undefined);
+    if (authError) {
+      setError(authError);
+      return;
+    }
     navigate('/dashboard', { replace: true });
   };
 

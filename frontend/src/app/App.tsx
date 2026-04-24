@@ -1,7 +1,8 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { Upload, Check, X, Loader2, Download, Circle, Radio, Waves, Thermometer, Speaker } from 'lucide-react';
 import PlanView from './components/PlanView';
 import ThreeDView from './components/ThreeDView';
+import { useAuth } from '../context/AuthContext';
 
 // In dev mode (npm run dev), VITE_API_URL is set to '' in .env.local so all
 // fetch calls are relative (e.g. /health) and the Vite proxy forwards them to
@@ -115,6 +116,7 @@ interface FileResult {
 }
 
 export default function App() {
+  const { session } = useAuth();
   const [activeMethod, setActiveMethod] = useState<InspectionMethod>('gpr');
   const [files, setFiles] = useState<UploadedFile[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -231,82 +233,83 @@ export default function App() {
     setSlowRequest(false);
     setErrorMsg(null);
 
-    // Set slow request warning after 5 seconds
-    const slowTimeout = setTimeout(() => {
-      setSlowRequest(true);
-    }, 5000);
+    const slowTimeout = setTimeout(() => setSlowRequest(true), 5000);
 
     try {
-      // Create FormData with all files
       const formData = new FormData();
-      files.forEach(f => {
-        formData.append('files', f.file);
-      });
+      files.forEach(f => formData.append('files', f.file));
 
-      console.log('[ANALYZE] Sending request to:', `${PYTHON_SERVER_URL}/analyze`);
-      console.log('[ANALYZE] Number of files:', files.length);
+      const headers: Record<string, string> = {};
+      if (session?.access_token) {
+        headers['Authorization'] = `Bearer ${session.access_token}`;
+      }
 
+      // POST /analyze → returns {job_id} immediately
       const response = await fetch(`${PYTHON_SERVER_URL}/analyze`, {
         method: 'POST',
+        headers,
         body: formData,
-        signal: AbortSignal.timeout(300000), // 5 minute timeout (increased from 60s)
+        signal: AbortSignal.timeout(30000), // only waiting for job_id, so 30s is plenty
       });
 
       clearTimeout(slowTimeout);
 
-      console.log('[ANALYZE] Response status:', response.status);
-      console.log('[ANALYZE] Response OK:', response.ok);
-
       if (!response.ok) {
-        // Handle 503 hibernate-wake-error from Render
         if (response.status === 503) {
-          setErrorMsg('Server is waking up from sleep (Render free tier). This can take up to 2 minutes — wait, then try again.');
+          setErrorMsg('Server is waking up (Render free tier). Wait ~2 minutes and try again.');
           setIsAnalyzing(false);
           setSlowRequest(false);
           setServerStatus('warming');
           return;
         }
-
-        let httpErrorMsg = 'Unknown error';
-        try {
-          const errJson = await response.json();
-          console.error('[ANALYZE] Error response:', errJson);
-          httpErrorMsg = errJson.detail || errJson.error || errJson.stderr || JSON.stringify(errJson);
-        } catch {
-          const errorText = await response.text();
-          console.error('[ANALYZE] Error text:', errorText);
-          httpErrorMsg = errorText || `HTTP ${response.status} error`;
-        }
-        console.error('Analysis failed:', httpErrorMsg);
-        setErrorMsg(`Analysis failed: ${httpErrorMsg}`);
+        let msg = 'Unknown error';
+        try { const j = await response.json(); msg = j.detail || j.error || JSON.stringify(j); }
+        catch { msg = await response.text() || `HTTP ${response.status}`; }
+        setErrorMsg(`Analysis failed: ${msg}`);
         setIsAnalyzing(false);
         setSlowRequest(false);
         return;
       }
 
-      const result: AnalysisResult = await response.json();
-      console.log('Analysis result:', result);
+      const { job_id } = await response.json();
+      setServerStatus('online');
+      console.log('[ANALYZE] Job queued:', job_id);
 
-      setAnalysisResult(result);
-      setIsAnalyzing(false);
-      setSlowRequest(false);
-      setServerStatus('online'); // Server is clearly online after successful response
+      // Poll GET /job/{job_id} every 3 seconds
+      const pollInterval = setInterval(async () => {
+        try {
+          const jobRes = await fetch(`${PYTHON_SERVER_URL}/job/${job_id}`, { headers });
+          if (!jobRes.ok) return;
+          const job = await jobRes.json();
+
+          if (job.status === 'complete' && job.result) {
+            clearInterval(pollInterval);
+            setAnalysisResult(job.result);
+            setIsAnalyzing(false);
+            setSlowRequest(false);
+          } else if (job.status === 'failed') {
+            clearInterval(pollInterval);
+            setErrorMsg(`Analysis failed: ${job.error || 'Unknown error'}`);
+            setIsAnalyzing(false);
+            setSlowRequest(false);
+          }
+        } catch (err) {
+          console.error('[POLL] Error polling job:', err);
+        }
+      }, 3000);
 
     } catch (error) {
       clearTimeout(slowTimeout);
-      console.error('Error during analysis:', error);
-
       if (error instanceof Error && error.name === 'TimeoutError') {
-        setErrorMsg('Analysis timed out after 5 minutes. The server may still be starting up — wait 90 seconds and try again, or upload fewer files.');
+        setErrorMsg('Could not reach server. Wait 90 seconds and try again.');
       } else if (error instanceof TypeError && error.message.includes('fetch')) {
-        setErrorMsg('Cannot connect to server. The server may be asleep (Render free tier) — wait 2 minutes and try again.');
+        setErrorMsg('Cannot connect to server (Render may be asleep — wait 2 min).');
         setServerStatus('warming');
       } else if (error instanceof Error) {
         setErrorMsg(`Analysis failed: ${error.message}`);
       } else {
-        setErrorMsg('Analysis failed. Please check your connection and try again.');
+        setErrorMsg('Analysis failed. Check your connection and try again.');
       }
-
       setIsAnalyzing(false);
       setSlowRequest(false);
     }

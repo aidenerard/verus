@@ -11,7 +11,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError]       = useState('');
 
-  const handleSubmit = (e: FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError('');
 
@@ -24,8 +24,11 @@ export default function LoginPage() {
       return;
     }
 
-    // No real auth yet — accept any credentials
-    login(email, email.split('@')[0]);
+    const { error: authError } = await login(email, password);
+    if (authError) {
+      setError(authError);
+      return;
+    }
     navigate('/dashboard', { replace: true });
   };
 

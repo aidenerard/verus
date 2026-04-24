@@ -9,8 +9,9 @@ import TeamPage from './pages/TeamPage';
 import App from './App';
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
-  const { auth } = useAuth();
-  if (!auth.isAuthenticated) return <Navigate to="/login" replace />;
+  const { isAuthenticated, isLoading } = useAuth();
+  if (isLoading) return null;
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
   return <>{children}</>;
 }
 

@@ -21,6 +21,9 @@ gdown==4.7.1
 readgssi>=0.0.18
 segyio>=1.9.12
 
+# Supabase Python client — auth verification + DB writes
+supabase>=2.0.0
+
 # PyTorch CPU-only — lightweight for 512 MB RAM
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch==2.2.2+cpu
