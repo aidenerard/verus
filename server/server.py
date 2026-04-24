@@ -57,6 +57,14 @@ from run import (
     DEVICE,
 )
 
+# Format detection and binary-to-CSV conversion
+from ingest import (
+    detect_and_convert,
+    SUPPORTED_EXTENSIONS,
+    COMPANION_EXTENSIONS,
+    FORMAT_INFO,
+)
+
 # ── Server-specific configuration ────────────────────────────────────────────
 
 
@@ -78,7 +86,7 @@ def _resolve_model_path() -> Path:
     return Path("model.pth")
 
 
-MODEL_PATH   = _resolve_model_path()
+MODEL_PATH   = Path("model.pth")
 MAX_FILE_MB  = 50    # per-file upload limit (~9.7 MB per SDNET file, well within)
 MAX_TOTAL_MB = 2000  # total upload limit — files are processed one-at-a-time so
                      # only per-file RAM matters; 2 GB handles ~200 scan lines
@@ -169,6 +177,16 @@ def health() -> dict:
     }
 
 
+@app.get("/formats")
+def formats() -> dict:
+    """Return list of supported GPR file formats."""
+    return {
+        "supported_extensions": sorted(SUPPORTED_EXTENSIONS),
+        "companion_extensions": sorted(COMPANION_EXTENSIONS),
+        "formats": FORMAT_INFO,
+    }
+
+
 @app.get("/memory")
 def memory() -> dict:
     vm = psutil.virtual_memory()
@@ -196,21 +214,15 @@ async def analyze(files: list[UploadFile] = File(...)) -> JSONResponse:
         print(f"[analyze] RAM at start: {vm.used//1024**2} MB used / "
               f"{vm.total//1024**2} MB total ({vm.percent:.1f}%)", flush=True)
 
-        file_preds: list[np.ndarray] = []
-        file_confs: list[np.ndarray] = []
-        file_names: list[str]        = []
-        per_file_summary: list[dict] = []
-        total_sigs  = 0
         total_bytes = 0
 
+        # ── Phase 1: save ALL uploaded files (companions needed for GPS/headers) ──
+        saved_paths: list[tuple[str, Path]] = []   # (original_filename, dest_path)
         for i, upload in enumerate(files):
-            fname = upload.filename or f"upload_{i}.csv"
-            print(f"[analyze] File {i+1}/{len(files)}: {fname}", flush=True)
-
+            fname   = upload.filename or f"upload_{i}.bin"
             content = await upload.read()
             file_mb = len(content) / 1024 ** 2
 
-            # ── Per-file size guard ───────────────────────────────────────────
             if file_mb > MAX_FILE_MB:
                 raise HTTPException(
                     status_code=413,
@@ -226,29 +238,63 @@ async def analyze(files: list[UploadFile] = File(...)) -> JSONResponse:
 
             dest = tmpdir / fname
             dest.write_bytes(content)
-            del content                                   # free upload bytes now
+            del content
+            saved_paths.append((fname, dest))
+            print(f"[analyze] Saved {i+1}/{len(files)}: {fname} ({file_mb:.2f} MB)", flush=True)
 
+        # ── Phase 2: process primary (non-companion) files ──────────────────────
+        file_preds: list[np.ndarray] = []
+        file_confs: list[np.ndarray] = []
+        file_names: list[str]        = []
+        per_file_summary: list[dict] = []
+        total_sigs = 0
+
+        for fname, dest in saved_paths:
+            ext = dest.suffix.lower()
+
+            # Skip companion / metadata files — they're only needed for context
+            if ext in COMPANION_EXTENSIONS:
+                print(f"[analyze] Skipping companion file: {fname}", flush=True)
+                continue
+
+            # Reject unknown formats with a clear message
+            if ext not in SUPPORTED_EXTENSIONS:
+                print(f"[analyze] WARNING: unsupported format {ext!r} in {fname} — skipping", flush=True)
+                continue
+
+            print(f"[analyze] Processing: {fname}", flush=True)
+
+            # Convert binary → CSV (CSV files pass through unchanged)
             try:
-                signals = load_csv(dest)
+                csv_path, gps = detect_and_convert(dest, upload_dir=tmpdir)
             except Exception as exc:
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"Could not parse {fname}: {exc}",
-                )
+                print(f"[analyze] WARNING: conversion failed for {fname}: {exc} — skipping", flush=True)
+                continue
 
-            print(f"[analyze]   → {signals.shape[0]} signals loaded, "
-                  f"running inference in batches of {INFER_BATCH} …", flush=True)
+            # Load CSV → (n_signals, 512) float32
+            try:
+                signals = load_csv(csv_path)
+            except Exception as exc:
+                print(f"[analyze] WARNING: load_csv failed for {fname}: {exc} — skipping", flush=True)
+                continue
+
+            print(f"[analyze]   → {signals.shape[0]} signals, running inference …", flush=True)
             preds, confs = run_inference(_model, signals)
-            del signals                                   # free after inference
-            dest.unlink(missing_ok=True)                  # delete temp file now
+            del signals
+            # Clean up converted CSV if it differs from the original upload
+            if csv_path != dest:
+                csv_path.unlink(missing_ok=True)
             gc.collect()
 
             n         = len(preds)
             n_delam   = int((preds == 0).sum())
             delam_pct = round(n_delam / n * 100, 2) if n else 0.0
             vm2 = psutil.virtual_memory()
-            print(f"[analyze]   → {n} signals, {delam_pct}% delam | "
-                  f"RAM: {vm2.used//1024**2} MB ({vm2.percent:.1f}%)", flush=True)
+            print(
+                f"[analyze]   → {n} signals, {delam_pct:.1f}% delam | "
+                f"RAM: {vm2.used//1024**2} MB ({vm2.percent:.1f}%)",
+                flush=True,
+            )
 
             file_preds.append(preds)
             file_confs.append(confs)
@@ -257,27 +303,35 @@ async def analyze(files: list[UploadFile] = File(...)) -> JSONResponse:
                 "filename":  fname,
                 "signals":   n,
                 "delam_pct": delam_pct,
+                "gps":       gps,         # dict | None
             })
             total_sigs += n
+
+        if total_sigs == 0:
+            raise HTTPException(
+                status_code=422,
+                detail="No valid GPR signals found in uploaded files.",
+            )
 
         # Aggregate stats
         all_preds       = np.concatenate(file_preds)
         n_del_total     = int((all_preds == 0).sum())
         del all_preds
-        delam_pct_total = round(n_del_total / total_sigs * 100, 2) if total_sigs else 0.0
+        delam_pct_total = round(n_del_total / total_sigs * 100, 2)
         sound_pct_total = round(100.0 - delam_pct_total, 2)
 
-        # Render C-scan → base64 PNG string (in-memory, no disk I/O)
-        gc.collect()   # free any lingering per-file buffers before the peak render allocation
+        # Render C-scan → base64 PNG
+        gc.collect()
         vm_pre = psutil.virtual_memory()
-        print(f"[analyze] Rendering C-scan: {len(file_preds)} files, "
-              f"{total_sigs:,} signals (grid capped at "
-              f"{MAX_GRID_ROWS}×{MAX_GRID_COLS}) — RAM before render: "
-              f"{vm_pre.used//1024**2} MB ({vm_pre.percent:.1f}%) …", flush=True)
+        print(
+            f"[analyze] Rendering C-scan: {len(file_preds)} files, {total_sigs:,} signals "
+            f"(grid capped at {MAX_GRID_ROWS}×{MAX_GRID_COLS}) — "
+            f"RAM before render: {vm_pre.used//1024**2} MB ({vm_pre.percent:.1f}%) …",
+            flush=True,
+        )
         try:
             cscan_b64 = render_cscan_b64(file_preds, file_confs, file_names)
-            print(f"[analyze] C-scan rendered OK ({len(cscan_b64)//1024} KB b64)",
-                  flush=True)
+            print(f"[analyze] C-scan rendered OK ({len(cscan_b64)//1024} KB b64)", flush=True)
         except Exception as render_exc:
             print(f"[analyze] WARNING: C-scan render failed: {render_exc}", flush=True)
             cscan_b64 = ""
