@@ -3,11 +3,11 @@ import { useNavigate } from 'react-router';
 import { ArrowLeft, Waves, Thermometer, Speaker } from 'lucide-react';
 import VerusLogo from '../../components/VerusLogo';
 
-const BG    = '#080d17';
-const PANEL = '#0d1626';
-const BORDER = 'rgba(255,255,255,0.08)';
-const TEXT  = '#dde3f0';
-const TEXT2 = '#5a7090';
+const BG     = '#F5F3EF';
+const PANEL  = '#FFFFFF';
+const BORDER = '#E2DED9';
+const TEXT   = '#0A0A0A';
+const TEXT2  = '#7A7470';
 const ACCENT = '#E8601C';
 
 interface MethodConfig {
@@ -126,7 +126,7 @@ export default function ComingSoonWorkspace({ method }: { method: string }) {
                 placeholder="your@email.com"
                 style={{
                   flex: 1, padding: '10px 14px',
-                  background: 'rgba(255,255,255,0.05)',
+                  background: '#F5F3EF',
                   border: `1px solid ${BORDER}`, borderRadius: 0,
                   color: TEXT, fontSize: 13, fontFamily: 'Inter, sans-serif',
                   outline: 'none',

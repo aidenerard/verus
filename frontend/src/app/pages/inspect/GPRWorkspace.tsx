@@ -59,13 +59,13 @@ const GPR_EXTS = new Set([
   '.csv', '.dzt', '.dt1', '.rd3', '.rd7', '.segy', '.sgy', '.dzg', '.hd', '.rad',
 ]);
 
-const BG      = '#080d17';
-const PANEL   = '#0c1525';
-const RAISED  = '#111e34';
-const BORDER  = 'rgba(255,255,255,0.07)';
-const BORDER2 = 'rgba(255,255,255,0.14)';
-const TEXT    = '#dde3f0';
-const TEXT2   = '#4d6480';
+const BG      = '#F5F3EF';
+const PANEL   = '#FFFFFF';
+const RAISED  = '#F5F3EF';
+const BORDER  = '#E2DED9';
+const BORDER2 = '#C8C3BD';
+const TEXT    = '#0A0A0A';
+const TEXT2   = '#7A7470';
 const ACCENT  = '#E8601C';
 
 const STATUS_MSGS = [
@@ -788,7 +788,7 @@ export default function GPRWorkspace() {
                 <PanelGroup direction="horizontal" style={{ flex: 1 }}>
 
                   {/* ── MAIN VIEWPORT ─────────────────────────────────────── */}
-                  <Panel style={{ position: 'relative', overflow: 'hidden', background: '#050b14' }}>
+                  <Panel style={{ position: 'relative', overflow: 'hidden', background: '#F5F3EF' }}>
 
                     {/* Mapbox container — always in DOM, hidden when 3D active */}
                     <div
@@ -815,11 +815,11 @@ export default function GPRWorkspace() {
                     {!hasResult && !isAnalyzing && files.length === 0 && activeView === 'top' && MAPBOX_TOKEN && (
                       <div style={{
                         position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)',
-                        background: 'rgba(12,21,37,0.88)', border: `1px solid ${BORDER2}`,
+                        background: 'rgba(255,255,255,0.92)', border: `1.5px solid ${BORDER}`,
                         padding: '28px 36px', textAlign: 'center', pointerEvents: 'none',
                         backdropFilter: 'blur(4px)',
                       }}>
-                        <Radio size={28} style={{ color: TEXT2, marginBottom: 12 }} />
+                        <Radio size={28} style={{ color: '#B0A9A4', marginBottom: 12 }} />
                         <p style={{ fontSize: 14, fontWeight: 600, color: TEXT, margin: '0 0 6px' }}>
                           Upload GPR profiles to begin analysis
                         </p>
@@ -1157,7 +1157,7 @@ export default function GPRWorkspace() {
                 </div>
 
                 {/* Canvas area */}
-                <div style={{ flex: 1, overflow: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#050b14', position: 'relative' }}>
+                <div style={{ flex: 1, overflow: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F5F3EF', position: 'relative' }}>
                   {hasResult ? (
                     <div style={{ position: 'relative', width: '100%', height: '100%', display: 'flex', alignItems: 'stretch' }}>
                       {/* Y-axis label */}
