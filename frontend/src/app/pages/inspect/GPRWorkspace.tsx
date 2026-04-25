@@ -486,7 +486,7 @@ export default function GPRWorkspace() {
 
           <div style={{ width: 1, height: 20, background: BORDER, flexShrink: 0 }} />
 
-          <VerusLogo size={22} wordmarkColor="rgba(221,227,240,0.6)" />
+          <VerusLogo size={22} wordmarkColor="#0A0A0A" />
 
           <div style={{ width: 1, height: 20, background: BORDER, flexShrink: 0 }} />
 
@@ -616,7 +616,7 @@ export default function GPRWorkspace() {
                     padding: '10px 16px', background: 'none', border: 'none',
                     color: TEXT, fontSize: 12, cursor: 'pointer', fontFamily: 'Inter, sans-serif',
                   }}
-                  onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.06)')}
+                  onMouseEnter={e => (e.currentTarget.style.background = 'rgba(0,0,0,0.05)')}
                   onMouseLeave={e => (e.currentTarget.style.background = 'none')}
                   >
                     {label}
@@ -659,7 +659,7 @@ export default function GPRWorkspace() {
                     borderLeft: `2px solid ${selectedLayer === id ? ACCENT : 'transparent'}`,
                     transition: 'background 0.12s',
                   }}
-                  onMouseEnter={e => { if (selectedLayer !== id) e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
+                  onMouseEnter={e => { if (selectedLayer !== id) e.currentTarget.style.background = 'rgba(0,0,0,0.04)'; }}
                   onMouseLeave={e => { if (selectedLayer !== id) e.currentTarget.style.background = 'none'; }}
                 >
                   <span style={{ fontSize: 12, color: selectedLayer === id ? TEXT : TEXT2, flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -672,7 +672,7 @@ export default function GPRWorkspace() {
                   </span>
                   <button
                     onClick={ev => { ev.stopPropagation(); setLayerVis(v => ({ ...v, [id]: !v[id as LayerId] })); }}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: layerVis[id as LayerId] ? TEXT2 : 'rgba(255,255,255,0.18)', display: 'flex' }}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: layerVis[id as LayerId] ? TEXT2 : '#C8C3BD', display: 'flex' }}
                     title={layerVis[id as LayerId] ? 'Hide layer' : 'Show layer'}
                   >
                     {layerVis[id as LayerId] ? <Eye size={13} /> : <EyeOff size={13} />}
@@ -691,7 +691,7 @@ export default function GPRWorkspace() {
                         padding: '5px 14px 5px 28px', cursor: 'pointer',
                         background: selectedFileIdx === i && selectedLayer === 'gpr' ? 'rgba(232,96,28,0.08)' : 'none',
                       }}
-                      onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.04)')}
+                      onMouseEnter={e => (e.currentTarget.style.background = 'rgba(0,0,0,0.04)')}
                       onMouseLeave={e => (e.currentTarget.style.background = selectedFileIdx === i && selectedLayer === 'gpr' ? 'rgba(232,96,28,0.08)' : 'none')}
                     >
                       {isAnalyzing && jobStatus !== 'complete' ? (
@@ -714,13 +714,13 @@ export default function GPRWorkspace() {
                 onClick={() => setShowAddMenu(v => !v)}
                 style={{
                   width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                  padding: '8px', background: 'rgba(255,255,255,0.04)',
+                  padding: '8px', background: 'rgba(0,0,0,0.03)',
                   border: `1px dashed ${BORDER2}`, color: TEXT2, cursor: 'pointer',
                   fontSize: 11, fontWeight: 600, fontFamily: 'Inter, sans-serif',
                   borderRadius: 3, transition: 'background 0.12s, color 0.12s',
                 }}
-                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; e.currentTarget.style.color = TEXT; }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; e.currentTarget.style.color = TEXT2; }}
+                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.07)'; e.currentTarget.style.color = TEXT; }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.03)'; e.currentTarget.style.color = TEXT2; }}
               >
                 <Plus size={12} /> Add Layer
               </button>
@@ -729,7 +729,7 @@ export default function GPRWorkspace() {
                 <div style={{
                   position: 'absolute', bottom: '100%', left: 10, right: 10,
                   background: RAISED, border: `1px solid ${BORDER2}`,
-                  boxShadow: '0 -8px 24px rgba(0,0,0,0.5)', zIndex: 50,
+                  boxShadow: '0 -8px 24px rgba(0,0,0,0.12)', zIndex: 50,
                 }}>
                   {['GPR Profiles', 'Point Annotations', 'Sketch', 'Notes'].map(opt => (
                     <button key={opt}
@@ -743,7 +743,7 @@ export default function GPRWorkspace() {
                         color: opt === 'GPR Profiles' ? TEXT : TEXT2,
                         fontSize: 12, cursor: 'pointer', fontFamily: 'Inter, sans-serif',
                       }}
-                      onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.06)')}
+                      onMouseEnter={e => (e.currentTarget.style.background = 'rgba(0,0,0,0.05)')}
                       onMouseLeave={e => (e.currentTarget.style.background = 'none')}
                     >
                       {opt}
@@ -767,7 +767,7 @@ export default function GPRWorkspace() {
                   cursor: 'pointer', fontSize: 11, fontWeight: 600,
                   fontFamily: 'Inter, sans-serif', borderRadius: 3,
                 }}
-                onMouseEnter={e => { if (!showProjects) e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; }}
+                onMouseEnter={e => { if (!showProjects) e.currentTarget.style.background = 'rgba(0,0,0,0.05)'; }}
                 onMouseLeave={e => { if (!showProjects) e.currentTarget.style.background = 'none'; }}
               >
                 <FolderOpen size={13} /> My Projects
@@ -897,7 +897,7 @@ export default function GPRWorkspace() {
                                     background: selectedFileIdx === i ? 'rgba(232,96,28,0.08)' : 'none',
                                     borderLeft: `2px solid ${selectedFileIdx === i ? ACCENT : 'transparent'}`,
                                   }}
-                                  onMouseEnter={e => { if (selectedFileIdx !== i) e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
+                                  onMouseEnter={e => { if (selectedFileIdx !== i) e.currentTarget.style.background = 'rgba(0,0,0,0.04)'; }}
                                   onMouseLeave={e => { if (selectedFileIdx !== i) e.currentTarget.style.background = 'none'; }}
                                 >
                                   <div style={{ fontSize: 11, color: TEXT, marginBottom: 4, fontFamily: 'monospace', wordBreak: 'break-all' }}>
@@ -906,7 +906,7 @@ export default function GPRWorkspace() {
                                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
                                     <span style={{ fontSize: 10, color: TEXT2 }}>{f.signals.toLocaleString()} signals</span>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                      <div style={{ width: 40, height: 4, background: 'rgba(255,255,255,0.1)', borderRadius: 2, overflow: 'hidden' }}>
+                                      <div style={{ width: 40, height: 4, background: '#E2DED9', borderRadius: 2, overflow: 'hidden' }}>
                                         <div style={{ height: '100%', width: `${f.delam_pct}%`, background: delamColor(f.delam_pct), borderRadius: 2 }} />
                                       </div>
                                       <span style={{ fontSize: 10, color: delamColor(f.delam_pct), fontWeight: 700, minWidth: 32, textAlign: 'right' }}>
@@ -1022,7 +1022,7 @@ export default function GPRWorkspace() {
                               </div>
 
                               {isAnalyzing && (
-                                <div style={{ height: 3, background: 'rgba(255,255,255,0.08)', overflow: 'hidden', borderRadius: 2 }}>
+                                <div style={{ height: 3, background: '#E2DED9', overflow: 'hidden', borderRadius: 2 }}>
                                   <div style={{
                                     height: '100%', width: '40%', background: ACCENT, borderRadius: 2,
                                     animation: 'verus-bar 1.8s ease-in-out infinite',

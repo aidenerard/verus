@@ -73,7 +73,7 @@ export default function ComingSoonWorkspace({ method }: { method: string }) {
           <ArrowLeft size={14} /> Dashboard
         </button>
         <div style={{ width: 1, height: 20, background: BORDER }} />
-        <VerusLogo size={22} wordmarkColor="rgba(221,227,240,0.7)" />
+        <VerusLogo size={22} wordmarkColor="#0A0A0A" />
       </div>
 
       {/* Body */}
