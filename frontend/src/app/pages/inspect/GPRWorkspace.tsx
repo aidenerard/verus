@@ -352,7 +352,7 @@ export default function GPRWorkspace() {
 
       const res = await fetch(`${SERVER}/analyze`, {
         method: 'POST', headers, body: formData,
-        signal: AbortSignal.timeout(30000),
+        signal: AbortSignal.timeout(150000), // 2.5 min — covers Render cold start + upload
       });
 
       clearInterval(statusCycleRef.current!);

@@ -200,7 +200,7 @@ def convert_dzt(file_path: Path, upload_dir: Path) -> tuple[Path, Optional[dict]
 
     # ── Parse the DZT binary ──────────────────────────────────────────────────
     try:
-        header, data, _ = rgssi.readdzt(str(file_path))
+        header, arrs, _ = rgssi.readdzt(str(file_path))
     except Exception as exc:
         raise ValueError(
             f"readgssi could not parse {file_path.name}: {exc}"
@@ -208,28 +208,49 @@ def convert_dzt(file_path: Path, upload_dir: Path) -> tuple[Path, Optional[dict]
 
     print(
         f"[INGEST] convert_dzt: readdzt OK — "
-        f"data.shape={data.shape}, header keys={list(header.keys())[:8]}",
+        f"type(arrs)={type(arrs).__name__}, header keys={list(header.keys())[:8]}",
         flush=True,
     )
 
-    nchan   = int(header.get("nchan",    1))
-    samples = int(header.get("rh_nsamp", data.shape[0]))
+    # readgssi ≥0.0.16 returns arrs as a dict {channel_idx: (n_samples, n_traces)}.
+    # Older versions returned a single interleaved numpy array (n_samples, n_traces*nchan).
+    # Handle both cases gracefully.
+    nchan = int(header.get("nchan", 1))
 
-    # Reverse-pass files are often named *_R.dzt
-    if "_r" in file_path.stem.lower():
-        data = np.fliplr(data)
+    if isinstance(arrs, dict):
+        # Modern API: channels already separated — grab channel 0
+        keys = sorted(arrs.keys())
+        ch0  = arrs[keys[0]]            # (n_samples, n_traces)
+        print(f"[INGEST] convert_dzt: dict API, {len(keys)} channel(s), ch0.shape={ch0.shape}", flush=True)
+    elif isinstance(arrs, (list, tuple)):
+        # List API
+        ch0  = arrs[0]
+        print(f"[INGEST] convert_dzt: list API, {len(arrs)} channel(s), ch0.shape={ch0.shape}", flush=True)
+    else:
+        # Legacy interleaved array — de-interleave manually
+        if "_r" in file_path.stem.lower():
+            arrs = np.fliplr(arrs)
+        ch0 = arrs[:, 0::nchan]         # (n_samples, n_traces)
+        print(f"[INGEST] convert_dzt: legacy array API, ch0.shape={ch0.shape}", flush=True)
 
-    # De-interleave: channel k → data[:, k::nchan]
-    ch0      = data[:, 0::nchan]        # (samples_per_scan, n_traces)
-    n_traces = ch0.shape[1]
+    ch0      = np.asarray(ch0, dtype=np.float32)
+    n_samples, n_traces = ch0.shape[0], ch0.shape[1]
 
     if n_traces == 0:
-        raise ValueError(f"DZT file {file_path.name} contains 0 traces after de-interleave.")
+        raise ValueError(f"DZT file {file_path.name} contains 0 traces.")
 
-    if samples != 512:
-        amps = np.stack([resample_to_512(ch0[:, i], samples) for i in range(n_traces)])
+    # Flip reverse-pass files (stem ends in _R or _r)
+    if "_r" in file_path.stem.lower() and not isinstance(arrs, (list, tuple, dict)):
+        pass  # already flipped above for legacy path
+    elif "_r" in file_path.stem.lower():
+        ch0 = np.fliplr(ch0)
+
+    # Transpose to (n_traces, n_samples) then resample to 512
+    amps_raw = ch0.T                    # (n_traces, n_samples)
+    if n_samples != 512:
+        amps = np.stack([resample_to_512(amps_raw[i], n_samples) for i in range(n_traces)])
     else:
-        amps = ch0.T.astype(np.float32)  # (n_traces, 512)
+        amps = amps_raw.astype(np.float32)
 
     csv_path = upload_dir / (file_path.stem + "_ch0.csv")
     print(f"[INGEST] convert_dzt: writing CSV → {csv_path.name} ({n_traces} traces)", flush=True)
@@ -245,7 +266,7 @@ def convert_dzt(file_path: Path, upload_dir: Path) -> tuple[Path, Optional[dict]
 
     print(
         f"[INGEST] DZT → {csv_path.name}: {n_traces} traces, "
-        f"ch0/{nchan} ch, {samples} samp/scan, GPS={'yes' if gps else 'no'}",
+        f"ch0/{nchan} ch, {n_samples} samp/scan → 512, GPS={'yes' if gps else 'no'}",
         flush=True,
     )
     return csv_path, gps
