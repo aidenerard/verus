@@ -25,6 +25,8 @@ export default defineConfig({
       '/health':  'http://localhost:10000',
       '/analyze': 'http://localhost:10000',
       '/memory':  'http://localhost:10000',
+      '/job':     'http://localhost:10000',
+      '/formats': 'http://localhost:10000',
     },
   },
 

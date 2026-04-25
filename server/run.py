@@ -290,6 +290,36 @@ def run_inference(
     return preds, confs
 
 
+# ── B-scan extraction ─────────────────────────────────────────────────────────
+
+def extract_bscan_b64(
+    signals: np.ndarray,
+    max_traces: int = 256,
+    max_samples: int = 128,
+) -> dict:
+    """
+    Downsample (n_signals, 512) amplitude array to (max_traces, max_samples)
+    and return as a base64-encoded float32 blob for browser B-scan rendering.
+
+    Returns: {'data': str, 'n_traces': int, 'n_samples': int}
+    """
+    n = signals.shape[0]
+    zoom_t = min(1.0, max_traces  / n)
+    zoom_s = min(1.0, max_samples / signals.shape[1])
+
+    if zoom_t < 1.0 or zoom_s < 1.0:
+        arr = zoom(signals.astype(np.float32), [zoom_t, zoom_s], order=1)
+    else:
+        arr = signals.astype(np.float32)
+
+    arr = np.ascontiguousarray(arr)
+    return {
+        'data':      base64.b64encode(arr.tobytes()).decode('ascii'),
+        'n_traces':  arr.shape[0],
+        'n_samples': arr.shape[1],
+    }
+
+
 # ── Results helper ────────────────────────────────────────────────────────────
 
 def make_predictions_list(

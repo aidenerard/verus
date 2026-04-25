@@ -63,6 +63,7 @@ from run import (
     load_csv,
     run_inference,
     render_cscan_b64,
+    extract_bscan_b64,
     INFER_BATCH,
     MAX_GRID_ROWS,
     MAX_GRID_COLS,
@@ -254,6 +255,7 @@ def run_analysis_job(
                 continue
 
             print(f"[job:{job_id}]   → {signals.shape[0]} signals, running inference…", flush=True)
+            bscan_info = extract_bscan_b64(signals)   # extract before del
             preds, confs = run_inference(_model, signals)
             del signals
             if csv_path != dest:
@@ -272,6 +274,7 @@ def run_analysis_job(
                 "signals":   n,
                 "delam_pct": delam_pct,
                 "gps":       gps,
+                "bscan":     bscan_info,
             })
             total_sigs += n
 

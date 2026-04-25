@@ -182,9 +182,17 @@ export default function DashboardPage() {
     navigate('/', { replace: true });
   };
 
+  const INSPECT_ROUTES: Record<string, string> = {
+    'gpr':          '/inspect/gpr',
+    'impact-echo':  '/inspect/impact-echo',
+    'infrared':     '/inspect/ir',
+    'sounding':     '/inspect/ras',
+  };
+
   const handleModuleClick = (module: InspectionModule) => {
-    if (module.status === 'available') {
-      navigate('/analyze');
+    const route = INSPECT_ROUTES[module.id];
+    if (route) {
+      navigate(route);
     } else {
       setModalModule(module);
     }
