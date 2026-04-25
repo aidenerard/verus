@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router';
-import { Radio, Waves, Thermometer, Speaker, FolderOpen, X } from 'lucide-react';
+import { Radio, Waves, Thermometer, FolderOpen, X } from 'lucide-react';
 import VerusLogo from '../components/VerusLogo';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabase';
@@ -42,13 +42,13 @@ const MODULES: InspectionModule[] = [
     description: 'Detects subsurface delamination from electromagnetic reflection patterns in GPR A-scan waveforms.',
   },
   {
-    id: 'impact-echo',
-    name: 'Impact-Echo',
-    fullName: 'Impact-Echo Acoustic Testing',
+    id: 'masw',
+    name: 'MASW',
+    fullName: 'Multichannel Analysis of Surface Waves',
     status: 'in-development',
     icon: Waves,
-    standard: 'ASTM C1383',
-    description: 'Detects voids, delamination, and thickness anomalies from stress wave reflections.',
+    standard: 'ASTM D7400',
+    description: 'Detects subsurface anomalies and layer stiffness from Rayleigh wave dispersion curves.',
   },
   {
     id: 'infrared',
@@ -58,15 +58,6 @@ const MODULES: InspectionModule[] = [
     icon: Thermometer,
     standard: 'ASTM D4788',
     description: 'Detects subsurface delamination and moisture intrusion from thermal gradient patterns.',
-  },
-  {
-    id: 'sounding',
-    name: 'Sounding',
-    fullName: 'Rapid Automated Sounding',
-    status: 'in-development',
-    icon: Speaker,
-    standard: 'ASTM D4580',
-    description: 'Detects hollow or delaminated areas from acoustic response patterns in sounding signals.',
   },
 ];
 
@@ -184,9 +175,8 @@ export default function DashboardPage() {
 
   const INSPECT_ROUTES: Record<string, string> = {
     'gpr':          '/inspect/gpr',
-    'impact-echo':  '/inspect/impact-echo',
+    'masw':         '/inspect/masw',
     'infrared':     '/inspect/ir',
-    'sounding':     '/inspect/ras',
   };
 
   const handleModuleClick = (module: InspectionModule) => {

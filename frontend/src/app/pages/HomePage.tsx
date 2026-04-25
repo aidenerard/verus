@@ -714,10 +714,9 @@ function HowItWorks() {
 // ── Method marquee divider ────────────────────────────────────────────────────
 function MethodSlider() {
   const items = [
-    { name: 'GROUND-PENETRATING RADAR', standard: 'ASTM D6087' },
-    { name: 'IMPACT-ECHO',              standard: 'ASTM C1383' },
-    { name: 'INFRARED THERMOGRAPHY',    standard: 'ASTM D4788' },
-    { name: 'AUTOMATED SOUNDING',       standard: 'ASTM D4580' },
+    { name: 'GROUND-PENETRATING RADAR',               standard: 'ASTM D6087' },
+    { name: 'MULTICHANNEL ANALYSIS OF SURFACE WAVES', standard: 'ASTM D7400' },
+    { name: 'INFRARED THERMOGRAPHY',                  standard: 'ASTM D4788' },
   ];
 
   const renderItems = () =>
@@ -763,10 +762,9 @@ function MethodSlider() {
 
 // ── Our Platform ──────────────────────────────────────────────────────────────
 const METHODS = [
-  { label: 'Ground-Penetrating Radar', short: 'GPR',    active: true  },
-  { label: 'Impact-Echo',              short: 'IE',     active: false },
-  { label: 'Infrared Thermography',    short: 'IR',     active: false },
-  { label: 'Automated Sounding',       short: 'RAS',    active: false },
+  { label: 'Ground-Penetrating Radar',               short: 'GPR',  active: true  },
+  { label: 'Multichannel Analysis of Surface Waves', short: 'MASW', active: false },
+  { label: 'Infrared Thermography',                  short: 'IR',   active: false },
 ];
 
 function OurPlatform() {

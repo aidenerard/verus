@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Upload, Check, X, Loader2, Download, Circle, Radio, Waves, Thermometer, Speaker } from 'lucide-react';
+import { Upload, Check, X, Loader2, Download, Circle, Radio, Waves, Thermometer } from 'lucide-react';
 import PlanView from './components/PlanView';
 import ThreeDView from './components/ThreeDView';
 import { useAuth } from '../context/AuthContext';
@@ -20,7 +20,7 @@ const PYTHON_SERVER_URL =
     ? import.meta.env.VITE_API_URL          // '' in dev → relative URLs
     : 'https://verus-server.onrender.com';  // production fallback
 
-type InspectionMethod = 'gpr' | 'impact-echo' | 'infrared' | 'sounding';
+type InspectionMethod = 'gpr' | 'masw' | 'infrared';
 
 interface InspectionModule {
   id: InspectionMethod;
@@ -49,16 +49,16 @@ const INSPECTION_MODULES: InspectionModule[] = [
     detectionDescription: 'Detects subsurface delamination from electromagnetic reflection patterns in GPR A-scan waveforms.',
   },
   {
-    id: 'impact-echo',
-    name: 'Impact-Echo',
-    fullName: 'Impact-Echo Acoustic Testing',
-    description: 'Dedicated AI model for time-domain acoustic waveform classification.',
+    id: 'masw',
+    name: 'MASW',
+    fullName: 'Multichannel Analysis of Surface Waves',
+    description: 'Dedicated AI model for surface wave dispersion analysis and shear-wave velocity profiling.',
     status: 'in-development',
     icon: Waves,
-    input: 'Time-domain waveforms',
-    output: 'Condition map + report',
-    standard: 'ASTM C1383',
-    detectionDescription: 'Detects voids, delamination, and thickness anomalies from stress wave reflections in time-domain acoustic waveforms.',
+    input: 'Seismic waveforms',
+    output: 'Vs profile + report',
+    standard: 'ASTM D7400',
+    detectionDescription: 'Detects subsurface anomalies and layer stiffness from Rayleigh wave dispersion curves measured by geophone arrays.',
   },
   {
     id: 'infrared',
@@ -71,18 +71,6 @@ const INSPECTION_MODULES: InspectionModule[] = [
     output: 'Thermal map + report',
     standard: 'ASTM D4788',
     detectionDescription: 'Detects subsurface delamination and moisture intrusion from thermal gradient patterns in infrared imagery.',
-  },
-  {
-    id: 'sounding',
-    name: 'Automated Sounding',
-    fullName: 'Rapid Automated Sounding (RAS)',
-    description: 'Dedicated AI model for acoustic sounding signal classification and deck condition mapping.',
-    status: 'in-development',
-    icon: Speaker,
-    input: 'Acoustic signals',
-    output: 'Condition map + report',
-    standard: 'ASTM D4580',
-    detectionDescription: 'Detects hollow or delaminated areas from acoustic response patterns in automated chain drag or hammer sounding signals.',
   },
 ];
 

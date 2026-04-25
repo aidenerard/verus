@@ -33,14 +33,11 @@ export default function Router() {
         <Route path="/inspect/gpr" element={
           <ProtectedRoute><GPRWorkspace /></ProtectedRoute>
         } />
-        <Route path="/inspect/impact-echo" element={
-          <ProtectedRoute><ComingSoonWorkspace method="impact-echo" /></ProtectedRoute>
+        <Route path="/inspect/masw" element={
+          <ProtectedRoute><ComingSoonWorkspace method="masw" /></ProtectedRoute>
         } />
         <Route path="/inspect/ir" element={
           <ProtectedRoute><ComingSoonWorkspace method="ir" /></ProtectedRoute>
-        } />
-        <Route path="/inspect/ras" element={
-          <ProtectedRoute><ComingSoonWorkspace method="ras" /></ProtectedRoute>
         } />
 
         {/* Legacy redirect */}

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
-import { ArrowLeft, Waves, Thermometer, Speaker } from 'lucide-react';
+import { ArrowLeft, Waves, Thermometer } from 'lucide-react';
 import VerusLogo from '../../components/VerusLogo';
 
 const BG     = '#F5F3EF';
@@ -18,23 +18,17 @@ interface MethodConfig {
 }
 
 const METHODS: Record<string, MethodConfig> = {
-  'impact-echo': {
-    name: 'Impact-Echo',
-    fullName: 'Impact-Echo Acoustic Testing',
-    standard: 'ASTM C1383',
+  masw: {
+    name: 'MASW',
+    fullName: 'Multichannel Analysis of Surface Waves',
+    standard: 'ASTM D7400',
     icon: Waves,
   },
   ir: {
-    name: 'Infrared',
+    name: 'Infrared Thermography',
     fullName: 'Infrared Thermography',
     standard: 'ASTM D4788',
     icon: Thermometer,
-  },
-  ras: {
-    name: 'Automated Sounding',
-    fullName: 'Rapid Automated Sounding (RAS)',
-    standard: 'ASTM D4580',
-    icon: Speaker,
   },
 };
 
@@ -43,7 +37,7 @@ export default function ComingSoonWorkspace({ method }: { method: string }) {
   const [email, setEmail] = useState('');
   const [submitted, setSubmitted] = useState(false);
 
-  const cfg = METHODS[method] ?? METHODS['impact-echo'];
+  const cfg = METHODS[method] ?? METHODS['masw'];
   const Icon = cfg.icon;
 
   return (
