@@ -217,6 +217,16 @@ def run_analysis_job(
     t0 = time.perf_counter()
 
     try:
+        # Wait for model to finish loading (up to 120s on cold start)
+        if _model is None:
+            print(f"[job:{job_id}] Model not yet loaded — waiting up to 120s…", flush=True)
+            deadline = time.time() + 120
+            while _model is None and time.time() < deadline:
+                time.sleep(2)
+            if _model is None:
+                raise RuntimeError("Model failed to load within 120 seconds.")
+            print(f"[job:{job_id}] Model ready, proceeding.", flush=True)
+
         # Save uploaded bytes to tmpdir
         saved_paths: list[tuple[str, Path]] = []
         for fname, content in file_data:
@@ -424,8 +434,6 @@ async def analyze(
     """
     print(f"[analyze] {len(files)} file(s), user_id={user_id}", flush=True)
 
-    if _model is None:
-        raise HTTPException(status_code=503, detail="Model not loaded yet.")
     if not files:
         raise HTTPException(status_code=400, detail="No files uploaded.")
 

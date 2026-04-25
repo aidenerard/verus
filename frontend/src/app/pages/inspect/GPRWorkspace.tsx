@@ -688,7 +688,7 @@ export default function GPRWorkspace() {
                       onClick={() => { setSelectedFileIdx(i); setSelectedLayer('gpr'); }}
                       style={{
                         display: 'flex', alignItems: 'center', gap: 6,
-                        padding: '5px 14px 5px 28px', cursor: 'pointer',
+                        padding: '5px 8px 5px 28px', cursor: 'pointer',
                         background: selectedFileIdx === i && selectedLayer === 'gpr' ? 'rgba(232,96,28,0.08)' : 'none',
                       }}
                       onMouseEnter={e => (e.currentTarget.style.background = 'rgba(0,0,0,0.04)')}
@@ -699,9 +699,38 @@ export default function GPRWorkspace() {
                       ) : jobStatus === 'complete' ? (
                         <Check size={10} style={{ color: '#22c55e', flexShrink: 0 }} />
                       ) : null}
-                      <span style={{ fontSize: 11, color: TEXT2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      <span style={{ fontSize: 11, color: TEXT2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1 }}>
                         {f.name}
                       </span>
+                      {!isAnalyzing && (
+                        <button
+                          onClick={ev => {
+                            ev.stopPropagation();
+                            setFiles(prev => {
+                              const next = prev.filter((_, j) => j !== i);
+                              if (next.length === 0) {
+                                setJobStatus('idle');
+                                setAnalysisResult(null);
+                                setErrorMsg(null);
+                                setSelectedFileIdx(0);
+                              } else if (selectedFileIdx >= next.length) {
+                                setSelectedFileIdx(next.length - 1);
+                              }
+                              return next;
+                            });
+                          }}
+                          title="Remove file"
+                          style={{
+                            background: 'none', border: 'none', cursor: 'pointer',
+                            padding: 2, color: TEXT2, display: 'flex', flexShrink: 0,
+                            opacity: 0.5,
+                          }}
+                          onMouseEnter={e => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.color = '#ef4444'; }}
+                          onMouseLeave={e => { e.currentTarget.style.opacity = '0.5'; e.currentTarget.style.color = TEXT2; }}
+                        >
+                          <X size={11} />
+                        </button>
+                      )}
                     </div>
                   ))}
                 </div>
