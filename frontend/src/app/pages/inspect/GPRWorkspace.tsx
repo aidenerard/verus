@@ -114,7 +114,7 @@ export default function GPRWorkspace() {
   const [editingStructure, setEditingStructure] = useState(false);
 
   // ── View ────────────────────────────────────────────────────────────────────
-  const [activeView, setActiveView] = useState<'top' | '3d'>('top');
+  const [activeView, setActiveView] = useState<'top' | '3d' | 'cscan'>('top');
   const [rightTab,   setRightTab]   = useState<'properties' | 'analysis'>('analysis');
   const [bottomExpanded, setBottomExpanded] = useState(false);
   const [mouseCoords,    setMouseCoords]    = useState<{ x: number; y: number } | null>(null);
@@ -383,6 +383,7 @@ export default function GPRWorkspace() {
             setJobStatus('complete');
             setRightTab('properties');
             setSelectedFileIdx(0);
+            setActiveView('cscan');
             bottomPanelRef.current?.expand();
           } else if (job.status === 'failed') {
             clearInterval(pollRef.current!);
@@ -561,19 +562,21 @@ export default function GPRWorkspace() {
             display: 'flex', background: RAISED, border: `1px solid ${BORDER}`, borderRadius: 6,
             overflow: 'hidden',
           }}>
-            {(['top', '3d'] as const).map(v => (
+            {(['top', 'cscan', '3d'] as const).map(v => (
               <button key={v}
                 onClick={() => setActiveView(v)}
+                disabled={v === 'cscan' && !hasResult}
                 style={{
                   padding: '5px 16px', fontSize: 11, fontWeight: 700,
                   letterSpacing: '0.06em', textTransform: 'uppercase',
                   background: activeView === v ? 'rgba(232,96,28,0.18)' : 'none',
-                  color: activeView === v ? ACCENT : TEXT2,
-                  border: 'none', cursor: 'pointer', fontFamily: 'Inter, sans-serif',
+                  color: activeView === v ? ACCENT : (v === 'cscan' && !hasResult ? '#C8C3BD' : TEXT2),
+                  border: 'none', cursor: (v === 'cscan' && !hasResult) ? 'default' : 'pointer',
+                  fontFamily: 'Inter, sans-serif',
                   transition: 'background 0.15s, color 0.15s',
                 }}
               >
-                {v === 'top' ? 'Top' : '3D'}
+                {v === 'top' ? 'Top' : v === 'cscan' ? 'C-Scan' : '3D'}
               </button>
             ))}
           </div>
@@ -825,6 +828,7 @@ export default function GPRWorkspace() {
                       style={{ width: '100%', height: '100%', position: 'absolute', inset: 0,
                         opacity: activeView === 'top' ? 1 : 0,
                         pointerEvents: activeView === 'top' ? 'auto' : 'none',
+                        zIndex: activeView === 'top' ? 1 : 0,
                         transition: 'opacity 0.3s',
                       }}
                     />
@@ -866,6 +870,74 @@ export default function GPRWorkspace() {
                         ) : (
                           <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                             <p style={{ color: TEXT2, fontSize: 13 }}>Run an analysis to see the 3D view.</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* C-scan heatmap view */}
+                    {activeView === 'cscan' && (
+                      <div style={{ position: 'absolute', inset: 0, overflow: 'auto', background: PANEL }}>
+                        {hasResult && analysisResult!.cscan_image ? (
+                          <div style={{ padding: 24, minHeight: '100%', display: 'flex', flexDirection: 'column', gap: 20 }}>
+                            {/* Header */}
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                              <div>
+                                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: TEXT2, marginBottom: 4 }}>
+                                  C-Scan Condition Map
+                                </div>
+                                <div style={{ fontSize: 11, color: TEXT2 }}>ASTM D6087 · {analysisResult!.signals_analyzed.toLocaleString()} signals analyzed</div>
+                              </div>
+                              <button
+                                onClick={() => {
+                                  const a = document.createElement('a');
+                                  a.href = `data:image/png;base64,${analysisResult!.cscan_image}`;
+                                  a.download = `${projectName.replace(/\s+/g, '_')}_cscan.png`;
+                                  a.click();
+                                }}
+                                style={{
+                                  display: 'flex', alignItems: 'center', gap: 6,
+                                  padding: '7px 16px', background: ACCENT, color: '#fff',
+                                  border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 700,
+                                  letterSpacing: '0.06em', textTransform: 'uppercase',
+                                  fontFamily: 'Inter, sans-serif',
+                                }}
+                              >
+                                <Download size={13} /> Export PNG
+                              </button>
+                            </div>
+
+                            {/* C-scan image */}
+                            <div style={{ border: `1px solid ${BORDER}`, overflow: 'hidden', background: RAISED }}>
+                              <img
+                                src={`data:image/png;base64,${analysisResult!.cscan_image}`}
+                                alt="C-scan condition map"
+                                style={{ width: '100%', height: 'auto', display: 'block' }}
+                              />
+                            </div>
+
+                            {/* Summary stats */}
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+                              {[
+                                { label: 'Signals Analyzed', value: analysisResult!.signals_analyzed.toLocaleString() },
+                                { label: 'Delamination', value: `${analysisResult!.delamination_pct.toFixed(1)}%`, highlight: true },
+                                { label: 'Sound', value: `${analysisResult!.sound_pct.toFixed(1)}%` },
+                                { label: 'Analysis Time', value: `${analysisResult!.analysis_time_sec.toFixed(1)}s` },
+                              ].map(({ label, value, highlight }) => (
+                                <div key={label} style={{ background: RAISED, border: `1px solid ${BORDER}`, padding: '14px 16px' }}>
+                                  <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: TEXT2, marginBottom: 6 }}>
+                                    {label}
+                                  </div>
+                                  <div style={{ fontSize: 22, fontWeight: 700, color: highlight ? delamColor(analysisResult!.delamination_pct) : TEXT }}>
+                                    {value}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : (
+                          <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <p style={{ color: TEXT2, fontSize: 13 }}>Run an analysis to generate the C-scan map.</p>
                           </div>
                         )}
                       </div>
