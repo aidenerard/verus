@@ -130,7 +130,7 @@ async def verify_token(
 
 # ── Server-specific configuration ─────────────────────────────────────────────
 
-MODEL_PATH   = Path(os.environ.get("MODEL_PATH", "model.pth"))
+MODEL_PATH   = Path(os.environ.get("MODEL_PATH", Path(__file__).parent / "model.pth"))
 MAX_FILE_MB  = 50
 MAX_TOTAL_MB = 2000
 
