@@ -18,7 +18,6 @@ import json
 import sys
 import time
 import warnings
-import datetime
 warnings.filterwarnings("ignore")
 
 from pathlib import Path
@@ -34,7 +33,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
-from matplotlib.patches import FancyBboxPatch, Rectangle
+from matplotlib.patches import FancyBboxPatch
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 THRESHOLD     = 0.65       # P(sound) < THRESHOLD → delaminated
@@ -392,219 +391,101 @@ def render_cscan_b64(
     dpi:         int = 100,
 ) -> str:
     """
-    Render a professional ASTM D6087 / FHWA LTBP-style GPR deterioration map.
-
-    Colormap: deep red (high attenuation = deteriorated) → orange → yellow →
-              green → cyan → blue → violet (low attenuation = sound), matching
-              the spectral scale used by Sensoft/IRIS and the FHWA LTBP program.
-    Layout: 24 × 6 in landscape, 300 DPI.  X = Longitudinal Distance (ft),
-            Y = Lateral Distance (ft).  Horizontal dB colorbar below.
+    Render a clean GPR condition heatmap.
+    Colormap: red (deteriorated) → yellow (boundary) → blue (sound).
     """
-    from matplotlib.patches import Polygon as MplPolygon
-
     n_files  = len(file_preds)
     max_sigs = max(len(p) for p in file_preds)
 
-    # ── Grid: rows = scan lines (lateral), cols = signals (longitudinal) ───────
-    # Store raw P(sound) directly from the model sigmoid output.
-    # confs convention (from run_inference):
-    #   pred=1 (sound):       conf = P(sound)
-    #   pred=0 (delaminated): conf = 1 - P(sound)  [= P(delam)]
-    # So P(sound) = conf if pred==1 else 1.0 - conf.
+    # Build P(sound) grid: rows = scan lines, cols = signals
     prob_grid = np.full((n_files, max_sigs), np.nan, dtype=np.float32)
     for row, (preds, confs) in enumerate(zip(file_preds, file_confs)):
         for col, (pred, conf) in enumerate(zip(preds, confs)):
-            prob_grid[row, col] = conf if pred == 1 else 1.0 - conf  # P(sound)
+            prob_grid[row, col] = conf if pred == 1 else 1.0 - conf
 
-    # Downsample if grid exceeds memory limits
+    # Downsample if too large
     if n_files > MAX_GRID_ROWS:
-        idx       = np.linspace(0, n_files - 1, MAX_GRID_ROWS, dtype=int)
+        idx = np.linspace(0, n_files - 1, MAX_GRID_ROWS, dtype=int)
         prob_grid = prob_grid[idx, :]
     if max_sigs > MAX_GRID_COLS:
-        idx       = np.linspace(0, max_sigs - 1, MAX_GRID_COLS, dtype=int)
+        idx = np.linspace(0, max_sigs - 1, MAX_GRID_COLS, dtype=int)
         prob_grid = prob_grid[:, idx]
 
-    # Fill trailing NaN in each row (shorter scan lines) by extending last value.
-    # Without this, scan lines shorter than max_sigs show as gray on the right.
+    # Extend shorter scan lines to avoid gray trailing edges
     for i in range(prob_grid.shape[0]):
         valid = np.where(~np.isnan(prob_grid[i, :]))[0]
         if len(valid) and valid[-1] < prob_grid.shape[1] - 1:
-            prob_grid[i, valid[-1] + 1 :] = prob_grid[i, valid[-1]]
+            prob_grid[i, valid[-1] + 1:] = prob_grid[i, valid[-1]]
 
-    # Upsample longitudinally when too few signals (sparse test uploads)
+    # Upsample if too sparse
     if prob_grid.shape[1] < 50:
-        scale     = max(1, 50 // prob_grid.shape[1])
+        scale = max(1, 50 // prob_grid.shape[1])
         prob_grid = zoom(prob_grid, (1, scale), order=1)
 
-    grid_lat, grid_long = prob_grid.shape   # (lateral rows, longitudinal cols)
+    grid_lat, grid_long = prob_grid.shape
 
-    # ── Stats + optimal threshold ─────────────────────────────────────────────
+    # Otsu threshold to pin the colormap midpoint to the decision boundary
     all_preds  = np.concatenate(file_preds)
     all_confs  = np.concatenate(file_confs)
-    total_sigs = len(all_preds)
-
-    # Reconstruct raw P(sound) from (pred, conf) pairs across all files, then
-    # find the Otsu-optimal threshold for THIS dataset.  This adapts to each
-    # bridge — noise level, rebar depth, pavement overlay thickness all shift
-    # the bimodal P(sound) distribution, and a fixed threshold would be wrong.
     all_psound = np.where(all_preds == 1, all_confs, 1.0 - all_confs)
     T = _otsu_threshold(all_psound)
-    del all_psound, all_confs
+    del all_psound, all_confs, all_preds
+    print(f"[render] Otsu threshold: {T:.4f}", flush=True)
 
-    n_delam   = int((all_preds == 0).sum())
-    pct_delam = n_delam / total_sigs * 100 if total_sigs else 0.0
-    del all_preds
-
-    print(f"[render] Otsu threshold: {T:.4f}  (fixed THRESHOLD={THRESHOLD})",
-          flush=True)
-
-    # ── Threshold-centred rescaling ───────────────────────────────────────────
-    # Pin the Otsu boundary to 0.5 (colormap midpoint) so that every signal
-    # the model labels delaminated always falls in the warm half (red/orange/
-    # yellow) and every sound signal in the cool half (green/cyan/blue),
-    # regardless of confidence magnitude.
-    #
-    #   P(sound) in [0, T] → display in [0.0, 0.5]
-    #   P(sound) in [T, 1] → display in [0.5, 1.0]
+    # Smooth and rescale so T maps to colormap midpoint (0.5)
     nan_mask = np.isnan(prob_grid)
-    p        = np.where(nan_mask, T, prob_grid)   # fill NaN with boundary
-
-    # Gaussian smoothing produces the continuous, organic blob appearance seen
-    # in professional ASTM D6087 maps.  Smoothing happens on raw P(sound)
-    # values BEFORE rescaling so that the threshold boundary stays sharp.
-    # sigma=(lateral, longitudinal): more lateral blending blends between scan
-    # lines; longitudinal blends along the drive direction.
-    p = gaussian_filter(p, sigma=(1.5, 3.0))
-
-    display  = np.where(
+    p = gaussian_filter(np.where(nan_mask, T, prob_grid), sigma=(1.5, 3.0))
+    display = np.where(
         p <= T,
-        0.5 * p / T,                          # [0, T] → [0, 0.5]
-        0.5 + 0.5 * (p - T) / (1.0 - T),     # [T, 1] → [0.5, 1.0]
+        0.5 * p / T,
+        0.5 + 0.5 * (p - T) / (1.0 - T),
     )
     masked = np.ma.array(display, mask=nan_mask)
     del prob_grid, p, display
 
-    # ── Colormap: deep red → orange → yellow → green → cyan → blue → violet ───
-    # Matches Sensoft/IRIS and FHWA LTBP spectral attenuation scale.
-    # After threshold-centred rescaling:
-    #   display=0.0 → dark red  → P(sound)=0    → highly deteriorated
-    #   display=0.5 → yellow    → P(sound)=0.65 → decision boundary (threshold)
-    #   display=1.0 → indigo    → P(sound)=1.0  → confidently sound
-    cmap_colors = [
-        '#8B0000', '#FF0000', '#FF4500', '#FF8C00', '#FFD700',
-        '#ADFF2F', '#00FF7F', '#00CED1', '#1E90FF', '#4B0082',
-    ]
+    # Colormap: red → orange → yellow → green → cyan → blue
     cmap_obj = mcolors.LinearSegmentedColormap.from_list(
-        "gpr_attn", cmap_colors, N=256,
+        "gpr", ['#C0392B', '#E67E22', '#F1C40F', '#27AE60', '#2980B9'], N=256,
     )
-    cmap_obj.set_bad(color='lightgray')
+    cmap_obj.set_bad(color='#F0EFEC')
     norm = mcolors.Normalize(vmin=0.0, vmax=1.0)
 
     # ── Figure ────────────────────────────────────────────────────────────────
-    fig = plt.figure(figsize=(16, 4), facecolor='white')
-    fig.subplots_adjust(left=0.07, right=0.97, top=0.82, bottom=0.20)
-
-    # Title — centred above everything
-    fig.text(0.5, 0.97, "Bridge Deck Condition Assessment",
-             ha='center', va='top', fontsize=11, fontweight='bold', color='#111111')
-
-    # Header block — top-left, above the map, not overlaid on it
-    survey_date = datetime.date.today().strftime('%B %d, %Y')
-    hdr = (
-        f"Structure: {bridge_name}    Survey: {survey_date}\n"
-        f"Standard: ASTM D6087    Scan lines: {n_files}\n"
-        f"Signals: {total_sigs}    Threshold: {T:.3f} (Otsu)    Delamination: {pct_delam:.1f}%"
-    )
-    fig.text(0.07, 0.91, hdr,
-             ha='left', va='top', fontsize=7, color='#333333',
-             fontfamily='monospace', linespacing=1.6)
-
-    # Map axes
-    ax = fig.add_axes([0.07, 0.20, 0.90, 0.60])
+    fig, ax = plt.subplots(figsize=(14, 3.5), facecolor='white')
+    fig.subplots_adjust(left=0.05, right=0.97, top=0.88, bottom=0.22)
 
     ax.imshow(
-        masked,
-        cmap=cmap_obj, norm=norm,
+        masked, cmap=cmap_obj, norm=norm,
         aspect='auto', origin='upper',
-        extent=[0, grid_long, grid_lat, 0],
         interpolation='bilinear',
     )
 
-    # Bridge outline rectangle
-    ax.add_patch(Rectangle(
-        (0, 0), grid_long, grid_lat,
-        linewidth=1.5, edgecolor='black', facecolor='none', zorder=5,
-    ))
+    # Clean border
+    for spine in ax.spines.values():
+        spine.set_linewidth(0.8)
+        spine.set_color('#CCCCCC')
 
-    # Hatched abutment triangle — left edge (approach end)
-    tri_w    = max(6, int(grid_long * 0.04))
-    abutment = MplPolygon(
-        [(0, 0), (0, grid_lat), (tri_w, grid_lat)],
-        closed=True, hatch='///', facecolor='none',
-        edgecolor='black', linewidth=0.8, zorder=6,
-    )
-    ax.add_patch(abutment)
-
-    # Dashed scan-line reference markers (every ~25% of lateral span)
-    for frac in (0.25, 0.50, 0.75):
-        ax.axhline(grid_lat * frac, color='black', linewidth=0.5,
-                   linestyle='--', alpha=0.45, zorder=4)
-
-    # "Deterioration Map" label — top-right corner of map axes
-    ax.text(0.99, 0.97, "Deterioration Map", transform=ax.transAxes,
-            ha='right', va='top', fontsize=9, style='italic', color='#222222',
-            zorder=7)
-
-    # Axis labels and ticks
-    ax.set_xlabel('Longitudinal Distance (ft.)', fontsize=8, labelpad=4)
-    ax.set_ylabel('Lateral\nDistance\n(ft.)', fontsize=8, labelpad=4)
-
-    n_xticks = 12
-    x_pos    = np.linspace(0, grid_long, n_xticks + 1, dtype=int)
-    est_len  = max_sigs * 0.03          # ~0.03 ft/signal at 400 MHz
-    x_ft     = np.round(np.linspace(0, est_len, n_xticks + 1)).astype(int)
-    ax.set_xticks(x_pos)
-    ax.set_xticklabels([str(v) for v in x_ft], fontsize=7)
-
-    n_yticks = min(grid_lat, 8)
-    y_pos    = np.linspace(0, grid_lat, n_yticks + 1, dtype=int)
-    y_ft     = np.round(np.linspace(0, n_files, n_yticks + 1)).astype(int)
-    ax.set_yticks(y_pos)
-    ax.set_yticklabels([str(v) for v in y_ft], fontsize=7)
-    ax.tick_params(direction='out', length=3, width=0.6)
+    # Minimal axis labels — scan line index only
+    ax.set_xlabel('Scan line (longitudinal →)', fontsize=8, color='#555555', labelpad=6)
+    ax.set_ylabel('Swath', fontsize=8, color='#555555', labelpad=6)
+    ax.tick_params(colors='#777777', length=3, width=0.6, labelsize=7)
 
     # ── Colorbar ──────────────────────────────────────────────────────────────
-    cbar_ax = fig.add_axes([0.20, 0.05, 0.55, 0.055])
-    sm = plt.cm.ScalarMappable(cmap=cmap_obj, norm=norm)
-    sm.set_array([])
-    cbar = fig.colorbar(sm, cax=cbar_ax, orientation='horizontal')
-
-    # Specific dB ticks: -38 -33 -30 -27 -24 -21 -18 -15 -14
-    db_ticks = [-38, -33, -30, -27, -24, -21, -18, -15, -14]
-    db_range = db_ticks[-1] - db_ticks[0]
-    tick_pos = [(v - db_ticks[0]) / db_range for v in db_ticks]
-    cbar.set_ticks(tick_pos)
-    cbar.set_ticklabels([str(v) for v in db_ticks], fontsize=7)
-    cbar.ax.tick_params(length=2, width=0.5)
-    cbar.outline.set_linewidth(0.6)
-    cbar_ax.set_title(
-        "Attenuation at top rebar level (dB)  —  corrected for depth variation",
-        fontsize=8, pad=3,
+    cbar = fig.colorbar(
+        plt.cm.ScalarMappable(cmap=cmap_obj, norm=norm),
+        ax=ax, orientation='horizontal', pad=0.18, fraction=0.04, aspect=50,
     )
+    cbar.set_ticks([0.0, 0.5, 1.0])
+    cbar.set_ticklabels(['Deteriorated', 'Boundary', 'Sound'], fontsize=8)
+    cbar.ax.tick_params(length=0)
+    cbar.outline.set_linewidth(0.5)
+    cbar.outline.set_edgecolor('#CCCCCC')
 
-    # Colored "More / Less" labels flanking the colorbar
-    cbar_ax.text(-0.01, 0.5, "More\nDeterioration",
-                 transform=cbar_ax.transAxes, ha='right', va='center',
-                 fontsize=7, fontweight='bold', color='#8B0000')
-    cbar_ax.text(1.01, 0.5, "Less Deteriorated /\nStronger Reflections",
-                 transform=cbar_ax.transAxes, ha='left', va='center',
-                 fontsize=7, fontweight='bold', color='#1E3A8A')
-
-    # ── Render to in-memory PNG ────────────────────────────────────────────────
+    # ── Render ────────────────────────────────────────────────────────────────
     buf = io.BytesIO()
     fig.savefig(buf, format='png', dpi=dpi, bbox_inches='tight', facecolor='white')
     plt.close(fig)
-    gc.collect()   # release matplotlib canvas memory immediately
+    gc.collect()
     buf.seek(0)
     return base64.b64encode(buf.read()).decode('utf-8')
 
