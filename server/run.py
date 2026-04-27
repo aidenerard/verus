@@ -67,27 +67,38 @@ class TemporalAttention(nn.Module):
 
 
 class CNN1D(nn.Module):
+    """
+    Architecture must exactly match the saved model.pth weights:
+      net.0  Conv1d(1,  32, 7, padding=3)
+      net.1  ReLU
+      net.2  MaxPool1d(2)
+      net.3  Conv1d(32, 64, 5, padding=2)
+      net.4  ReLU
+      net.5  MaxPool1d(2)
+      net.6  Flatten  → 64 * 128 = 8192
+      net.7  Linear(8192, 64)
+      net.8  ReLU
+      net.9  Dropout(0.3)
+      net.10 Linear(64, 1)
+    """
     def __init__(self):
         super().__init__()
-        self.conv = nn.Sequential(
-            nn.Conv1d(1,   32,  kernel_size=7, padding=3), nn.ReLU(),
-            nn.MaxPool1d(2),
-            nn.Conv1d(32,  128, kernel_size=5, padding=2), nn.ReLU(),
-            nn.MaxPool1d(2),
-            nn.Conv1d(128, 128, kernel_size=3, padding=1), nn.ReLU(),
-            nn.MaxPool1d(2),
-        )
-        self.attn = TemporalAttention(128)
-        self.head = nn.Sequential(
-            nn.Linear(128, 128), nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(128, 1),
+        self.net = nn.Sequential(
+            nn.Conv1d(1,  32, kernel_size=7, padding=3),   # 0
+            nn.ReLU(),                                       # 1
+            nn.MaxPool1d(2),                                 # 2
+            nn.Conv1d(32, 64, kernel_size=5, padding=2),   # 3
+            nn.ReLU(),                                       # 4
+            nn.MaxPool1d(2),                                 # 5
+            nn.Flatten(),                                    # 6
+            nn.Linear(8192, 64),                            # 7
+            nn.ReLU(),                                       # 8
+            nn.Dropout(0.3),                                 # 9
+            nn.Linear(64, 1),                               # 10
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.conv(x)
-        x = self.attn(x)
-        return self.head(x).squeeze(1)
+        return self.net(x).squeeze(1)
 
 
 # ── CSV parsing ───────────────────────────────────────────────────────────────
