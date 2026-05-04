@@ -1,4 +1,8 @@
 data/
+media/
+bscan_parts/
+scripts/
+verus-server/
 gpr_data/
 all_bridges_csv/
 synthetic_data/
