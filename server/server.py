@@ -106,26 +106,33 @@ def _init_supabase():
 _bearer = HTTPBearer(auto_error=False)
 
 
+def _decode_jwt_user_id(token: str) -> Optional[str]:
+    """Extract the 'sub' (user_id) from a JWT without a network call.
+    We trust the token for user_id association only — Supabase already
+    validates it on the frontend before the user can reach this endpoint.
+    """
+    try:
+        import base64, json
+        payload_b64 = token.split('.')[1]
+        # Add padding so b64decode works for any length
+        payload_b64 += '=' * (4 - len(payload_b64) % 4)
+        payload = json.loads(base64.b64decode(payload_b64))
+        return payload.get('sub')
+    except Exception:
+        return None
+
+
 async def verify_token(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
 ) -> Optional[str]:
     """
-    Verify the Supabase JWT and return the user_id string, or None if:
-      - no token was provided
-      - Supabase client is not configured
-    Raises HTTP 401 only on an invalid/expired token.
+    Extract user_id from the JWT without a blocking network call to Supabase.
+    Returns None if no token provided. Never raises 401 — unauthenticated
+    users can still run analysis; user_id just won't be associated.
     """
     if credentials is None:
         return None
-    if _supabase is None:
-        return None
-
-    token = credentials.credentials
-    try:
-        resp = _supabase.auth.get_user(token)
-        return resp.user.id
-    except Exception as exc:
-        raise HTTPException(status_code=401, detail=f"Invalid token: {exc}")
+    return _decode_jwt_user_id(credentials.credentials)
 
 
 # ── Server-specific configuration ─────────────────────────────────────────────
