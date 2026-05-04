@@ -69,9 +69,13 @@ const TEXT2   = '#7A7470';
 const ACCENT  = '#E8601C';
 
 const STATUS_MSGS = [
-  'Uploading files…', 'Waking up AI model…',
+  'Waking up server…', 'Loading AI model…',
   'Running inference…', 'Generating C-scan…', 'Almost done…',
 ];
+
+const WAKE_TIMEOUT_MS  = 3 * 60 * 1000;  // 3 min max to wait for cold start
+const WAKE_INTERVAL_MS = 4_000;
+const POLL_TIMEOUT_MS  = 8 * 60 * 1000;  // 8 min max for inference job
 
 const LAYER_DEFS = [
   { id: 'gpr',         label: 'GPR Profiles',      Icon: Radio },
@@ -335,27 +339,42 @@ export default function GPRWorkspace() {
 
     setJobStatus('pending');
     setErrorMsg(null);
-    setStatusMsg(STATUS_MSGS[0]);
+    setStatusMsg('Waking up server…');
 
-    let msgIdx = 0;
-    statusCycleRef.current = setInterval(() => {
-      msgIdx = (msgIdx + 1) % STATUS_MSGS.length;
-      setStatusMsg(STATUS_MSGS[msgIdx]);
-    }, 4000);
+    const headers: Record<string, string> = {};
+    if (session?.access_token) headers['Authorization'] = `Bearer ${session.access_token}`;
 
     try {
+      // ── Step 1: wake the server and wait for model to load ──────────────────
+      const wakeDeadline = Date.now() + WAKE_TIMEOUT_MS;
+      let serverReady = false;
+      while (Date.now() < wakeDeadline) {
+        try {
+          const h = await fetch(`${SERVER}/health`, { signal: AbortSignal.timeout(10000) });
+          if (h.ok) {
+            const hj = await h.json();
+            if (hj.model_loaded) { serverReady = true; break; }
+            setStatusMsg('Loading AI model…');
+          }
+        } catch { /* server still waking */ }
+        await new Promise(r => setTimeout(r, WAKE_INTERVAL_MS));
+      }
+
+      if (!serverReady) {
+        setErrorMsg('Server did not respond in time. Please try again.');
+        setJobStatus('failed');
+        return;
+      }
+
+      // ── Step 2: upload files ────────────────────────────────────────────────
+      setStatusMsg('Uploading files…');
       const formData = new FormData();
       files.forEach(f => formData.append('files', f.file));
 
-      const headers: Record<string, string> = {};
-      if (session?.access_token) headers['Authorization'] = `Bearer ${session.access_token}`;
-
       const res = await fetch(`${SERVER}/analyze`, {
         method: 'POST', headers, body: formData,
-        signal: AbortSignal.timeout(150000), // 2.5 min — covers Render cold start + upload
+        signal: AbortSignal.timeout(60000), // 60s — server is awake so just upload time
       });
-
-      clearInterval(statusCycleRef.current!);
 
       if (!res.ok) {
         let msg = `HTTP ${res.status}`;
@@ -365,13 +384,27 @@ export default function GPRWorkspace() {
         return;
       }
 
+      // ── Step 3: poll until complete ─────────────────────────────────────────
       const { job_id } = await res.json();
       setJobId(job_id);
       setJobStatus('processing');
-      setStatusMsg('Processing GPR data…');
 
+      let msgIdx = 2; // start at "Running inference…"
+      statusCycleRef.current = setInterval(() => {
+        msgIdx = 2 + ((msgIdx - 1) % (STATUS_MSGS.length - 2));
+        setStatusMsg(STATUS_MSGS[msgIdx]);
+      }, 4000);
+
+      const pollDeadline = Date.now() + POLL_TIMEOUT_MS;
       if (pollRef.current) clearInterval(pollRef.current);
       pollRef.current = setInterval(async () => {
+        if (Date.now() > pollDeadline) {
+          clearInterval(pollRef.current!);
+          clearInterval(statusCycleRef.current!);
+          setErrorMsg('Analysis timed out — the file may be too large.');
+          setJobStatus('failed');
+          return;
+        }
         try {
           const jr = await fetch(`${SERVER}/job/${job_id}`, { headers });
           if (!jr.ok) return;
@@ -379,6 +412,7 @@ export default function GPRWorkspace() {
 
           if (job.status === 'complete' && job.result) {
             clearInterval(pollRef.current!);
+            clearInterval(statusCycleRef.current!);
             setAnalysisResult(job.result);
             setJobStatus('complete');
             setRightTab('properties');
@@ -387,6 +421,7 @@ export default function GPRWorkspace() {
             bottomPanelRef.current?.expand();
           } else if (job.status === 'failed') {
             clearInterval(pollRef.current!);
+            clearInterval(statusCycleRef.current!);
             setErrorMsg(job.error || 'Analysis failed');
             setJobStatus('failed');
           }
