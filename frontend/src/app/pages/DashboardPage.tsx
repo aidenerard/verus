@@ -30,12 +30,25 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!user) return;
     setJobsLoading(true);
-    supabase.from('analysis_jobs').select('*')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false })
-      .limit(20)
-      .then(({ data }) => { setJobs(data ?? []); setJobsLoading(false); })
-      .catch(() => { setJobs([]); setJobsLoading(false); });
+    (async () => {
+      try {
+        const { data: jobData } = await supabase.from('analysis_jobs').select('*')
+          .eq('user_id', user.id).order('created_at', { ascending: false }).limit(20);
+        const loaded = (jobData ?? []) as AnalysisJob[];
+        const pids = [...new Set(loaded.map(j => j.project_id).filter(Boolean))] as string[];
+        if (pids.length) {
+          const { data: projects } = await supabase.from('projects')
+            .select('id,name,structure_name').in('id', pids);
+          const names = new Map((projects ?? []).map(p => [p.id, (p.name || p.structure_name) ?? 'Untitled Project']));
+          setJobs(loaded.map(j => ({ ...j, project_name: j.project_id ? (names.get(j.project_id) ?? 'Untitled Project') : undefined })));
+        } else {
+          setJobs(loaded);
+        }
+      } catch {
+        setJobs([]);
+      }
+      setJobsLoading(false);
+    })();
   }, [user]);
 
   const handleModuleClick = (module: InspectionModule) => {

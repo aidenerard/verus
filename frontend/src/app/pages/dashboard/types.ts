@@ -12,6 +12,8 @@ export interface AnalysisJob {
   cscan_url?: string;
   file_names?: string[];
   error_msg?: string;
+  project_id?: string;
+  project_name?: string;
 }
 
 export interface InspectionModule {

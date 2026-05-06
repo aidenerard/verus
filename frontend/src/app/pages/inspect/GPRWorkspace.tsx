@@ -168,6 +168,19 @@ export default function GPRWorkspace() {
 
         if (result) {
           setAnalysisResult(result);
+          if (job.project_id) {
+            setProjectId(job.project_id);
+            supabase.from('projects').select('name,structure_name,bridge_id,inspection_date,notes')
+              .eq('id', job.project_id).single()
+              .then(({ data }) => {
+                if (data?.name)           setProjectName(data.name);
+                if (data?.structure_name) setStructureName(data.structure_name);
+                if (data?.bridge_id)      setBridgeId(data.bridge_id);
+                if (data?.inspection_date) setInspDate(data.inspection_date);
+                if (data?.notes)          setNotes(data.notes);
+              })
+              .catch(() => {});
+          }
           const mfr = result.manufacturer ?? job.manufacturer;
           if (mfr) setManufacturer(mfr as ManufacturerKey);
           const freq = result.frequency_mhz ?? job.frequency_mhz;

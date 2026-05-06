@@ -255,9 +255,10 @@ async def analyze(
     if _supabase:
         try:
             _supabase.table("analysis_jobs").insert({
-                "id":      job_id,
-                "user_id": user_id,
-                "status":  "pending",
+                "id":         job_id,
+                "user_id":    user_id,
+                "status":     "pending",
+                "project_id": project_id,
             }).execute()
         except Exception as exc:
             print(f"[analyze] DB insert failed: {exc}", flush=True)
@@ -265,7 +266,7 @@ async def analyze(
     _executor.submit(
         run_analysis_job,
         job_id, file_data, user_id, tmpdir,
-        manufacturer, frequency_mhz, _model, _rebar_model, _model_config, _supabase,
+        manufacturer, frequency_mhz, project_id, _model, _rebar_model, _model_config, _supabase,
     )
     print(f"[analyze] Queued job {job_id}", flush=True)
 

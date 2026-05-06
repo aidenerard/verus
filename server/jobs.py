@@ -52,6 +52,7 @@ def run_analysis_job(
     tmpdir: Path,
     manufacturer: Optional[str],
     frequency_mhz: int,
+    project_id: Optional[str],
     model,
     rebar_model,
     model_config: Optional[dict],
@@ -267,10 +268,19 @@ def run_analysis_job(
                     "twt_grid": twt_b64, "twt_grid_rows": twt_rows, "twt_grid_cols": twt_cols,
                     "model_confidence_pct": conf_pct, "depth_accuracy_in": depth_acc_in,
                     "signal_quality": sig_quality,
+                    "project_id": project_id,
                 }).execute()
                 print(f"[job:{job_id}] DB row written", flush=True)
             except Exception as exc:
                 print(f"[job:{job_id}] DB write failed: {exc}", flush=True)
+
+            if project_id and manufacturer:
+                try:
+                    supabase_client.table("projects").update({
+                        "manufacturer": manufacturer, "frequency_mhz": frequency_mhz,
+                    }).eq("id", project_id).execute()
+                except Exception as exc:
+                    print(f"[job:{job_id}] Projects update failed: {exc}", flush=True)
 
         _jobs[job_id].update({
             "status":     "complete",

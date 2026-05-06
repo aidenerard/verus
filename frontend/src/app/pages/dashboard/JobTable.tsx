@@ -32,7 +32,7 @@ export default function JobTable({ jobs, loading, onView, onStartFirst }: Props)
     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
       <thead>
         <tr style={{ background: '#F5F3EF', borderBottom: '2px solid #E2DED9' }}>
-          {['Date', 'Files', 'Signals', 'Status', ''].map(h => (
+          {['Project', 'Date', 'Files', 'Signals', 'Status', ''].map(h => (
             <th key={h} style={{ textAlign: h === '' ? 'right' : 'left', padding: '10px 20px', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: '#7A7470' }}>{h}</th>
           ))}
         </tr>
@@ -44,6 +44,7 @@ export default function JobTable({ jobs, loading, onView, onStartFirst }: Props)
           const statusLabel = job.status === 'complete' ? 'Complete' : job.status === 'failed' ? 'Failed' : job.status === 'processing' ? 'Processing…' : 'Pending…';
           return (
             <tr key={job.id} style={{ borderTop: '1px solid #E2DED9' }}>
+              <td style={{ padding: '12px 20px', fontSize: 12, fontWeight: 600, color: '#0A0A0A', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{job.project_name ?? 'Untitled Project'}</td>
               <td style={{ padding: '12px 20px', fontSize: 12, color: '#0A0A0A' }}>{date}</td>
               <td style={{ padding: '12px 20px', fontSize: 11, color: '#7A7470', maxWidth: 200 }}>
                 <span style={{ fontFamily: 'monospace', fontSize: 10 }}>
