@@ -28,6 +28,8 @@ import { delamColor, badgeColor } from './utils';
 import SetupWizard from './SetupWizard';
 import AdjustPanel from './AdjustPanel';
 import OutputMaps from './OutputMaps';
+import ConfirmAnalysisModal from './ConfirmAnalysisModal';
+import AnalysisProgressOverlay from './AnalysisProgressOverlay';
 
 export default function GPRWorkspace() {
   const navigate    = useNavigate();
@@ -75,14 +77,17 @@ export default function GPRWorkspace() {
   const [useAmpCanvas,   setUseAmpCanvas]   = useState(false);
 
   // ── Analysis ─────────────────────────────────────────────────────────────────
-  const [files,           setFiles]           = useState<UploadedFile[]>([]);
-  const [jobId,           setJobId]           = useState<string | null>(null);
-  const [jobStatus,       setJobStatus]       = useState<'idle'|'pending'|'processing'|'complete'|'failed'>('idle');
-  const [analysisResult,  setAnalysisResult]  = useState<AnalysisResult | null>(null);
-  const [errorMsg,        setErrorMsg]        = useState<string | null>(null);
-  const [statusMsg,       setStatusMsg]       = useState('');
-  const [selectedFileIdx, setSelectedFileIdx] = useState(0);
-  const [recentJobs,      setRecentJobs]      = useState<any[]>([]);
+  const [files,                setFiles]                = useState<UploadedFile[]>([]);
+  const [jobId,                setJobId]                = useState<string | null>(null);
+  const [jobStatus,            setJobStatus]            = useState<'idle'|'pending'|'processing'|'complete'|'failed'>('idle');
+  const [analysisResult,       setAnalysisResult]       = useState<AnalysisResult | null>(null);
+  const [errorMsg,             setErrorMsg]             = useState<string | null>(null);
+  const [statusMsg,            setStatusMsg]            = useState('');
+  const [selectedFileIdx,      setSelectedFileIdx]      = useState(0);
+  const [recentJobs,           setRecentJobs]           = useState<any[]>([]);
+  const [showConfirm,          setShowConfirm]          = useState(false);
+  const [estimatedSecs,        setEstimatedSecs]        = useState(15);
+  const [showProgressOverlay,  setShowProgressOverlay]  = useState(false);
 
   // ── Refs ──────────────────────────────────────────────────────────────────────
   const fileInputRef    = useRef<HTMLInputElement>(null);
@@ -267,7 +272,7 @@ export default function GPRWorkspace() {
   }, []);
 
   useEffect(() => {
-    if (files.length > 0 && jobStatus === 'idle') startAnalysis();
+    if (files.length > 0 && jobStatus === 'idle') setShowConfirm(true);
   }, [files]); // eslint-disable-line
 
   // ── Analysis ──────────────────────────────────────────────────────────────────
@@ -358,6 +363,20 @@ export default function GPRWorkspace() {
     if (pollRef.current) clearInterval(pollRef.current);
     if (statusCycleRef.current) clearInterval(statusCycleRef.current);
   }, []);
+
+  const onConfirmAnalysis = useCallback(() => {
+    setEstimatedSecs(files.length * 4 + 15);
+    setShowConfirm(false);
+    setShowProgressOverlay(true);
+    startAnalysis();
+  }, [files.length, startAnalysis]);
+
+  useEffect(() => {
+    if (jobStatus === 'complete' || jobStatus === 'failed') {
+      const t = setTimeout(() => setShowProgressOverlay(false), 700);
+      return () => clearTimeout(t);
+    }
+  }, [jobStatus]);
 
   // ── Setup completion ──────────────────────────────────────────────────────────
   const completeSetup = useCallback(async () => {
@@ -467,6 +486,15 @@ export default function GPRWorkspace() {
     }}>
       <input ref={fileInputRef} type="file" multiple accept={fileAccept}
         onChange={onFileInput} style={{ display: 'none' }} />
+
+      {setupDone && !manufacturer && (
+        <div
+          onClick={() => { setSetupDone(false); setSetupStep(1); }}
+          style={{ background: '#FEF3C7', borderBottom: '1px solid #F59E0B', padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, cursor: 'pointer', zIndex: 50, flexShrink: 0 }}>
+          <AlertCircle size={14} style={{ color: '#D97706', flexShrink: 0 }} />
+          <span style={{ color: '#92400E' }}>Equipment not configured — click here to complete setup</span>
+        </div>
+      )}
 
       {!setupDone && !setupChecking && (
         <SetupWizard
@@ -801,10 +829,11 @@ export default function GPRWorkspace() {
                             <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: TEXT2, marginBottom: 10 }}>AI Model</div>
                             <div style={{ background: RAISED, padding: '10px 12px', fontSize: 11 }}>
                               {[
+                                { label: 'Equipment', value: MANUFACTURERS.find(m => m.key === manufacturer)?.name || '—' },
+                                { label: 'Frequency', value: `${frequencyMhz} MHz` },
                                 { label: 'Version',   value: 'model_v13.pth' },
                                 { label: 'Standard',  value: 'ASTM D6087' },
                                 { label: 'Threshold', value: detectionThreshold.toFixed(2) },
-                                { label: 'Frequency', value: `${frequencyMhz} MHz` },
                               ].map(({ label, value }) => (
                                 <div key={label} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
                                   <span style={{ color: TEXT2 }}>{label}</span>
@@ -834,7 +863,7 @@ export default function GPRWorkspace() {
                             </div>
                           )}
                           {files.length > 0 && jobStatus !== 'pending' && jobStatus !== 'processing' && (
-                            <button onClick={() => { setJobStatus('idle'); startAnalysis(); }}
+                            <button onClick={() => setShowConfirm(true)}
                               style={{ width: '100%', padding: '10px', marginBottom: 16, background: ACCENT, border: 'none', color: '#fff', fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}>
                               Re-run Analysis
                             </button>
@@ -963,6 +992,22 @@ export default function GPRWorkspace() {
         .mapboxgl-ctrl-bottom-right { z-index: 1 !important; }
         .mapboxgl-ctrl-bottom-left  { z-index: 1 !important; }
       `}</style>
+
+      {showConfirm && (
+        <ConfirmAnalysisModal
+          files={files} manufacturer={manufacturer} frequencyMhz={frequencyMhz}
+          onConfirm={onConfirmAnalysis}
+          onCancel={() => setShowConfirm(false)}
+        />
+      )}
+
+      {showProgressOverlay && (
+        <AnalysisProgressOverlay
+          fileCount={files.length} estimatedSecs={estimatedSecs}
+          jobStatus={jobStatus as 'pending' | 'processing' | 'complete' | 'failed'}
+          errorMsg={errorMsg}
+        />
+      )}
     </div>
   );
 }

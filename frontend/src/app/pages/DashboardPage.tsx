@@ -41,7 +41,12 @@ export default function DashboardPage() {
 
   const handleModuleClick = (module: InspectionModule) => {
     const route = INSPECT_ROUTES[module.id];
-    if (route) navigate(route); else setModalModule(module);
+    if (route) {
+      if (module.id === 'gpr') localStorage.removeItem('verus_project_id');
+      navigate(route);
+    } else {
+      setModalModule(module);
+    }
   };
 
   const initials = auth.user?.name
