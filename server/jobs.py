@@ -15,10 +15,11 @@ import numpy as np
 
 from ingest import detect_and_convert, SUPPORTED_EXTENSIONS, COMPANION_EXTENSIONS
 from run import (
-    load_csv, run_inference, render_cscan_b64,
+    load_csv, run_inference, run_rebar_inference, render_cscan_b64,
     extract_bscan_b64, extract_peak_info,
-    build_prob_grid, build_extra_grids,
-    render_rebar_depth_b64, render_amplitude_b64, compute_confidence_metrics,
+    build_prob_grid, build_extra_grids, build_rebar_grids, grid_to_list,
+    render_rebar_depth_b64, render_rebar_cscan_b64, render_amplitude_b64,
+    compute_confidence_metrics,
 )
 
 # ── Job state ─────────────────────────────────────────────────────────────────
@@ -37,6 +38,8 @@ def run_analysis_job(
     manufacturer: Optional[str],
     frequency_mhz: int,
     model,
+    rebar_model,
+    model_config: Optional[dict],
     supabase_client,
 ) -> None:
     """
@@ -66,12 +69,14 @@ def run_analysis_job(
             print(f"[job:{job_id}] Saved {fname} ({len(content)/1024:.1f} KB)", flush=True)
 
         # ── Inference ─────────────────────────────────────────────────────────
-        file_preds:     list[np.ndarray] = []
-        file_confs:     list[np.ndarray] = []
-        file_names:     list[str]        = []
-        file_peak_idxs: list[np.ndarray] = []
-        file_peak_amps: list[np.ndarray] = []
-        per_file_summary: list[dict]     = []
+        file_preds:      list[np.ndarray] = []
+        file_confs:      list[np.ndarray] = []
+        file_names:      list[str]        = []
+        file_peak_idxs:  list[np.ndarray] = []
+        file_peak_amps:  list[np.ndarray] = []
+        rebar_depth_arrs: list[np.ndarray] = []
+        rebar_twt_arrs:   list[np.ndarray] = []
+        per_file_summary: list[dict]       = []
         total_sigs = 0
 
         for fname, dest in saved_paths:
@@ -98,9 +103,10 @@ def run_analysis_job(
                 continue
 
             print(f"[job:{job_id}]   → {signals.shape[0]} signals, running inference…", flush=True)
-            bscan_info       = extract_bscan_b64(signals)
+            bscan_info         = extract_bscan_b64(signals)
             peak_idx, peak_amp = extract_peak_info(signals)
-            preds, confs     = run_inference(model, signals)
+            preds, confs       = run_inference(model, signals, model_config=model_config)
+            depth_arr, twt_arr = run_rebar_inference(rebar_model, signals, frequency_mhz)
             del signals
             if csv_path != dest:
                 csv_path.unlink(missing_ok=True)
@@ -109,18 +115,28 @@ def run_analysis_job(
             n         = len(preds)
             n_delam   = int((preds == 0).sum())
             delam_pct = round(n_delam / n * 100, 2) if n else 0.0
+            rdm  = round(float(np.nanmean(depth_arr)), 3)
+            rdmn = round(float(np.nanmin(depth_arr)),  3)
+            rdmx = round(float(np.nanmax(depth_arr)),  3)
 
             file_preds.append(preds)
             file_confs.append(confs)
             file_names.append(fname)
             file_peak_idxs.append(peak_idx)
             file_peak_amps.append(peak_amp)
+            rebar_depth_arrs.append(depth_arr)
+            rebar_twt_arrs.append(twt_arr)
             per_file_summary.append({
-                "filename":  fname,
-                "signals":   n,
-                "delam_pct": delam_pct,
-                "gps":       gps,
-                "bscan":     bscan_info,
+                "filename":         fname,
+                "signals":          n,
+                "delam_pct":        delam_pct,
+                "gps":              gps,
+                "bscan":            bscan_info,
+                "rebar_depth_mean": rdm,
+                "rebar_depth_min":  rdmn,
+                "rebar_depth_max":  rdmx,
+                "rebar_depth_array": depth_arr[:512].tolist(),
+                "twt_array":         twt_arr[:512].tolist(),
             })
             total_sigs += n
 
@@ -150,6 +166,18 @@ def run_analysis_job(
         except Exception as exc:
             print(f"[job:{job_id}] prob_grid failed: {exc}", flush=True)
             prob_b64 = ""; pg_rows = pg_cols = 0; otsu_T = 0.65
+
+        rebar_cscan_b64    = ""
+        rebar_depth_grid_j: list = []
+        rebar_twt_grid_j:   list = []
+        try:
+            rebar_dg, rebar_tg = build_rebar_grids(rebar_depth_arrs, rebar_twt_arrs)
+            rebar_cscan_b64    = render_rebar_cscan_b64(rebar_dg, frequency_mhz, rebar_model is not None)
+            rebar_depth_grid_j = grid_to_list(rebar_dg)
+            rebar_twt_grid_j   = grid_to_list(rebar_tg)
+            del rebar_dg, rebar_tg
+        except Exception as exc:
+            print(f"[job:{job_id}] Rebar grid render failed: {exc}", flush=True)
 
         rebar_b64 = amp_b64 = twt_b64 = ""
         twt_rows = twt_cols = 0
@@ -182,6 +210,10 @@ def run_analysis_job(
             "analysis_time_sec":   elapsed,
             "cscan_image":         cscan_b64,
             "per_file_summary":    per_file_summary,
+            "rebar_model_used":    rebar_model is not None,
+            "rebar_cscan_image":   rebar_cscan_b64,
+            "rebar_depth_grid":    rebar_depth_grid_j,
+            "rebar_twt_grid":      rebar_twt_grid_j,
             "rebar_depth_image":   rebar_b64,
             "amplitude_image":     amp_b64,
             "prob_grid":           prob_b64,

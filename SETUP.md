@@ -56,8 +56,38 @@ In your Render service → Environment:
 |---|---|
 | `SUPABASE_URL` | `https://your-project-ref.supabase.co` |
 | `SUPABASE_SERVICE_KEY` | your **service_role** key (secret) |
+| `MODEL_GDRIVE_URL` | Google Drive direct-download URL for `model.pth` |
+| `MODEL_CONFIG_GDRIVE_URL` | Google Drive direct-download URL for `model_config.json` |
+| `REBAR_MODEL_GDRIVE_URL` | Google Drive direct-download URL for `rebar_model.pth` |
 
 The server uses the service role key to bypass RLS when writing job results.
+
+### Getting `MODEL_CONFIG_GDRIVE_URL`
+
+The model config file records the architecture used during training so the server
+can reconstruct the exact network without hardcoding layer sizes.
+
+1. After training, the Kaggle notebook saves `model_config.json` alongside `model.pth`.
+2. Download `model_config.json` from Kaggle → Output Files.
+3. Upload to Google Drive and set sharing to **Anyone with the link → Viewer**.
+4. Right-click → **Get link** → copy the file ID (the long string after `/d/`).
+5. Set the env var to `https://drive.google.com/uc?export=download&id=<FILE_ID>`
+
+If `MODEL_CONFIG_GDRIVE_URL` is not set, the server tries a set of known fallback
+architectures in order until one loads without error. No crash, but always set this
+after retraining to guarantee the correct architecture is used.
+
+### Getting `REBAR_MODEL_GDRIVE_URL`
+
+1. Train the model using `rebar_training.ipynb` on Kaggle.
+2. Download `rebar_model.pth` **and** `rebar_model_config.json` from Kaggle → Output Files.
+3. Upload both files to Google Drive and set sharing to **Anyone with the link → Viewer**.
+4. Right-click → **Get link** → copy each file ID (the long string after `/d/`).
+5. Set `REBAR_MODEL_GDRIVE_URL` to `https://drive.google.com/uc?export=download&id=<FILE_ID>`
+   (or paste the full share URL — `gdown` handles both formats).
+
+If `REBAR_MODEL_GDRIVE_URL` is not set, the server starts normally and rebar depth
+uses a physics-based fallback (peak amplitude arrival time). No crash, no config error.
 
 ---
 

@@ -29,21 +29,22 @@ class TemporalAttention(nn.Module):
 
 
 class CNN1D(nn.Module):
-    def __init__(self):
+    def __init__(self, in_channels=1, conv_channels=[32, 128, 128], head_hidden=128):
         super().__init__()
+        c1, c2, c3 = conv_channels
         self.conv = nn.Sequential(
-            nn.Conv1d(1, 32, kernel_size=7, padding=3), nn.ReLU(),
+            nn.Conv1d(in_channels, c1, kernel_size=7, padding=3), nn.ReLU(),
             nn.MaxPool1d(2),
-            nn.Conv1d(32, 128, kernel_size=5, padding=2), nn.ReLU(),
+            nn.Conv1d(c1, c2, kernel_size=5, padding=2), nn.ReLU(),
             nn.MaxPool1d(2),
-            nn.Conv1d(128, 128, kernel_size=3, padding=1), nn.ReLU(),
+            nn.Conv1d(c2, c3, kernel_size=3, padding=1), nn.ReLU(),
             nn.MaxPool1d(2),
         )
-        self.attn = TemporalAttention(128)
+        self.attn = TemporalAttention(c3)
         self.head = nn.Sequential(
-            nn.Linear(128, 128), nn.ReLU(),
+            nn.Linear(c3, head_hidden), nn.ReLU(),
             nn.Dropout(0.3),
-            nn.Linear(128, 1),
+            nn.Linear(head_hidden, 1),
         )
 
     def forward(self, x):
