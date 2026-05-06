@@ -94,7 +94,7 @@ export default function OutputMaps({
           </div>
         )}
         {/* Export overlay */}
-        <button onClick={onExport} style={{ position: 'absolute', bottom: 12, right: 12, zIndex: 5, display: 'flex', alignItems: 'center', gap: 5, padding: '6px 14px', background: 'rgba(0,0,0,0.6)', color: '#fff', border: `1px solid rgba(255,255,255,0.15)`, cursor: 'pointer', fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', fontFamily: 'Inter, sans-serif', backdropFilter: 'blur(4px)' }}>
+        <button onClick={onExport} style={{ position: 'absolute', bottom: 12, right: 12, zIndex: 5, display: 'flex', alignItems: 'center', gap: 5, padding: '6px 14px', background: 'rgba(255,255,255,0.92)', color: TEXT, border: `1px solid ${BORDER}`, cursor: 'pointer', fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', fontFamily: 'Inter, sans-serif', backdropFilter: 'blur(4px)' }}>
           <Download size={11} /> Export
         </button>
 

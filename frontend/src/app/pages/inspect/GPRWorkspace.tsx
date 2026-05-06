@@ -565,9 +565,9 @@ export default function GPRWorkspace() {
 
       {setupDone && !manufacturer && (
         <div onClick={() => { setSetupDone(false); setSetupStep(1); }}
-          style={{ background: '#1c1500', borderBottom: '1px solid rgba(245,158,11,0.3)', padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, cursor: 'pointer', zIndex: 50, flexShrink: 0 }}>
-          <AlertCircle size={14} style={{ color: '#f59e0b', flexShrink: 0 }} />
-          <span style={{ color: '#fbbf24' }}>Equipment not configured — click here to complete setup</span>
+          style={{ background: '#FFF8E6', borderBottom: '1px solid rgba(217,119,6,0.3)', padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, cursor: 'pointer', zIndex: 50, flexShrink: 0 }}>
+          <AlertCircle size={14} style={{ color: '#d97706', flexShrink: 0 }} />
+          <span style={{ color: '#92400e' }}>Equipment not configured — click here to complete setup</span>
         </div>
       )}
 
@@ -623,7 +623,7 @@ export default function GPRWorkspace() {
           <div style={{ display: 'flex', background: RAISED, border: `1px solid ${BORDER}`, borderRadius: 6, overflow: 'hidden' }}>
             {(['cscan', '3d'] as const).map(v => (
               <button key={v} onClick={() => setActiveView(v)}
-                style={{ padding: '5px 16px', fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', background: activeView === v ? 'rgba(232,96,28,0.18)' : 'none', color: activeView === v ? ACCENT : TEXT2, border: 'none', cursor: 'pointer', fontFamily: 'Inter, sans-serif', transition: 'background 0.15s, color 0.15s' }}>
+                style={{ padding: '5px 16px', fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', background: activeView === v ? 'rgba(232,96,28,0.12)' : 'none', color: activeView === v ? ACCENT : TEXT2, border: 'none', cursor: 'pointer', fontFamily: 'Inter, sans-serif', transition: 'background 0.15s, color 0.15s' }}>
                 {v === 'cscan' ? 'Maps' : '3D'}
               </button>
             ))}
@@ -644,7 +644,7 @@ export default function GPRWorkspace() {
                 onMouseLeave={e => { if (!showSettingsMenu) { e.currentTarget.style.background = 'none'; e.currentTarget.style.borderColor = 'transparent'; } }}
               ><Settings size={15} /></button>
               {showSettingsMenu && (
-                <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, background: RAISED, border: `1px solid ${BORDER2}`, zIndex: 100, minWidth: 180, boxShadow: '0 8px 24px rgba(0,0,0,0.4)' }}>
+                <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, background: RAISED, border: `1px solid ${BORDER2}`, zIndex: 100, minWidth: 180, boxShadow: '0 8px 24px rgba(0,0,0,0.12)' }}>
                   {[
                     { label: 'Edit Equipment',  action: () => { setSetupDone(false); setSetupStep(1); setShowSettingsMenu(false); } },
                     { label: 'Re-run Analysis', action: () => { fileInputRef.current?.click(); setRightIconOpen('analysis'); setShowSettingsMenu(false); } },
@@ -652,7 +652,7 @@ export default function GPRWorkspace() {
                   ].map(({ label, action }) => (
                     <button key={label} onClick={action}
                       style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 16px', background: 'none', border: 'none', color: TEXT, fontSize: 12, cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}
-                      onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.06)')}
+                      onMouseEnter={e => (e.currentTarget.style.background = 'rgba(0,0,0,0.04)')}
                       onMouseLeave={e => (e.currentTarget.style.background = 'none')}
                     >{label}</button>
                   ))}
@@ -666,7 +666,7 @@ export default function GPRWorkspace() {
               <Download size={12} /> Export
             </button>
             {showExportMenu && (
-              <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, background: RAISED, border: `1px solid ${BORDER2}`, zIndex: 100, minWidth: 180, boxShadow: '0 8px 24px rgba(0,0,0,0.4)' }}>
+              <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, background: RAISED, border: `1px solid ${BORDER2}`, zIndex: 100, minWidth: 180, boxShadow: '0 8px 24px rgba(0,0,0,0.12)' }}>
                 {[
                   { label: 'Export Current Map', action: exportPNG },
                   { label: 'Export PDF Report',  action: () => setShowExportMenu(false) },
@@ -674,7 +674,7 @@ export default function GPRWorkspace() {
                 ].map(({ label, action }) => (
                   <button key={label} onClick={action}
                     style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 16px', background: 'none', border: 'none', color: TEXT, fontSize: 12, cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}
-                    onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.06)')}
+                    onMouseEnter={e => (e.currentTarget.style.background = 'rgba(0,0,0,0.04)')}
                     onMouseLeave={e => (e.currentTarget.style.background = 'none')}
                   >{label}</button>
                 ))}
@@ -695,15 +695,15 @@ export default function GPRWorkspace() {
           <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
               {LAYER_DEFS.map(({ id, label }) => (
                 <div key={id} onClick={() => { setSelectedLayer(id); setRightIconOpen('properties'); }}
-                  style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 14px', height: 36, cursor: 'pointer', background: selectedLayer === id ? 'rgba(249,115,22,0.1)' : 'none', borderLeft: `2px solid ${selectedLayer === id ? ACCENT : 'transparent'}`, transition: 'background 0.12s' }}
-                  onMouseEnter={e => { if (selectedLayer !== id) e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 14px', height: 36, cursor: 'pointer', background: selectedLayer === id ? 'rgba(232,96,28,0.1)' : 'none', borderLeft: `2px solid ${selectedLayer === id ? ACCENT : 'transparent'}`, transition: 'background 0.12s' }}
+                  onMouseEnter={e => { if (selectedLayer !== id) e.currentTarget.style.background = 'rgba(0,0,0,0.04)'; }}
                   onMouseLeave={e => { if (selectedLayer !== id) e.currentTarget.style.background = 'none'; }}
                 >
                   <span style={{ fontSize: 12, color: selectedLayer === id ? TEXT : TEXT2, flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     {label}{id === 'gpr' && files.length > 0 && <span style={{ marginLeft: 6, fontSize: 10, color: TEXT2 }}>({files.length})</span>}
                   </span>
                   <button onClick={ev => { ev.stopPropagation(); setLayerVis(v => ({ ...v, [id]: !v[id as LayerId] })); }}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: layerVis[id as LayerId] ? TEXT2 : '#C8C3BD', display: 'flex' }}>
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: layerVis[id as LayerId] ? TEXT2 : '#B0A9A4', display: 'flex' }}>
                     {layerVis[id as LayerId] ? <Eye size={13} /> : <EyeOff size={13} />}
                   </button>
                 </div>
@@ -712,9 +712,9 @@ export default function GPRWorkspace() {
               <div style={{ borderTop: `1px solid ${BORDER}`, marginTop: 4 }}>
                   {files.map((f, i) => (
                     <div key={f.name} onClick={() => { setSelectedFileIdx(i); setSelectedLayer('gpr'); }}
-                      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px 5px 28px', height: 30, cursor: 'pointer', background: selectedFileIdx === i && selectedLayer === 'gpr' ? 'rgba(249,115,22,0.08)' : 'none' }}
-                      onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.04)')}
-                      onMouseLeave={e => (e.currentTarget.style.background = selectedFileIdx === i && selectedLayer === 'gpr' ? 'rgba(249,115,22,0.08)' : 'none')}
+                      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px 5px 28px', height: 30, cursor: 'pointer', background: selectedFileIdx === i && selectedLayer === 'gpr' ? 'rgba(232,96,28,0.08)' : 'none' }}
+                      onMouseEnter={e => (e.currentTarget.style.background = 'rgba(0,0,0,0.04)')}
+                      onMouseLeave={e => (e.currentTarget.style.background = selectedFileIdx === i && selectedLayer === 'gpr' ? 'rgba(232,96,28,0.08)' : 'none')}
                     >
                       {isAnalyzing ? <Loader2 size={10} style={{ color: ACCENT, animation: 'spin 1s linear infinite', flexShrink: 0 }} />
                         : jobStatus === 'complete' ? <Check size={10} style={{ color: '#22c55e', flexShrink: 0 }} /> : null}
@@ -734,17 +734,17 @@ export default function GPRWorkspace() {
           </div>
           <div style={{ borderTop: `1px solid ${BORDER}`, padding: 10, position: 'relative' }}>
             <button onClick={() => setShowAddMenu(v => !v)}
-              style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '7px', background: 'rgba(255,255,255,0.03)', border: `1px dashed ${BORDER2}`, color: TEXT2, cursor: 'pointer', fontSize: 11, fontWeight: 600, fontFamily: 'Inter, sans-serif', borderRadius: 3 }}
-              onMouseEnter={e => { e.currentTarget.style.background='rgba(255,255,255,0.07)'; e.currentTarget.style.color=TEXT; }}
-              onMouseLeave={e => { e.currentTarget.style.background='rgba(255,255,255,0.03)'; e.currentTarget.style.color=TEXT2; }}>
+              style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '7px', background: 'rgba(0,0,0,0.03)', border: `1px dashed ${BORDER2}`, color: TEXT2, cursor: 'pointer', fontSize: 11, fontWeight: 600, fontFamily: 'Inter, sans-serif', borderRadius: 3 }}
+              onMouseEnter={e => { e.currentTarget.style.background='rgba(0,0,0,0.05)'; e.currentTarget.style.color=TEXT; }}
+              onMouseLeave={e => { e.currentTarget.style.background='rgba(0,0,0,0.03)'; e.currentTarget.style.color=TEXT2; }}>
               <Plus size={12} /> Add Layer
             </button>
             {showAddMenu && (
-              <div style={{ position: 'absolute', bottom: '100%', left: 10, right: 10, background: RAISED, border: `1px solid ${BORDER2}`, boxShadow: '0 -8px 24px rgba(0,0,0,0.3)', zIndex: 50 }}>
+              <div style={{ position: 'absolute', bottom: '100%', left: 10, right: 10, background: RAISED, border: `1px solid ${BORDER2}`, boxShadow: '0 -8px 24px rgba(0,0,0,0.1)', zIndex: 50 }}>
                 {['Scan Lines','Notes'].map(opt => (
                   <button key={opt} onClick={() => { if (opt === 'Scan Lines') fileInputRef.current?.click(); else setShowAddMenu(false); }}
                     style={{ display: 'block', width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: opt === 'Scan Lines' ? TEXT : TEXT2, fontSize: 12, cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}
-                    onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.06)')}
+                    onMouseEnter={e => (e.currentTarget.style.background = 'rgba(0,0,0,0.04)')}
                     onMouseLeave={e => (e.currentTarget.style.background = 'none')}>
                     {opt}{opt !== 'Scan Lines' && <span style={{ marginLeft: 8, fontSize: 9, color: TEXT2, opacity: 0.6 }}>soon</span>}
                   </button>
@@ -754,8 +754,8 @@ export default function GPRWorkspace() {
           </div>
           <div style={{ borderTop: `1px solid ${BORDER}`, padding: 10 }}>
             <button onClick={() => setShowProjects(v => !v)}
-              style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', background: showProjects ? 'rgba(249,115,22,0.1)' : 'none', border: 'none', color: showProjects ? ACCENT : TEXT2, cursor: 'pointer', fontSize: 11, fontWeight: 600, fontFamily: 'Inter, sans-serif', borderRadius: 3 }}
-              onMouseEnter={e => { if (!showProjects) e.currentTarget.style.background='rgba(255,255,255,0.05)'; }}
+              style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', background: showProjects ? 'rgba(232,96,28,0.1)' : 'none', border: 'none', color: showProjects ? ACCENT : TEXT2, cursor: 'pointer', fontSize: 11, fontWeight: 600, fontFamily: 'Inter, sans-serif', borderRadius: 3 }}
+              onMouseEnter={e => { if (!showProjects) e.currentTarget.style.background='rgba(0,0,0,0.04)'; }}
               onMouseLeave={e => { if (!showProjects) e.currentTarget.style.background='none'; }}>
               <FolderOpen size={13} /> My Projects
             </button>
@@ -776,7 +776,7 @@ export default function GPRWorkspace() {
                       </div>
                     )}
                 {activeView === 'cscan' && outputTab === 'gps' && !hasResult && !isAnalyzing && files.length === 0 && MAPBOX_TOKEN && (
-                  <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', background: 'rgba(10,22,40,0.92)', border: `1px solid ${BORDER}`, padding: '28px 36px', textAlign: 'center', pointerEvents: 'none', backdropFilter: 'blur(4px)', zIndex: 3 }}>
+                  <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', background: 'rgba(255,255,255,0.95)', border: `1px solid ${BORDER}`, padding: '28px 36px', textAlign: 'center', pointerEvents: 'none', backdropFilter: 'blur(4px)', zIndex: 3 }}>
                     <Radio size={28} style={{ color: TEXT2, marginBottom: 12 }} />
                     <p style={{ fontSize: 14, fontWeight: 600, color: TEXT, margin: '0 0 6px' }}>Upload GPR profiles to begin analysis</p>
                     <p style={{ fontSize: 12, color: TEXT2, margin: 0 }}>Layers panel → Add Layer → Scan Lines</p>
@@ -829,8 +829,8 @@ export default function GPRWorkspace() {
                 ]).map(({ id, Icon, title }) => (
                   <button key={id} title={title}
                     onClick={() => setRightIconOpen(prev => prev === id ? null : id)}
-                    style={{ width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', background: rightIconOpen === id ? 'rgba(249,115,22,0.15)' : 'none', border: 'none', borderRadius: 6, cursor: 'pointer', color: rightIconOpen === id ? ACCENT : TEXT2, transition: 'background 0.12s, color 0.12s' }}
-                    onMouseEnter={e => { if (rightIconOpen !== id) { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = TEXT; } }}
+                    style={{ width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', background: rightIconOpen === id ? 'rgba(232,96,28,0.12)' : 'none', border: 'none', borderRadius: 6, cursor: 'pointer', color: rightIconOpen === id ? ACCENT : TEXT2, transition: 'background 0.12s, color 0.12s' }}
+                    onMouseEnter={e => { if (rightIconOpen !== id) { e.currentTarget.style.background = 'rgba(0,0,0,0.04)'; e.currentTarget.style.color = TEXT; } }}
                     onMouseLeave={e => { if (rightIconOpen !== id) { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = TEXT2; } }}
                   ><Icon size={16} /></button>
                 ))}
@@ -852,8 +852,8 @@ export default function GPRWorkspace() {
                             <div style={{ padding: '4px 14px 8px', fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: TEXT2 }}>Scan Lines</div>
                             {hasResult ? analysisResult!.per_file_summary.map((f, i) => (
                               <div key={f.filename} onClick={() => { setSelectedFileIdx(i); bottomPanelRef.current?.expand(); }}
-                                style={{ padding: '8px 14px', cursor: 'pointer', background: selectedFileIdx === i ? 'rgba(249,115,22,0.08)' : 'none', borderLeft: `2px solid ${selectedFileIdx === i ? ACCENT : 'transparent'}` }}
-                                onMouseEnter={e => { if (selectedFileIdx !== i) e.currentTarget.style.background='rgba(255,255,255,0.04)'; }}
+                                style={{ padding: '8px 14px', cursor: 'pointer', background: selectedFileIdx === i ? 'rgba(232,96,28,0.08)' : 'none', borderLeft: `2px solid ${selectedFileIdx === i ? ACCENT : 'transparent'}` }}
+                                onMouseEnter={e => { if (selectedFileIdx !== i) e.currentTarget.style.background='rgba(0,0,0,0.04)'; }}
                                 onMouseLeave={e => { if (selectedFileIdx !== i) e.currentTarget.style.background='none'; }}>
                                 <div style={{ fontSize: 11, color: TEXT, marginBottom: 4, fontFamily: 'monospace', wordBreak: 'break-all' }}>{f.filename}</div>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
@@ -923,7 +923,7 @@ export default function GPRWorkspace() {
                         </div>
                         {files.length === 0 && (
                           <button onClick={() => fileInputRef.current?.click()}
-                            style={{ width: '100%', padding: '10px', marginBottom: 16, background: `rgba(249,115,22,0.12)`, border: `1px solid rgba(249,115,22,0.3)`, color: ACCENT, fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}>
+                            style={{ width: '100%', padding: '10px', marginBottom: 16, background: `rgba(232,96,28,0.08)`, border: `1px solid rgba(232,96,28,0.25)`, color: ACCENT, fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}>
                             Upload GPR Files
                           </button>
                         )}
@@ -1035,7 +1035,7 @@ export default function GPRWorkspace() {
       {showProjects && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex' }} onClick={() => setShowProjects(false)}>
           <div style={{ flex: 1 }} />
-          <div style={{ width: 360, height: '100%', background: PANEL, borderLeft: `1px solid ${BORDER2}`, display: 'flex', flexDirection: 'column', boxShadow: '-8px 0 32px rgba(0,0,0,0.4)' }} onClick={e => e.stopPropagation()}>
+          <div style={{ width: 360, height: '100%', background: PANEL, borderLeft: `1px solid ${BORDER2}`, display: 'flex', flexDirection: 'column', boxShadow: '-8px 0 32px rgba(0,0,0,0.12)' }} onClick={e => e.stopPropagation()}>
             <div style={{ padding: '14px 20px', borderBottom: `1px solid ${BORDER}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <span style={{ fontSize: 13, fontWeight: 700, color: TEXT }}>My Projects</span>
               <button onClick={() => setShowProjects(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: TEXT2 }}><X size={16} /></button>

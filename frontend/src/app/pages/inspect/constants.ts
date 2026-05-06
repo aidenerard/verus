@@ -12,14 +12,14 @@ export const GPR_EXTS = new Set([
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
 
-export const BG      = '#0a1628';
-export const PANEL   = '#0f1f3d';
-export const RAISED  = '#111827';
-export const BORDER  = '#1e3a5f';
-export const BORDER2 = '#2a4a6f';
-export const TEXT    = '#f1f5f9';
-export const TEXT2   = '#94a3b8';
-export const ACCENT  = '#f97316';
+export const BG      = '#F5F3EF';
+export const PANEL   = '#FFFFFF';
+export const RAISED  = '#F5F3EF';
+export const BORDER  = '#E2DED9';
+export const BORDER2 = '#D4CFC9';
+export const TEXT    = '#0A0A0A';
+export const TEXT2   = '#7A7470';
+export const ACCENT  = '#E8601C';
 
 // ── Timing ────────────────────────────────────────────────────────────────────
 
