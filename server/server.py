@@ -52,7 +52,7 @@ import numpy as np
 import psutil
 import torch
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -64,6 +64,12 @@ from run import (
     run_inference,
     render_cscan_b64,
     extract_bscan_b64,
+    extract_peak_info,
+    build_prob_grid,
+    build_extra_grids,
+    render_rebar_depth_b64,
+    render_amplitude_b64,
+    compute_confidence_metrics,
     INFER_BATCH,
     MAX_GRID_ROWS,
     MAX_GRID_COLS,
@@ -215,6 +221,8 @@ def run_analysis_job(
     file_data: list[tuple[str, bytes]],   # [(filename, bytes), ...]
     user_id: Optional[str],
     tmpdir: Path,
+    manufacturer: Optional[str] = None,
+    frequency_mhz: int = 1600,
 ) -> None:
     """
     Runs in a ThreadPoolExecutor worker thread.
@@ -242,10 +250,12 @@ def run_analysis_job(
             saved_paths.append((fname, dest))
             print(f"[job:{job_id}] Saved {fname} ({len(content)/1024:.1f} KB)", flush=True)
 
-        # ── Inference (same logic as original /analyze) ───────────────────────
-        file_preds: list[np.ndarray] = []
-        file_confs: list[np.ndarray] = []
-        file_names: list[str]        = []
+        # ── Inference ─────────────────────────────────────────────────────────
+        file_preds:     list[np.ndarray] = []
+        file_confs:     list[np.ndarray] = []
+        file_names:     list[str]        = []
+        file_peak_idxs: list[np.ndarray] = []
+        file_peak_amps: list[np.ndarray] = []
         per_file_summary: list[dict] = []
         total_sigs = 0
 
@@ -260,7 +270,8 @@ def run_analysis_job(
 
             print(f"[job:{job_id}] Processing: {fname}", flush=True)
             try:
-                csv_path, gps = detect_and_convert(dest, upload_dir=tmpdir)
+                csv_path, gps = detect_and_convert(dest, upload_dir=tmpdir,
+                                                    manufacturer=manufacturer)
             except Exception as exc:
                 print(f"[job:{job_id}] Conversion failed for {fname}: {exc}", flush=True)
                 continue
@@ -272,7 +283,8 @@ def run_analysis_job(
                 continue
 
             print(f"[job:{job_id}]   → {signals.shape[0]} signals, running inference…", flush=True)
-            bscan_info = extract_bscan_b64(signals)   # extract before del
+            bscan_info  = extract_bscan_b64(signals)
+            peak_idx, peak_amp = extract_peak_info(signals)
             preds, confs = run_inference(_model, signals)
             del signals
             if csv_path != dest:
@@ -286,6 +298,8 @@ def run_analysis_job(
             file_preds.append(preds)
             file_confs.append(confs)
             file_names.append(fname)
+            file_peak_idxs.append(peak_idx)
+            file_peak_amps.append(peak_amp)
             per_file_summary.append({
                 "filename":  fname,
                 "signals":   n,
@@ -305,7 +319,7 @@ def run_analysis_job(
         delam_pct_total = round(n_del_total / total_sigs * 100, 2)
         sound_pct_total = round(100.0 - delam_pct_total, 2)
 
-        # Render C-scan
+        # ── Render images and build extra grids ──────────────────────────────
         gc.collect()
         try:
             cscan_b64 = render_cscan_b64(file_preds, file_confs, file_names)
@@ -314,15 +328,63 @@ def run_analysis_job(
             print(f"[job:{job_id}] C-scan render failed: {exc}", flush=True)
             cscan_b64 = ""
 
+        # Prob grid for client-side threshold re-render
+        try:
+            import base64 as _b64
+            prob_grid, otsu_T = build_prob_grid(file_preds, file_confs)
+            prob_b64  = _b64.b64encode(prob_grid.tobytes()).decode()
+            pg_rows, pg_cols = prob_grid.shape
+            del prob_grid
+        except Exception as exc:
+            print(f"[job:{job_id}] prob_grid failed: {exc}", flush=True)
+            prob_b64 = ""; pg_rows = pg_cols = 0; otsu_T = 0.65
+
+        # Extra grids: rebar depth, amplitude, TWT
+        rebar_b64 = amp_b64 = twt_b64 = ""
+        twt_rows = twt_cols = 0
+        conf_pct = depth_acc_in = 0.0
+        sig_quality = "Fair"
+        try:
+            depth_grid, amp_grid, twt_grid = build_extra_grids(
+                file_peak_idxs, file_peak_amps, frequency_mhz
+            )
+            rebar_b64 = render_rebar_depth_b64(depth_grid)
+            amp_b64   = render_amplitude_b64(amp_grid)
+            twt_b64   = _b64.b64encode(twt_grid.tobytes()).decode()
+            twt_rows, twt_cols = twt_grid.shape
+
+            all_confs_flat = np.concatenate(file_confs)
+            conf_pct, depth_acc_in, sig_quality = compute_confidence_metrics(
+                all_confs_flat, amp_grid, frequency_mhz
+            )
+            del depth_grid, amp_grid, twt_grid, all_confs_flat
+            print(f"[job:{job_id}] Extra grids rendered. Confidence={conf_pct:.1f}%", flush=True)
+        except Exception as exc:
+            print(f"[job:{job_id}] Extra grids failed: {exc}", flush=True)
+
         elapsed = round(time.perf_counter() - t0, 3)
 
         result = {
-            "signals_analyzed":  total_sigs,
-            "delamination_pct":  delam_pct_total,
-            "sound_pct":         sound_pct_total,
-            "analysis_time_sec": elapsed,
-            "cscan_image":       cscan_b64,
-            "per_file_summary":  per_file_summary,
+            "signals_analyzed":    total_sigs,
+            "delamination_pct":    delam_pct_total,
+            "sound_pct":           sound_pct_total,
+            "analysis_time_sec":   elapsed,
+            "cscan_image":         cscan_b64,
+            "per_file_summary":    per_file_summary,
+            # new fields
+            "rebar_depth_image":   rebar_b64,
+            "amplitude_image":     amp_b64,
+            "prob_grid":           prob_b64,
+            "prob_grid_rows":      pg_rows,
+            "prob_grid_cols":      pg_cols,
+            "otsu_threshold":      round(float(otsu_T), 4),
+            "twt_grid":            twt_b64,
+            "twt_grid_rows":       twt_rows,
+            "twt_grid_cols":       twt_cols,
+            "frequency_mhz":       frequency_mhz,
+            "model_confidence_pct": conf_pct,
+            "depth_accuracy_in":   depth_acc_in,
+            "signal_quality":      sig_quality,
         }
 
         # ── Supabase: upload C-scan PNG + write DB row ────────────────────────
@@ -432,14 +494,18 @@ def memory() -> dict:
 
 @app.post("/analyze")
 async def analyze(
-    files: list[UploadFile] = File(...),
-    user_id: Optional[str]  = Depends(verify_token),
+    files:         list[UploadFile] = File(...),
+    manufacturer:  Optional[str]    = Form(None),
+    frequency_mhz: int              = Form(1600),
+    project_id:    Optional[str]    = Form(None),
+    user_id:       Optional[str]    = Depends(verify_token),
 ) -> JSONResponse:
     """
     Accepts file uploads, queues a background inference job, returns {job_id}
     immediately so the frontend can poll GET /job/{job_id}.
     """
-    print(f"[analyze] {len(files)} file(s), user_id={user_id}", flush=True)
+    print(f"[analyze] {len(files)} file(s), manufacturer={manufacturer!r}, "
+          f"freq={frequency_mhz} MHz, user_id={user_id}", flush=True)
 
     if not files:
         raise HTTPException(status_code=400, detail="No files uploaded.")
@@ -488,7 +554,8 @@ async def analyze(
             print(f"[analyze] DB insert failed: {exc}", flush=True)
 
     # Submit to thread pool (tmpdir cleaned up inside run_analysis_job)
-    _executor.submit(run_analysis_job, job_id, file_data, user_id, tmpdir)
+    _executor.submit(run_analysis_job, job_id, file_data, user_id, tmpdir,
+                     manufacturer, frequency_mhz)
     print(f"[analyze] Queued job {job_id}", flush=True)
 
     return JSONResponse({"job_id": job_id, "status": "pending"})

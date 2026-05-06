@@ -45,7 +45,11 @@ import numpy as np
 # the candidate extension with .lower() first — which detect_and_convert() and
 # server.py both do before touching these sets.
 
-SUPPORTED_EXTENSIONS: set[str] = {".csv", ".dzt", ".dt1", ".rd3", ".rd7", ".segy", ".sgy"}
+SUPPORTED_EXTENSIONS: set[str] = {
+    ".csv", ".dzt", ".dt1", ".rd3", ".rd7", ".segy", ".sgy",
+    ".dt", ".gec",          # IDS GeoRadar
+    ".iprb", ".iprh",       # ImpulseRadar
+}
 COMPANION_EXTENSIONS: set[str] = {".dzg", ".hd", ".rad"}  # paired metadata / GPS files
 
 FORMAT_INFO: list[dict] = [
@@ -439,19 +443,75 @@ def convert_segy(file_path: Path, upload_dir: Path) -> tuple[Path, Optional[dict
     return csv_path, gps
 
 
+# ── IDS GeoRadar stub ─────────────────────────────────────────────────────────
+
+def convert_ids(file_path: Path, upload_dir: Path) -> tuple[Path, Optional[dict]]:
+    raise RuntimeError(
+        f"IDS GeoRadar format ({file_path.suffix}) is not yet supported. "
+        "Export to SEG-Y or CSV from ReflexW and re-upload."
+    )
+
+
+# ── ImpulseRadar stub ─────────────────────────────────────────────────────────
+
+def convert_impulseradar(file_path: Path, upload_dir: Path) -> tuple[Path, Optional[dict]]:
+    raise RuntimeError(
+        f"ImpulseRadar format ({file_path.suffix}) is not yet supported. "
+        "Export to SEG-Y or CSV from ImpulseRadar Studio and re-upload."
+    )
+
+
+# ── CSV pass-through (explicit function for manufacturer dispatch) ────────────
+
+def passthrough_csv(file_path: Path, upload_dir: Path) -> tuple[Path, Optional[dict]]:
+    print(f"[INGEST] CSV pass-through: {file_path.name}", flush=True)
+    return file_path, None
+
+
+# ── Manufacturer → converter map ──────────────────────────────────────────────
+
+MANUFACTURER_FORMAT_MAP: dict[str, any] = {
+    "gssi":            convert_dzt,
+    "sensors_software": convert_dt1,
+    "mala":            convert_mala,
+    "ids":             convert_ids,
+    "impulseradar":    convert_impulseradar,
+    "segy":            convert_segy,
+    "csv":             passthrough_csv,
+}
+
+# Extension → converter fallback (used when manufacturer not specified)
+_EXT_MAP: dict[str, any] = {
+    ".csv":  passthrough_csv,
+    ".dzt":  convert_dzt,
+    ".dt1":  convert_dt1,
+    ".rd3":  convert_mala,
+    ".rd7":  convert_mala,
+    ".segy": convert_segy,
+    ".sgy":  convert_segy,
+    ".dt":   convert_ids,
+    ".gec":  convert_ids,
+    ".iprb": convert_impulseradar,
+    ".iprh": convert_impulseradar,
+}
+
+
 # ── Main dispatcher ───────────────────────────────────────────────────────────
 
 def detect_and_convert(
     file_path: Path,
     upload_dir: Path,
+    manufacturer: Optional[str] = None,
 ) -> tuple[Path, Optional[dict]]:
     """
-    Detect file format by extension and convert to CSV if needed.
+    Detect file format and convert to CSV.  When *manufacturer* is provided,
+    dispatch directly to the correct converter without extension sniffing.
 
     Parameters
     ----------
-    file_path  : Path to the uploaded file (already saved to disk in upload_dir)
-    upload_dir : Directory where converted CSV is written (usually the same tmpdir)
+    file_path    : Path to the uploaded file (already saved to disk in upload_dir)
+    upload_dir   : Directory where converted CSV is written
+    manufacturer : Manufacturer key from MANUFACTURER_FORMAT_MAP, or None
 
     Returns
     -------
@@ -459,28 +519,26 @@ def detect_and_convert(
 
     Raises
     ------
-    ValueError  – unsupported extension or corrupt/unreadable file
+    ValueError   – unsupported extension or corrupt/unreadable file
     RuntimeError – required library not installed (readgssi, segyio)
     """
     ext = file_path.suffix.lower()
     print(
-        f"[INGEST] detect_and_convert called for: {file_path}, ext={ext}",
+        f"[INGEST] detect_and_convert: {file_path.name}, ext={ext}, manufacturer={manufacturer!r}",
         flush=True,
     )
 
-    if ext == ".csv":
-        print(f"[INGEST] CSV pass-through: {file_path.name}", flush=True)
-        return file_path, None
-    elif ext == ".dzt":
-        return convert_dzt(file_path, upload_dir)
-    elif ext == ".dt1":
-        return convert_dt1(file_path, upload_dir)
-    elif ext in (".rd3", ".rd7"):
-        return convert_mala(file_path, upload_dir)
-    elif ext in (".segy", ".sgy"):
-        return convert_segy(file_path, upload_dir)
-    else:
+    # Manufacturer-based dispatch — skips extension sniffing entirely
+    if manufacturer and manufacturer in MANUFACTURER_FORMAT_MAP:
+        converter = MANUFACTURER_FORMAT_MAP[manufacturer]
+        print(f"[INGEST] Using manufacturer converter: {manufacturer}", flush=True)
+        return converter(file_path, upload_dir)
+
+    # Extension-based fallback
+    converter = _EXT_MAP.get(ext)
+    if converter is None:
         raise ValueError(
             f"Unsupported file format: {file_path.suffix!r}. "
             f"Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}"
         )
+    return converter(file_path, upload_dir)

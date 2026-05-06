@@ -381,6 +381,286 @@ def _otsu_threshold(probs: np.ndarray, bins: int = 256) -> float:
     return float(np.clip(t, 0.30, 0.85))
 
 
+# ── Peak extraction + extra grids ─────────────────────────────────────────────
+
+_FREQ_TIME_WINDOW_NS: dict[int, float] = {
+    400:  40.0,
+    900:  20.0,
+    1600: 15.0,
+    2000: 10.0,
+    2600:  8.0,
+}
+
+_FREQ_ER: dict[int, float] = {
+    400:  8.0,
+    900:  7.0,
+    1600: 6.0,
+    2000: 6.0,
+    2600: 5.0,
+}
+
+
+def extract_peak_info(
+    signals: np.ndarray,
+    skip_samples: int = 20,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    For each A-scan in *signals* (n, 512), find the sample index of the peak
+    absolute amplitude (skipping the first *skip_samples* = air-wave zone).
+
+    Returns
+    -------
+    peak_idx  : int32 array (n,) — absolute sample index of peak in each trace
+    peak_amp  : float32 array (n,) — absolute amplitude at that sample
+    """
+    window = np.abs(signals[:, skip_samples:])       # (n, 512-skip)
+    local_idx = np.argmax(window, axis=1)             # (n,) index within window
+    peak_idx  = (local_idx + skip_samples).astype(np.int32)
+    peak_amp  = window[np.arange(len(signals)), local_idx].astype(np.float32)
+    return peak_idx, peak_amp
+
+
+def build_prob_grid(
+    file_preds: list[np.ndarray],
+    file_confs: list[np.ndarray],
+) -> tuple[np.ndarray, float]:
+    """
+    Build the downsampled P(sound) grid and Otsu threshold used by the C-scan.
+
+    Returns
+    -------
+    prob_grid : float32 (rows, cols) — P(sound) values 0-1, NaN for padding
+    otsu_T    : float — Otsu threshold
+    """
+    n_files  = len(file_preds)
+    max_sigs = max(len(p) for p in file_preds)
+
+    grid = np.full((n_files, max_sigs), np.nan, dtype=np.float32)
+    for row, (preds, confs) in enumerate(zip(file_preds, file_confs)):
+        for col, (pred, conf) in enumerate(zip(preds, confs)):
+            grid[row, col] = conf if pred == 1 else 1.0 - conf
+
+    # Downsample
+    if n_files > MAX_GRID_ROWS:
+        idx  = np.linspace(0, n_files - 1, MAX_GRID_ROWS, dtype=int)
+        grid = grid[idx, :]
+    if max_sigs > MAX_GRID_COLS:
+        idx  = np.linspace(0, max_sigs - 1, MAX_GRID_COLS, dtype=int)
+        grid = grid[:, idx]
+
+    # Fill trailing NaN
+    for i in range(grid.shape[0]):
+        valid = np.where(~np.isnan(grid[i, :]))[0]
+        if len(valid) and valid[-1] < grid.shape[1] - 1:
+            grid[i, valid[-1] + 1:] = grid[i, valid[-1]]
+
+    if grid.shape[1] < 50:
+        scale = max(1, 50 // grid.shape[1])
+        grid  = zoom(grid, (1, scale), order=1)
+
+    all_preds  = np.concatenate(file_preds)
+    all_confs  = np.concatenate(file_confs)
+    all_psound = np.where(all_preds == 1, all_confs, 1.0 - all_confs)
+    T = _otsu_threshold(all_psound)
+    del all_psound, all_confs, all_preds
+
+    return grid.astype(np.float32), T
+
+
+def build_extra_grids(
+    file_peak_idxs: list[np.ndarray],
+    file_peak_amps: list[np.ndarray],
+    frequency_mhz: int = 1600,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Build depth, amplitude, and TWT grids from per-file peak info.
+
+    Returns (depth_grid_in, amplitude_grid, twt_grid_ns) — all float32,
+    shape (n_files, max_sigs), downsampled to ≤ MAX_GRID_ROWS × MAX_GRID_COLS.
+    NaN for padding cells.
+    """
+    time_window = _FREQ_TIME_WINDOW_NS.get(frequency_mhz, 15.0)
+    er          = _FREQ_ER.get(frequency_mhz, 6.0)
+    velocity    = 0.3 / np.sqrt(er)   # m/ns
+
+    n_files  = len(file_peak_idxs)
+    max_sigs = max(len(a) for a in file_peak_idxs)
+
+    depth_grid = np.full((n_files, max_sigs), np.nan, dtype=np.float32)
+    amp_grid   = np.full((n_files, max_sigs), np.nan, dtype=np.float32)
+    twt_grid   = np.full((n_files, max_sigs), np.nan, dtype=np.float32)
+
+    for row, (peak_idx, peak_amp) in enumerate(zip(file_peak_idxs, file_peak_amps)):
+        n = len(peak_idx)
+        twt_ns   = (peak_idx.astype(np.float32) / 512.0) * time_window
+        depth_m  = velocity * twt_ns / 2.0
+        depth_in = depth_m * 39.3701
+
+        max_amp  = peak_amp.max() if peak_amp.max() > 0 else 1.0
+        norm_amp = peak_amp / max_amp
+
+        depth_grid[row, :n] = depth_in
+        amp_grid[row, :n]   = norm_amp
+        twt_grid[row, :n]   = twt_ns
+
+    # Downsample to same shape as prob_grid
+    if n_files > MAX_GRID_ROWS:
+        idx        = np.linspace(0, n_files - 1, MAX_GRID_ROWS, dtype=int)
+        depth_grid = depth_grid[idx, :]
+        amp_grid   = amp_grid[idx, :]
+        twt_grid   = twt_grid[idx, :]
+    if max_sigs > MAX_GRID_COLS:
+        idx        = np.linspace(0, max_sigs - 1, MAX_GRID_COLS, dtype=int)
+        depth_grid = depth_grid[:, idx]
+        amp_grid   = amp_grid[:, idx]
+        twt_grid   = twt_grid[:, idx]
+
+    # Extend trailing NaN same as prob_grid
+    for g in (depth_grid, amp_grid, twt_grid):
+        for i in range(g.shape[0]):
+            valid = np.where(~np.isnan(g[i, :]))[0]
+            if len(valid) and valid[-1] < g.shape[1] - 1:
+                g[i, valid[-1] + 1:] = g[i, valid[-1]]
+
+    return depth_grid, amp_grid, twt_grid
+
+
+def render_rebar_depth_b64(
+    depth_grid: np.ndarray,
+    dpi: int = 100,
+) -> str:
+    """
+    Render rebar depth grid as a heatmap PNG.
+    Color scale: blue (shallow ≤1") → green → yellow → red (deep ≥4").
+    """
+    cmap_obj = mcolors.LinearSegmentedColormap.from_list(
+        "depth", ['#2563EB', '#10B981', '#FBBF24', '#EF4444'], N=256,
+    )
+    cmap_obj.set_bad(color='#F0EFEC')
+
+    nan_mask  = np.isnan(depth_grid)
+    valid     = depth_grid[~nan_mask]
+    vmin, vmax = (1.0, 4.0)
+    if len(valid):
+        vmin = max(0.0, np.percentile(valid, 5))
+        vmax = max(vmin + 0.5, np.percentile(valid, 95))
+
+    norm   = mcolors.Normalize(vmin=vmin, vmax=vmax)
+    masked = np.ma.array(depth_grid, mask=nan_mask)
+
+    smooth = gaussian_filter(
+        np.where(nan_mask, (vmin + vmax) / 2, depth_grid), sigma=(1.5, 3.0)
+    )
+    masked_s = np.ma.array(smooth, mask=nan_mask)
+
+    fig, ax = plt.subplots(figsize=(14, 3.5), facecolor='white')
+    fig.subplots_adjust(left=0.05, right=0.97, top=0.88, bottom=0.22)
+    ax.imshow(masked_s, cmap=cmap_obj, norm=norm, aspect='auto', origin='upper',
+              interpolation='bilinear')
+
+    for spine in ax.spines.values():
+        spine.set_linewidth(0.8)
+        spine.set_color('#CCCCCC')
+    ax.set_xlabel('Scan line (longitudinal →)', fontsize=8, color='#555555', labelpad=6)
+    ax.set_ylabel('Swath', fontsize=8, color='#555555', labelpad=6)
+    ax.tick_params(colors='#777777', length=3, width=0.6, labelsize=7)
+
+    cbar = fig.colorbar(
+        plt.cm.ScalarMappable(cmap=cmap_obj, norm=norm),
+        ax=ax, orientation='horizontal', pad=0.18, fraction=0.04, aspect=50,
+    )
+    cbar.set_ticks([vmin, (vmin + vmax) / 2, vmax])
+    cbar.set_ticklabels([f'Shallow ({vmin:.1f}")', f'{(vmin+vmax)/2:.1f}"', f'Deep ({vmax:.1f}")'],
+                        fontsize=8)
+    cbar.ax.tick_params(length=0)
+    cbar.outline.set_linewidth(0.5)
+    cbar.outline.set_edgecolor('#CCCCCC')
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=dpi, bbox_inches='tight', facecolor='white')
+    plt.close(fig)
+    gc.collect()
+    buf.seek(0)
+    return base64.b64encode(buf.read()).decode('utf-8')
+
+
+def render_amplitude_b64(
+    amplitude_grid: np.ndarray,
+    dpi: int = 100,
+) -> str:
+    """
+    Render amplitude grid as a heatmap PNG.
+    Color: low amplitude (red/deteriorated) → high amplitude (blue/sound).
+    """
+    cmap_obj = mcolors.LinearSegmentedColormap.from_list(
+        "amp", ['#C0392B', '#E67E22', '#F1C40F', '#27AE60', '#2980B9'], N=256,
+    )
+    cmap_obj.set_bad(color='#F0EFEC')
+
+    nan_mask  = np.isnan(amplitude_grid)
+    norm      = mcolors.Normalize(vmin=0.0, vmax=1.0)
+
+    smooth = gaussian_filter(
+        np.where(nan_mask, 0.5, amplitude_grid), sigma=(1.5, 3.0)
+    )
+    masked = np.ma.array(smooth, mask=nan_mask)
+
+    fig, ax = plt.subplots(figsize=(14, 3.5), facecolor='white')
+    fig.subplots_adjust(left=0.05, right=0.97, top=0.88, bottom=0.22)
+    ax.imshow(masked, cmap=cmap_obj, norm=norm, aspect='auto', origin='upper',
+              interpolation='bilinear')
+
+    for spine in ax.spines.values():
+        spine.set_linewidth(0.8)
+        spine.set_color('#CCCCCC')
+    ax.set_xlabel('Scan line (longitudinal →)', fontsize=8, color='#555555', labelpad=6)
+    ax.set_ylabel('Swath', fontsize=8, color='#555555', labelpad=6)
+    ax.tick_params(colors='#777777', length=3, width=0.6, labelsize=7)
+
+    cbar = fig.colorbar(
+        plt.cm.ScalarMappable(cmap=cmap_obj, norm=norm),
+        ax=ax, orientation='horizontal', pad=0.18, fraction=0.04, aspect=50,
+    )
+    cbar.set_ticks([0.0, 0.5, 1.0])
+    cbar.set_ticklabels(['Low Amplitude (Deteriorated)', 'Boundary', 'High Amplitude (Sound)'],
+                        fontsize=8)
+    cbar.ax.tick_params(length=0)
+    cbar.outline.set_linewidth(0.5)
+    cbar.outline.set_edgecolor('#CCCCCC')
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=dpi, bbox_inches='tight', facecolor='white')
+    plt.close(fig)
+    gc.collect()
+    buf.seek(0)
+    return base64.b64encode(buf.read()).decode('utf-8')
+
+
+def compute_confidence_metrics(
+    all_confs: np.ndarray,
+    amplitude_grid: np.ndarray,
+    frequency_mhz: int = 1600,
+) -> tuple[float, float, str]:
+    """
+    Returns (model_confidence_pct, depth_accuracy_in, signal_quality).
+
+    model_confidence_pct : mean of max(p, 1-p) across all signals, 0-100
+    depth_accuracy_in    : ±inches based on antenna frequency
+    signal_quality       : 'Good', 'Fair', or 'Poor' from amplitude SNR
+    """
+    conf_pct = float(np.mean(all_confs) * 100) if len(all_confs) else 50.0
+
+    depth_acc = {400: 1.0, 900: 0.5, 1600: 0.25, 2000: 0.25, 2600: 0.125}.get(
+        frequency_mhz, 0.5
+    )
+
+    valid_amp = amplitude_grid[~np.isnan(amplitude_grid)]
+    mean_amp  = float(np.mean(valid_amp)) if len(valid_amp) else 0.5
+    quality   = 'Good' if mean_amp >= 0.65 else ('Fair' if mean_amp >= 0.40 else 'Poor')
+
+    return round(conf_pct, 1), depth_acc, quality
+
+
 # ── C-scan rendering ──────────────────────────────────────────────────────────
 
 def render_cscan_b64(
@@ -394,42 +674,7 @@ def render_cscan_b64(
     Render a clean GPR condition heatmap.
     Colormap: red (deteriorated) → yellow (boundary) → blue (sound).
     """
-    n_files  = len(file_preds)
-    max_sigs = max(len(p) for p in file_preds)
-
-    # Build P(sound) grid: rows = scan lines, cols = signals
-    prob_grid = np.full((n_files, max_sigs), np.nan, dtype=np.float32)
-    for row, (preds, confs) in enumerate(zip(file_preds, file_confs)):
-        for col, (pred, conf) in enumerate(zip(preds, confs)):
-            prob_grid[row, col] = conf if pred == 1 else 1.0 - conf
-
-    # Downsample if too large
-    if n_files > MAX_GRID_ROWS:
-        idx = np.linspace(0, n_files - 1, MAX_GRID_ROWS, dtype=int)
-        prob_grid = prob_grid[idx, :]
-    if max_sigs > MAX_GRID_COLS:
-        idx = np.linspace(0, max_sigs - 1, MAX_GRID_COLS, dtype=int)
-        prob_grid = prob_grid[:, idx]
-
-    # Extend shorter scan lines to avoid gray trailing edges
-    for i in range(prob_grid.shape[0]):
-        valid = np.where(~np.isnan(prob_grid[i, :]))[0]
-        if len(valid) and valid[-1] < prob_grid.shape[1] - 1:
-            prob_grid[i, valid[-1] + 1:] = prob_grid[i, valid[-1]]
-
-    # Upsample if too sparse
-    if prob_grid.shape[1] < 50:
-        scale = max(1, 50 // prob_grid.shape[1])
-        prob_grid = zoom(prob_grid, (1, scale), order=1)
-
-    grid_lat, grid_long = prob_grid.shape
-
-    # Otsu threshold to pin the colormap midpoint to the decision boundary
-    all_preds  = np.concatenate(file_preds)
-    all_confs  = np.concatenate(file_confs)
-    all_psound = np.where(all_preds == 1, all_confs, 1.0 - all_confs)
-    T = _otsu_threshold(all_psound)
-    del all_psound, all_confs, all_preds
+    prob_grid, T = build_prob_grid(file_preds, file_confs)
     print(f"[render] Otsu threshold: {T:.4f}", flush=True)
 
     # Smooth and rescale so T maps to colormap midpoint (0.5)
