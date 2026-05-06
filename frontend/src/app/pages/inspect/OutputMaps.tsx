@@ -84,7 +84,11 @@ export default function OutputMaps({
           <div style={{ border: `1px solid ${BORDER}`, overflow: 'hidden', background: RAISED }}>
             {useCondCanvas
               ? <canvas ref={condCanvasRef} style={canvasStyle} />
-              : <img src={`data:image/png;base64,${r.cscan_image}`} alt="Condition map" style={imgStyle} />
+              : r.cscan_image
+                ? <img src={`data:image/png;base64,${r.cscan_image}`} alt="Condition map" style={imgStyle} />
+                : r.cscan_url
+                  ? <img src={r.cscan_url} alt="Condition map" style={imgStyle} />
+                  : <div style={naStyle}>C-scan not available — re-run analysis.</div>
             }
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
@@ -107,21 +111,36 @@ export default function OutputMaps({
         <>
           <MapHeader
             title="Rebar Depth Map"
-            subtitle="Estimated from peak amplitude arrival time"
+            subtitle="Estimated cover depth in inches"
             badge={depthBadge() ? { text: `Depth Accuracy: ${depthBadge()!.text}`, color: depthBadge()!.color } : null}
             onExport={onExport}
           />
+          {r.rebar_model_used !== undefined && (
+            <div>
+              <span style={{
+                fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 20,
+                background: r.rebar_model_used ? '#22c55e20' : '#f59e0b20',
+                color: r.rebar_model_used ? '#16a34a' : '#d97706',
+              }}>
+                {r.rebar_model_used ? 'AI Model' : 'Physics Estimate'}
+              </span>
+            </div>
+          )}
           <div style={{ border: `1px solid ${BORDER}`, overflow: 'hidden', background: RAISED }}>
             {useRebarCanvas
               ? <canvas ref={rebarCanvasRef} style={canvasStyle} />
-              : r.rebar_depth_image
-                ? <img src={`data:image/png;base64,${r.rebar_depth_image}`} alt="Rebar depth map" style={imgStyle} />
-                : <div style={naStyle}>Rebar depth map not available — re-run analysis with server v2.</div>
+              : (r.rebar_cscan_image || r.rebar_depth_image)
+                ? <img
+                    src={`data:image/png;base64,${r.rebar_cscan_image || r.rebar_depth_image}`}
+                    alt="Rebar depth map"
+                    style={imgStyle}
+                  />
+                : <div style={naStyle}>Rebar depth map not available — re-run analysis.</div>
             }
           </div>
           <div style={legendStyle}>
-            <span>■ Blue — Shallow (1")</span>
-            <span>■ Green — Moderate (2–3")</span>
+            <span>■ Blue — Shallow (0.5")</span>
+            <span>■ Green/Yellow — Moderate (1–3")</span>
             <span>■ Red — Deep (&gt;4")</span>
           </div>
         </>

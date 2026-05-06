@@ -32,7 +32,7 @@ export default function JobTable({ jobs, loading, onView, onStartFirst }: Props)
     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
       <thead>
         <tr style={{ background: '#F5F3EF', borderBottom: '2px solid #E2DED9' }}>
-          {['Date', 'Files', 'Signals', 'Delamination', 'Status', ''].map(h => (
+          {['Date', 'Files', 'Signals', 'Status', ''].map(h => (
             <th key={h} style={{ textAlign: h === '' ? 'right' : 'left', padding: '10px 20px', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: '#7A7470' }}>{h}</th>
           ))}
         </tr>
@@ -52,11 +52,6 @@ export default function JobTable({ jobs, loading, onView, onStartFirst }: Props)
                 </span>
               </td>
               <td style={{ padding: '12px 20px', fontSize: 12, color: '#7A7470' }}>{job.signals_analyzed?.toLocaleString() ?? '—'}</td>
-              <td style={{ padding: '12px 20px', fontSize: 12 }}>
-                {job.delamination_pct != null
-                  ? <span style={{ fontWeight: 700, color: job.delamination_pct > 10 ? '#C0392B' : '#0A0A0A' }}>{job.delamination_pct.toFixed(1)}%</span>
-                  : '—'}
-              </td>
               <td style={{ padding: '12px 20px' }}>
                 <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: statusColor }}>{statusLabel}</span>
               </td>

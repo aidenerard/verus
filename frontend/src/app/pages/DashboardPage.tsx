@@ -6,7 +6,7 @@ import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabase';
 import type { AnalysisJob, InspectionModule } from './dashboard/types';
 import ComingSoonModal from './dashboard/ComingSoonModal';
-import JobTable, { ViewJobModal } from './dashboard/JobTable';
+import JobTable from './dashboard/JobTable';
 
 const MODULES: InspectionModule[] = [
   { id: 'gpr',      name: 'GPR',      fullName: 'Ground-Penetrating Radar',               status: 'available',      icon: Radio,       standard: 'ASTM D6087', description: 'Detects subsurface delamination from electromagnetic reflection patterns in GPR A-scan waveforms.' },
@@ -26,7 +26,6 @@ export default function DashboardPage() {
   const [modalModule, setModalModule] = useState<InspectionModule | null>(null);
   const [jobs,        setJobs]        = useState<AnalysisJob[]>([]);
   const [jobsLoading, setJobsLoading] = useState(true);
-  const [viewJob,     setViewJob]     = useState<AnalysisJob | null>(null);
 
   useEffect(() => {
     if (!user) return;
@@ -129,13 +128,12 @@ export default function DashboardPage() {
               <h2 style={{ margin: 0, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#7A7470' }}>Recent Projects</h2>
               {jobs.length > 0 && <span style={{ fontSize: 11, color: '#B0A9A4' }}>{jobs.length} job{jobs.length !== 1 ? 's' : ''}</span>}
             </div>
-            <JobTable jobs={jobs} loading={jobsLoading} onView={setViewJob} onStartFirst={() => navigate('/analyze')} />
+            <JobTable jobs={jobs} loading={jobsLoading} onView={job => navigate(`/inspect/gpr?project_id=${job.id}`)} onStartFirst={() => navigate('/analyze')} />
           </div>
         </section>
 
       </main>
 
-      {viewJob     && <ViewJobModal job={viewJob} onClose={() => setViewJob(null)} />}
       {modalModule && <ComingSoonModal module={modalModule} onClose={() => setModalModule(null)} />}
     </div>
   );

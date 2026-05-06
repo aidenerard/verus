@@ -7,11 +7,16 @@ export interface GpsData {
 }
 
 export interface FileResult {
-  filename:  string;
-  signals:   number;
-  delam_pct: number;
-  gps?:      GpsData | null;
-  bscan?:    BscanData;
+  filename:          string;
+  signals:           number;
+  delam_pct:         number;
+  gps?:              GpsData | null;
+  bscan?:            BscanData;
+  rebar_depth_mean?: number;
+  rebar_depth_min?:  number;
+  rebar_depth_max?:  number;
+  rebar_depth_array?: number[];
+  twt_array?:        number[];
 }
 
 export interface AnalysisResult {
@@ -20,6 +25,7 @@ export interface AnalysisResult {
   sound_pct:           number;
   analysis_time_sec:   number;
   cscan_image:         string;
+  cscan_url?:          string;
   per_file_summary:    FileResult[];
   // optional — present only from server v2+
   rebar_depth_image?:  string;
@@ -35,6 +41,11 @@ export interface AnalysisResult {
   model_confidence_pct?: number;
   depth_accuracy_in?:  number;
   signal_quality?:     string;
+  // rebar model fields — present from server v3+
+  rebar_model_used?:   boolean;
+  rebar_cscan_image?:  string;
+  rebar_depth_grid?:   (number | null)[][];
+  rebar_twt_grid?:     (number | null)[][];
 }
 
 export interface UploadedFile { file: File; name: string }

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useNavigate } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import type { ImperativePanelHandle } from 'react-resizable-panels';
 import mapboxgl from 'mapbox-gl';
@@ -34,9 +34,11 @@ import AnalysisProgressOverlay from './AnalysisProgressOverlay';
 export default function GPRWorkspace() {
   const navigate    = useNavigate();
   const { session } = useAuth();
+  const [searchParams] = useSearchParams();
+  const viewJobId = searchParams.get('project_id');
 
   // ── Setup ─────────────────────────────────────────────────────────────────────
-  const [setupChecking,  setSetupChecking]  = useState(() => !!localStorage.getItem('verus_project_id'));
+  const [setupChecking,  setSetupChecking]  = useState(() => !!localStorage.getItem('verus_project_id') || !!viewJobId);
   const [setupDone,      setSetupDone]      = useState(false);
   const [setupStep,      setSetupStep]      = useState<1|2|3>(1);
   const [manufacturer,   setManufacturer]   = useState<ManufacturerKey | ''>('');
@@ -104,6 +106,7 @@ export default function GPRWorkspace() {
 
   // ── Restore setup from Supabase (keyed by project_id in localStorage) ────────
   useEffect(() => {
+    if (viewJobId) return; // URL param takes priority — handled below
     const pid = localStorage.getItem('verus_project_id');
     if (!pid) { setSetupChecking(false); return; }
     supabase.from('projects').select('*').eq('id', pid).single()
@@ -124,7 +127,42 @@ export default function GPRWorkspace() {
         setSetupChecking(false);
       })
       .catch(() => setSetupChecking(false));
-  }, []);
+  }, []); // eslint-disable-line
+
+  // ── Load existing job from URL ?project_id= param ─────────────────────────────
+  useEffect(() => {
+    if (!viewJobId) return;
+    const headers: Record<string, string> = {};
+    if (session?.access_token) headers['Authorization'] = `Bearer ${session.access_token}`;
+    fetch(`${SERVER}/job/${viewJobId}`, { headers })
+      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((job: any) => {
+        const result = job.result ?? (job.signals_analyzed != null ? {
+          signals_analyzed:  job.signals_analyzed,
+          delamination_pct:  job.delamination_pct  ?? 0,
+          sound_pct:         job.sound_pct          ?? 0,
+          analysis_time_sec: job.analysis_time_sec  ?? 0,
+          cscan_image:       '',
+          cscan_url:         job.cscan_url,
+          per_file_summary:  job.per_file_summary   ?? [],
+        } : null);
+        if (result) {
+          setAnalysisResult(result);
+          if (result.otsu_threshold) setDetectionThreshold(result.otsu_threshold);
+          if (result.frequency_mhz) {
+            setFrequencyMhz(result.frequency_mhz);
+            setDielectricEr(DEFAULT_ER[result.frequency_mhz] ?? 6);
+          }
+          setJobStatus('complete');
+          setOutputTab('condition');
+          setRightTab('properties');
+          setActiveView('cscan');
+        }
+        setSetupDone(true);
+        setSetupChecking(false);
+      })
+      .catch(() => setSetupChecking(false));
+  }, []); // eslint-disable-line — only run on mount
 
   useEffect(() => { setDielectricEr(DEFAULT_ER[frequencyMhz] ?? 6); }, [frequencyMhz]);
 
