@@ -11,7 +11,7 @@ from typing import Optional
 import numpy as np
 
 from ingest_gps import parse_dzg, gps_summary
-from ingest_utils import resample_to_512, write_csv, find_companion
+from ingest_utils import resample_to_512, zscore_normalize, write_csv, find_companion
 
 
 # ── GSSI DZT ─────────────────────────────────────────────────────────────────
@@ -70,6 +70,7 @@ def convert_dzt(file_path: Path, upload_dir: Path) -> tuple[Path, Optional[dict]
         amps = np.stack([resample_to_512(amps_raw[i], n_samples) for i in range(n_traces)])
     else:
         amps = amps_raw.astype(np.float32)
+    amps = zscore_normalize(amps)
 
     csv_path = upload_dir / (file_path.stem + "_ch0.csv")
     print(f"[INGEST] convert_dzt: writing CSV → {csv_path.name} ({n_traces} traces)", flush=True)
@@ -125,11 +126,11 @@ def convert_dt1(file_path: Path, upload_dir: Path) -> tuple[Path, Optional[dict]
         trace     = np.frombuffer(raw_bytes, dtype=">i2").astype(np.float32)
         amps_list.append(resample_to_512(trace, samples))
 
-    amps     = np.stack(amps_list)
+    amps     = zscore_normalize(np.stack(amps_list))
     csv_path = upload_dir / (file_path.stem + ".csv")
     write_csv(csv_path, amps)
 
-    print(f"[ingest] DT1 → {csv_path.name}: {n_traces} traces, {samples} samp/trace", flush=True)
+    print(f"[ingest] DT1 → {csv_path.name}: {n_traces} traces, {samples} samp/trace → 512, normalized", flush=True)
     return csv_path, None
 
 
@@ -167,11 +168,12 @@ def convert_mala(file_path: Path, upload_dir: Path) -> tuple[Path, Optional[dict
         amps = np.stack([resample_to_512(data[i], samples) for i in range(n_traces)])
     else:
         amps = data
+    amps = zscore_normalize(amps)
 
     csv_path = upload_dir / (file_path.stem + ".csv")
     write_csv(csv_path, amps)
 
-    print(f"[ingest] MALA {ext.upper()} → {csv_path.name}: {n_traces} traces, {samples} samp/trace", flush=True)
+    print(f"[ingest] MALA {ext.upper()} → {csv_path.name}: {n_traces} traces, {samples} samp/trace → 512, normalized", flush=True)
     return csv_path, None
 
 
@@ -213,7 +215,10 @@ def convert_segy(file_path: Path, upload_dir: Path) -> tuple[Path, Optional[dict
             except Exception:
                 pass
 
-    amps     = np.stack(amps_list)
+    if not amps_list:
+        raise ValueError(f"SEG-Y file {file_path.name} contains 0 traces.")
+
+    amps     = zscore_normalize(np.stack(amps_list))
     csv_path = upload_dir / (file_path.stem + ".csv")
     write_csv(csv_path, amps)
 
@@ -226,8 +231,8 @@ def convert_segy(file_path: Path, upload_dir: Path) -> tuple[Path, Optional[dict
             gps    = gps_summary(coords)
 
     print(
-        f"[ingest] SEG-Y → {csv_path.name}: {n_traces} traces, {n_samples} samp/trace, "
-        f"GPS={'yes' if gps else 'no'}",
+        f"[ingest] SEG-Y → {csv_path.name}: {n_traces} traces, {n_samples} samp/trace → 512, "
+        f"normalized, GPS={'yes' if gps else 'no'}",
         flush=True,
     )
     return csv_path, gps
@@ -251,4 +256,19 @@ def convert_impulseradar(file_path: Path, upload_dir: Path) -> tuple[Path, Optio
 
 def passthrough_csv(file_path: Path, upload_dir: Path) -> tuple[Path, Optional[dict]]:
     print(f"[INGEST] CSV pass-through: {file_path.name}", flush=True)
-    return file_path, None
+    try:
+        raw = np.loadtxt(str(file_path), delimiter=",", dtype=np.float32)
+    except Exception as exc:
+        raise ValueError(f"CSV {file_path.name} could not be read: {exc}") from exc
+    if raw.ndim != 2:
+        raise ValueError(f"CSV {file_path.name}: expected 2-D array, got shape {raw.shape}")
+    n_traces, n_samples = raw.shape
+    if n_traces == 0:
+        raise ValueError(f"CSV {file_path.name} contains 0 traces.")
+    if n_samples != 512:
+        raw = np.stack([resample_to_512(raw[i], n_samples) for i in range(n_traces)])
+    amps     = zscore_normalize(raw)
+    csv_path = upload_dir / (file_path.stem + "_norm.csv")
+    write_csv(csv_path, amps)
+    print(f"[INGEST] CSV: {n_traces} traces, {n_samples} samp/trace → 512, normalized", flush=True)
+    return csv_path, None

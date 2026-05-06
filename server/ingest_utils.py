@@ -12,13 +12,18 @@ import numpy as np
 
 
 def resample_to_512(signal: np.ndarray, original_samples: int) -> np.ndarray:
-    """Resample a 1-D A-scan to 512 samples via linear interpolation."""
+    """Resample a 1-D A-scan to exactly 512 samples using Fourier-based resampling."""
     if original_samples == 512:
         return signal.astype(np.float32)
-    from scipy.interpolate import interp1d
-    t_orig   = np.linspace(0, 1, original_samples)
-    t_target = np.linspace(0, 1, 512)
-    return interp1d(t_orig, signal.astype(np.float64), kind="linear")(t_target).astype(np.float32)
+    from scipy.signal import resample
+    return resample(signal.astype(np.float64), 512).astype(np.float32)
+
+
+def zscore_normalize(amps: np.ndarray) -> np.ndarray:
+    """Z-score normalize each signal row: (x - mean) / (std + 1e-8)."""
+    means = amps.mean(axis=1, keepdims=True)
+    stds  = amps.std(axis=1, keepdims=True)
+    return ((amps - means) / (stds + 1e-8)).astype(np.float32)
 
 
 def write_csv(csv_path: Path, amps: np.ndarray) -> None:
