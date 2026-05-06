@@ -14,13 +14,15 @@ from typing import Optional
 import numpy as np
 
 from ingest import detect_and_convert, SUPPORTED_EXTENSIONS, COMPANION_EXTENSIONS
+from data import load_csv
 from inference import run_inference, run_rebar_inference, extract_bscan_b64
-from run import (
-    load_csv, render_cscan_b64,
-    extract_peak_info,
-    build_prob_grid, build_extra_grids, build_rebar_grids, grid_to_list,
-    render_rebar_depth_b64, render_rebar_cscan_b64, render_amplitude_b64,
-    compute_confidence_metrics,
+from grids import (
+    extract_peak_info, build_prob_grid, build_extra_grids,
+    build_rebar_grids, grid_to_list,
+)
+from render import (
+    render_cscan_b64, render_rebar_depth_b64, render_amplitude_b64,
+    render_rebar_cscan_b64, compute_confidence_metrics,
 )
 
 # ── Job state ─────────────────────────────────────────────────────────────────
