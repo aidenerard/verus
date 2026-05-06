@@ -29,35 +29,56 @@ class TemporalAttention(nn.Module):
 
 
 class CNN1D(nn.Module):
-    """
-    Architecture must exactly match the saved model.pth weights:
-      net.0  Conv1d(1,  32, 7, padding=3)
-      net.1  ReLU
-      net.2  MaxPool1d(2)
-      net.3  Conv1d(32, 64, 5, padding=2)
-      net.4  ReLU
-      net.5  MaxPool1d(2)
-      net.6  Flatten  → 64 * 128 = 8192
-      net.7  Linear(8192, 64)
-      net.8  ReLU
-      net.9  Dropout(0.3)
-      net.10 Linear(64, 1)
-    """
     def __init__(self):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Conv1d(1,  32, kernel_size=7, padding=3),
-            nn.ReLU(),
+        self.conv = nn.Sequential(
+            nn.Conv1d(1, 32, kernel_size=7, padding=3), nn.ReLU(),
             nn.MaxPool1d(2),
-            nn.Conv1d(32, 64, kernel_size=5, padding=2),
-            nn.ReLU(),
+            nn.Conv1d(32, 128, kernel_size=5, padding=2), nn.ReLU(),
             nn.MaxPool1d(2),
-            nn.Flatten(),
-            nn.Linear(8192, 64),
-            nn.ReLU(),
+            nn.Conv1d(128, 128, kernel_size=3, padding=1), nn.ReLU(),
+            nn.MaxPool1d(2),
+        )
+        self.attn = TemporalAttention(128)
+        self.head = nn.Sequential(
+            nn.Linear(128, 128), nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(128, 1),
+        )
+
+    def forward(self, x):
+        x = self.conv(x)
+        x = self.attn(x)
+        return self.head(x).squeeze(1)
+
+
+class RebarDepthCNN(nn.Module):
+    """
+    Architecture must exactly match rebar_model.pth weights (see rebar_training.ipynb):
+      conv.0  Conv1d(2, 32, 7, padding=3)  ReLU  MaxPool1d(2)  → 256→128
+      conv.3  Conv1d(32, 64, 5, padding=2) ReLU  MaxPool1d(2)  → 128→64
+      conv.6  Conv1d(64,128, 3, padding=1) ReLU  MaxPool1d(2)  → 64→32
+      attn    TemporalAttention(128)
+      head    Linear(128,64) ReLU Dropout(0.3) Linear(64,1)
+    Input:  (batch, 2, 256) — ch0 = raw waveform, ch1 = Hilbert envelope
+    Output: (batch,) predicted rebar depth in inches
+    """
+    def __init__(self, in_channels: int = 2):
+        super().__init__()
+        self.conv = nn.Sequential(
+            nn.Conv1d(in_channels, 32, kernel_size=7, padding=3), nn.ReLU(),
+            nn.MaxPool1d(2),
+            nn.Conv1d(32, 64, kernel_size=5, padding=2), nn.ReLU(),
+            nn.MaxPool1d(2),
+            nn.Conv1d(64, 128, kernel_size=3, padding=1), nn.ReLU(),
+            nn.MaxPool1d(2),
+        )
+        self.attn = TemporalAttention(128)
+        self.head = nn.Sequential(
+            nn.Linear(128, 64), nn.ReLU(),
             nn.Dropout(0.3),
             nn.Linear(64, 1),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x).squeeze(1)
+        return self.head(self.attn(self.conv(x))).squeeze(-1)
