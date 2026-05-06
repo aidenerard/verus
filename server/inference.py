@@ -15,6 +15,7 @@ from scipy.signal import hilbert as _hilbert
 from model import THRESHOLD, INFER_BATCH, DEVICE
 
 _REBAR_DIELECTRIC = {400: 8.0, 900: 7.0, 1600: 6.0, 2000: 5.5, 2600: 5.0}
+_infer_logged = False
 
 
 def _make_patch_batch(signals: np.ndarray, start: int, end: int, k: int) -> torch.Tensor:
@@ -32,17 +33,40 @@ def run_inference(
     threshold: float = THRESHOLD,
     model_config: Optional[dict] = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    patch_k = (model_config or {}).get("patch_k", 1)
+    global _infer_logged
+    cfg        = model_config or {}
+    patch_k    = cfg.get("patch_k", 1)
+    in_ch      = cfg.get("in_channels", 1)
+    crop_start = cfg.get("crop_start", 200)
+    crop_end   = cfg.get("crop_end", 450)
+    n_crop     = crop_end - crop_start
+
+    cropped = signals[:, crop_start:crop_end]
+
+    if not _infer_logged:
+        print(
+            f"[inference] preprocess: raw={signals.shape} "
+            f"→ crop[{crop_start}:{crop_end}]={cropped.shape} "
+            f"patch_k={patch_k} in_channels={in_ch}",
+            flush=True,
+        )
+        _infer_logged = True
+
     probs_list: list[np.ndarray] = []
     model.eval()
     with torch.no_grad():
-        for start in range(0, len(signals), INFER_BATCH):
-            batch_np = signals[start : start + INFER_BATCH]
-            end = start + len(batch_np)
+        for start in range(0, len(cropped), INFER_BATCH):
+            batch_np = cropped[start : start + INFER_BATCH]
+            end      = start + len(batch_np)
             if patch_k > 1:
-                batch_t = _make_patch_batch(signals, start, end, patch_k)
+                batch_t = _make_patch_batch(cropped, start, end, patch_k)
             else:
                 batch_t = torch.tensor(batch_np, dtype=torch.float32).unsqueeze(1)
+            if tuple(batch_t.shape) != (len(batch_np), in_ch, n_crop):
+                raise ValueError(
+                    f"[inference] tensor shape {tuple(batch_t.shape)} != "
+                    f"expected ({len(batch_np)}, {in_ch}, {n_crop})"
+                )
             out = model(batch_t.to(DEVICE)).sigmoid().cpu().numpy()
             probs_list.append(out)
             del batch_t, out
