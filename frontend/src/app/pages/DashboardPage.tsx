@@ -23,9 +23,11 @@ const INSPECT_ROUTES: Record<string, string> = {
 export default function DashboardPage() {
   const { auth, logout, user } = useAuth();
   const navigate = useNavigate();
-  const [modalModule, setModalModule] = useState<InspectionModule | null>(null);
-  const [jobs,        setJobs]        = useState<AnalysisJob[]>([]);
-  const [jobsLoading, setJobsLoading] = useState(true);
+  const [modalModule,   setModalModule]   = useState<InspectionModule | null>(null);
+  const [jobs,          setJobs]          = useState<AnalysisJob[]>([]);
+  const [jobsLoading,   setJobsLoading]   = useState(true);
+  const [deleteTarget,  setDeleteTarget]  = useState<AnalysisJob | null>(null);
+  const [deleteError,   setDeleteError]   = useState<string | null>(null);
 
   useEffect(() => {
     if (!user) return;
@@ -50,6 +52,26 @@ export default function DashboardPage() {
       setJobsLoading(false);
     })();
   }, [user]);
+
+  const handleDeleteConfirm = async () => {
+    if (!deleteTarget) return;
+    const target = deleteTarget;
+    setDeleteTarget(null);
+    setJobs(prev => prev.filter(j => j.id !== target.id));
+    try {
+      const { error } = await supabase.from('analysis_jobs').delete().eq('id', target.id);
+      if (error) throw error;
+      if (target.project_id) {
+        await supabase.from('projects').delete().eq('id', target.project_id);
+      }
+    } catch {
+      setJobs(prev => [...prev, target].sort((a, b) =>
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      ));
+      setDeleteError('Failed to delete project. Please try again.');
+      setTimeout(() => setDeleteError(null), 4000);
+    }
+  };
 
   const handleModuleClick = (module: InspectionModule) => {
     const route = INSPECT_ROUTES[module.id];
@@ -141,13 +163,43 @@ export default function DashboardPage() {
               <h2 style={{ margin: 0, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#7A7470' }}>Recent Projects</h2>
               {jobs.length > 0 && <span style={{ fontSize: 11, color: '#B0A9A4' }}>{jobs.length} job{jobs.length !== 1 ? 's' : ''}</span>}
             </div>
-            <JobTable jobs={jobs} loading={jobsLoading} onView={job => navigate(`/inspect/gpr?project_id=${job.id}`)} onStartFirst={() => navigate('/analyze')} />
+            <JobTable jobs={jobs} loading={jobsLoading} onView={job => navigate(`/inspect/gpr?project_id=${job.id}`)} onDelete={setDeleteTarget} onStartFirst={() => navigate('/analyze')} />
           </div>
         </section>
 
       </main>
 
       {modalModule && <ComingSoonModal module={modalModule} onClose={() => setModalModule(null)} />}
+
+      {deleteTarget && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(10,10,10,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}
+          onClick={() => setDeleteTarget(null)}>
+          <div style={{ background: '#FFFFFF', border: '2px solid #E2DED9', width: 440, padding: 32 }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin: '0 0 12px', fontSize: 16, fontWeight: 800, color: '#0A0A0A', letterSpacing: '-0.01em' }}>Delete Project?</h3>
+            <p style={{ margin: '0 0 28px', fontSize: 13, color: '#7A7470', lineHeight: 1.65 }}>
+              This will permanently delete{' '}
+              <strong style={{ color: '#0A0A0A' }}>{deleteTarget.project_name ?? 'Untitled Project'}</strong>
+              {' '}and all associated analysis results. This cannot be undone.
+            </p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button onClick={() => setDeleteTarget(null)}
+                style={{ padding: '9px 20px', background: 'none', border: '1.5px solid #E2DED9', color: '#7A7470', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}>
+                Cancel
+              </button>
+              <button onClick={handleDeleteConfirm}
+                style={{ padding: '9px 20px', background: '#ef4444', border: 'none', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'Inter, sans-serif', letterSpacing: '0.04em' }}>
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteError && (
+        <div style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', background: '#1a1a1a', color: '#fff', padding: '12px 20px', fontSize: 12, fontWeight: 600, borderRadius: 6, boxShadow: '0 8px 24px rgba(0,0,0,0.2)', zIndex: 400, whiteSpace: 'nowrap' }}>
+          {deleteError}
+        </div>
+      )}
     </div>
   );
 }

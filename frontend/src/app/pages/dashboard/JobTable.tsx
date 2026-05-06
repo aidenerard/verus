@@ -1,14 +1,15 @@
-import { X, FolderOpen } from 'lucide-react';
+import { X, FolderOpen, Trash2 } from 'lucide-react';
 import type { AnalysisJob } from './types';
 
 interface Props {
   jobs: AnalysisJob[];
   loading: boolean;
   onView: (job: AnalysisJob) => void;
+  onDelete: (job: AnalysisJob) => void;
   onStartFirst: () => void;
 }
 
-export default function JobTable({ jobs, loading, onView, onStartFirst }: Props) {
+export default function JobTable({ jobs, loading, onView, onDelete, onStartFirst }: Props) {
   if (loading) {
     return <div style={{ padding: '48px 24px', textAlign: 'center' }}><p style={{ fontSize: 13, color: '#B0A9A4' }}>Loading…</p></div>;
   }
@@ -57,11 +58,19 @@ export default function JobTable({ jobs, loading, onView, onStartFirst }: Props)
                 <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: statusColor }}>{statusLabel}</span>
               </td>
               <td style={{ padding: '12px 20px', textAlign: 'right' }}>
-                {job.status === 'complete' && (
-                  <button onClick={() => onView(job)} style={{ padding: '5px 14px', fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', background: 'none', border: '1.5px solid #E2DED9', color: '#7A7470', cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}>
-                    View
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
+                  {job.status === 'complete' && (
+                    <button onClick={() => onView(job)} style={{ padding: '5px 14px', fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', background: 'none', border: '1.5px solid #E2DED9', color: '#7A7470', cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}>
+                      View
+                    </button>
+                  )}
+                  <button onClick={() => onDelete(job)} title="Delete project"
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#B0A9A4', padding: 4, display: 'flex', alignItems: 'center', borderRadius: 3 }}
+                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = '#ef4444'; }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = '#B0A9A4'; }}>
+                    <Trash2 size={14} />
                   </button>
-                )}
+                </div>
               </td>
             </tr>
           );
