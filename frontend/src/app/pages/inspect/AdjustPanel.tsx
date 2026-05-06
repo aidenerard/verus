@@ -67,19 +67,27 @@ export default function AdjustPanel({
 
           {outputTab === 'rebar_depth' && analysisResult?.twt_grid && (
             <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: TEXT2, marginBottom: 6 }}>
-                <span style={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Dielectric Constant εr</span>
-                <span style={{ color: TEXT, fontWeight: 700 }}>{dielectricEr.toFixed(1)}</span>
-              </div>
-              <input type="range" min={4} max={12} step={0.5} value={dielectricEr}
-                onChange={e => { setDielectricEr(+e.target.value); setUseRebarCanvas(true); }}
-                style={{ width: '100%', accentColor: ACCENT }} />
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: TEXT2, marginTop: 2 }}>
-                <span>4 (dry/porous)</span><span>12 (wet/dense)</span>
-              </div>
-              <div style={{ marginTop: 8, fontSize: 10, color: TEXT2, lineHeight: 1.5 }}>
-                v = {(0.3 / Math.sqrt(dielectricEr)).toFixed(3)} m/ns
-              </div>
+              {analysisResult.rebar_model_used ? (
+                <div style={{ fontSize: 11, color: TEXT2, lineHeight: 1.6 }}>
+                  Depth predicted by AI model — dielectric constant not applicable.
+                </div>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: TEXT2, marginBottom: 6 }}>
+                    <span style={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Dielectric Constant εr</span>
+                    <span style={{ color: TEXT, fontWeight: 700 }}>{dielectricEr.toFixed(1)}</span>
+                  </div>
+                  <input type="range" min={4} max={12} step={0.5} value={dielectricEr}
+                    onChange={e => { setDielectricEr(+e.target.value); setUseRebarCanvas(true); }}
+                    style={{ width: '100%', accentColor: ACCENT }} />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: TEXT2, marginTop: 2 }}>
+                    <span>4 (dry/porous)</span><span>12 (wet/dense)</span>
+                  </div>
+                  <div style={{ marginTop: 8, fontSize: 10, color: TEXT2, lineHeight: 1.5 }}>
+                    v = {(0.3 / Math.sqrt(dielectricEr)).toFixed(3)} m/ns
+                  </div>
+                </>
+              )}
             </div>
           )}
 

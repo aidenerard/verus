@@ -12,14 +12,14 @@ export const GPR_EXTS = new Set([
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
 
-export const BG      = '#F5F3EF';
-export const PANEL   = '#FFFFFF';
-export const RAISED  = '#F5F3EF';
-export const BORDER  = '#E2DED9';
-export const BORDER2 = '#C8C3BD';
-export const TEXT    = '#0A0A0A';
-export const TEXT2   = '#7A7470';
-export const ACCENT  = '#E8601C';
+export const BG      = '#0a1628';
+export const PANEL   = '#0f1f3d';
+export const RAISED  = '#111827';
+export const BORDER  = '#1e3a5f';
+export const BORDER2 = '#2a4a6f';
+export const TEXT    = '#f1f5f9';
+export const TEXT2   = '#94a3b8';
+export const ACCENT  = '#f97316';
 
 // ── Timing ────────────────────────────────────────────────────────────────────
 
@@ -70,11 +70,11 @@ export const DEFAULT_ER: Record<number, number> = { 400: 8, 900: 7, 1600: 6, 200
 import { Radio, Layers } from 'lucide-react';
 
 export const LAYER_DEFS = [
-  { id: 'gpr',         label: 'GPR Profiles',     Icon: Radio },
-  { id: 'condition',   label: 'Condition Grid',    Icon: Layers },
-  { id: 'amplitude',   label: 'Amplitude Grid',    Icon: Layers },
-  { id: 'satellite',   label: 'Satellite Image',   Icon: Layers },
-  { id: 'annotations', label: 'Point Annotations', Icon: Layers },
+  { id: 'gpr',         label: 'Scan Lines',    Icon: Radio },
+  { id: 'condition',   label: 'Condition Map', Icon: Layers },
+  { id: 'amplitude',   label: 'Amplitude Map', Icon: Layers },
+  { id: 'satellite',   label: 'Satellite View',Icon: Layers },
+  { id: 'annotations', label: 'Notes',         Icon: Layers },
 ] as const;
 
 export type LayerId = typeof LAYER_DEFS[number]['id'];

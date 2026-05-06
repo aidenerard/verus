@@ -22,7 +22,7 @@ _DEPTH_ACC_IN = {400: 1.0, 900: 0.5, 1600: 0.25, 2000: 0.25, 2600: 0.125}
 
 def _fig_to_b64(fig: plt.Figure, dpi: int) -> str:
     buf = io.BytesIO()
-    fig.savefig(buf, format='png', dpi=dpi, bbox_inches='tight', facecolor='white')
+    fig.savefig(buf, format='png', dpi=dpi, bbox_inches='tight', facecolor=fig.get_facecolor())
     plt.close(fig)
     gc.collect()
     buf.seek(0)
@@ -55,35 +55,46 @@ def render_cscan_b64(
     file_confs:  list[np.ndarray],
     file_names:  list[str],
     bridge_name: str = "Bridge Deck",
-    dpi:         int = 100,
+    dpi:         int = 200,
 ) -> str:
-    """Render GPR condition heatmap. Red=deteriorated, blue=sound."""
+    """Render GPR condition heatmap. Red=deteriorated, green=sound."""
     prob_grid, T = build_prob_grid(file_preds, file_confs)
     print(f"[render] Otsu threshold: {T:.4f}", flush=True)
 
     nan_mask = np.isnan(prob_grid)
     p = gaussian_filter(np.where(nan_mask, T, prob_grid), sigma=(1.5, 3.0))
-    display = np.where(
-        p <= T,
-        0.5 * p / T,
-        0.5 + 0.5 * (p - T) / (1.0 - T),
-    )
-    masked = np.ma.array(display, mask=nan_mask)
+    display  = np.power(np.clip(p, 0.0, 1.0), 0.5)
+    masked   = np.ma.array(display, mask=nan_mask)
     del prob_grid, p, display
 
-    cmap_obj = mcolors.LinearSegmentedColormap.from_list(
-        "gpr", ['#C0392B', '#E67E22', '#F1C40F', '#27AE60', '#2980B9'], N=256,
-    )
-    cmap_obj.set_bad(color='#F0EFEC')
+    cmap_obj = plt.cm.RdYlGn_r
+    cmap_obj.set_bad(color='#1a2744')
     norm = mcolors.Normalize(vmin=0.0, vmax=1.0)
 
-    fig, ax = plt.subplots(figsize=(14, 3.5), facecolor='white')
-    fig.subplots_adjust(left=0.05, right=0.97, top=0.88, bottom=0.22)
+    fig, ax = plt.subplots(figsize=(22, 3.5), facecolor='#0a1628')
+    fig.subplots_adjust(left=0.04, right=0.98, top=0.85, bottom=0.28)
     ax.imshow(masked, cmap=cmap_obj, norm=norm, aspect='auto', origin='upper',
               interpolation='bilinear')
-    _styled_axes(ax)
-    _styled_hbar(fig, ax, cmap_obj, norm,
-                 [0.0, 0.5, 1.0], ['Deteriorated', 'Boundary', 'Sound'])
+
+    ax.set_xlabel('Longitudinal Distance (ft)', fontsize=8, color='#94a3b8', labelpad=5)
+    ax.set_ylabel('Lateral Distance (ft)',      fontsize=8, color='#94a3b8', labelpad=5)
+    for spine in ax.spines.values():
+        spine.set_linewidth(0.5)
+        spine.set_color('#1e3a5f')
+    ax.tick_params(colors='#94a3b8', length=2, width=0.5, labelsize=7)
+    ax.set_facecolor('#0a1628')
+
+    cbar = fig.colorbar(
+        plt.cm.ScalarMappable(cmap=cmap_obj, norm=norm),
+        ax=ax, orientation='horizontal', pad=0.28, fraction=0.03, aspect=70,
+    )
+    cbar.set_ticks([0.0, 1.0])
+    cbar.set_ticklabels(['Deteriorated', 'Sound'], fontsize=8)
+    cbar.ax.tick_params(length=0, colors='#94a3b8')
+    cbar.ax.xaxis.label.set_color('#94a3b8')
+    cbar.outline.set_linewidth(0.5)
+    cbar.outline.set_edgecolor('#1e3a5f')
+    cbar.ax.set_facecolor('#0a1628')
 
     return _fig_to_b64(fig, dpi)
 

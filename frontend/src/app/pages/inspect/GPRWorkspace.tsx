@@ -7,11 +7,10 @@ import 'mapbox-gl/dist/mapbox-gl.css';
 import {
   ArrowLeft, Eye, EyeOff, Plus, ChevronDown, ChevronLeft, ChevronRight,
   Layers, Download, X, FolderOpen, Loader2, Check, AlertCircle,
-  Maximize2, Minimize2, Radio, Settings, Pencil,
+  Maximize2, Minimize2, Radio, Settings, BarChart2, SlidersHorizontal,
 } from 'lucide-react';
 
 import ThreeDView from '../../components/ThreeDView';
-import VerusLogo from '../../components/VerusLogo';
 import { useAuth } from '../../../context/AuthContext';
 import { supabase } from '../../../lib/supabase';
 
@@ -53,13 +52,14 @@ export default function GPRWorkspace() {
   const [structureName,  setStructureName]  = useState('Bridge Deck');
 
   // ── View ─────────────────────────────────────────────────────────────────────
-  const [activeView,     setActiveView]     = useState<'cscan' | '3d'>('cscan');
-  const [outputTab,      setOutputTab]      = useState<OutputTab>('gps');
-  const [rightTab,       setRightTab]       = useState<'properties' | 'analysis'>('analysis');
-  const [bottomExpanded, setBottomExpanded] = useState(false);
-  const [mouseCoords,    setMouseCoords]    = useState<{ x: number; y: number } | null>(null);
-  const [editingProject,    setEditingProject]    = useState(false);
-  const [editingStructure,  setEditingStructure]  = useState(false);
+  const [activeView,       setActiveView]       = useState<'cscan' | '3d'>('cscan');
+  const [outputTab,        setOutputTab]        = useState<OutputTab>('gps');
+  const [rightIconOpen,    setRightIconOpen]    = useState<'properties' | 'analysis' | 'adjust' | null>(null);
+  const [bottomExpanded,   setBottomExpanded]   = useState(false);
+  const [mouseCoords,      setMouseCoords]      = useState<{ x: number; y: number } | null>(null);
+  const [editingProject,   setEditingProject]   = useState(false);
+  const [editingStructure, setEditingStructure] = useState(false);
+  const [showSettingsMenu, setShowSettingsMenu] = useState(false);
 
   // ── Layers ────────────────────────────────────────────────────────────────────
   const [selectedLayer,    setSelectedLayer]    = useState<LayerId>('gpr');
@@ -101,7 +101,6 @@ export default function GPRWorkspace() {
   const ampCanvasRef    = useRef<HTMLCanvasElement>(null);
   const pollRef         = useRef<ReturnType<typeof setInterval> | null>(null);
   const statusCycleRef  = useRef<ReturnType<typeof setInterval> | null>(null);
-  const rightPanelRef   = useRef<ImperativePanelHandle>(null);
   const bottomPanelRef  = useRef<ImperativePanelHandle>(null);
 
   // ── Restore setup from Supabase (keyed by project_id in localStorage) ────────
@@ -188,7 +187,7 @@ export default function GPRWorkspace() {
           if (result.otsu_threshold) setDetectionThreshold(result.otsu_threshold);
           setJobStatus('complete');
           setOutputTab('condition');
-          setRightTab('properties');
+          setRightIconOpen('properties');
           setActiveView('cscan');
           bottomPanelRef.current?.expand();
         }
@@ -338,7 +337,7 @@ export default function GPRWorkspace() {
       const fresh = accepted.filter(f => !existing.has(f.name)).map(f => ({ file: f, name: f.name }));
       return [...prev, ...fresh];
     });
-    setRightTab('analysis');
+    setRightIconOpen('analysis');
     setShowAddMenu(false);
     e.target.value = '';
   }, []);
@@ -411,7 +410,7 @@ export default function GPRWorkspace() {
             clearInterval(pollRef.current!); clearInterval(statusCycleRef.current!);
             setAnalysisResult(job.result);
             setJobStatus('complete');
-            setRightTab('properties');
+            setRightIconOpen('properties');
             setSelectedFileIdx(0);
             setActiveView('cscan');
             setOutputTab('condition');
@@ -530,7 +529,7 @@ export default function GPRWorkspace() {
     if (!job.result) return;
     setAnalysisResult(job.result); setJobStatus('complete');
     setFiles([]); setSelectedFileIdx(0); setShowProjects(false);
-    setRightTab('properties'); setOutputTab('condition');
+    setRightIconOpen('properties'); setOutputTab('condition');
     if (job.result.otsu_threshold) setDetectionThreshold(job.result.otsu_threshold);
   }, []);
 
@@ -561,20 +560,14 @@ export default function GPRWorkspace() {
 
   // ── RENDER ────────────────────────────────────────────────────────────────────
   return (
-    <div style={{
-      height: '100vh', display: 'flex', flexDirection: 'column',
-      background: BG, color: TEXT, overflow: 'hidden',
-      fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, sans-serif', userSelect: 'none',
-    }}>
-      <input ref={fileInputRef} type="file" multiple accept={fileAccept}
-        onChange={onFileInput} style={{ display: 'none' }} />
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: BG, color: TEXT, overflow: 'hidden', fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, sans-serif', userSelect: 'none' }}>
+      <input ref={fileInputRef} type="file" multiple accept={fileAccept} onChange={onFileInput} style={{ display: 'none' }} />
 
       {setupDone && !manufacturer && (
-        <div
-          onClick={() => { setSetupDone(false); setSetupStep(1); }}
-          style={{ background: '#FEF3C7', borderBottom: '1px solid #F59E0B', padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, cursor: 'pointer', zIndex: 50, flexShrink: 0 }}>
-          <AlertCircle size={14} style={{ color: '#D97706', flexShrink: 0 }} />
-          <span style={{ color: '#92400E' }}>Equipment not configured — click here to complete setup</span>
+        <div onClick={() => { setSetupDone(false); setSetupStep(1); }}
+          style={{ background: '#1c1500', borderBottom: '1px solid rgba(245,158,11,0.3)', padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, cursor: 'pointer', zIndex: 50, flexShrink: 0 }}>
+          <AlertCircle size={14} style={{ color: '#f59e0b', flexShrink: 0 }} />
+          <span style={{ color: '#fbbf24' }}>Equipment not configured — click here to complete setup</span>
         </div>
       )}
 
@@ -594,34 +587,32 @@ export default function GPRWorkspace() {
         />
       )}
 
-      {/* ── TOP TOOLBAR ─────────────────────────────────────────────────────────── */}
-      <div style={{ height: 48, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 12px', gap: 8, background: PANEL, borderBottom: `1px solid ${BORDER}`, position: 'relative', zIndex: 40 }}>
+      {/* ── TOOLBAR ─────────────────────────────────────────────────────────────── */}
+      <div style={{ height: 44, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 12px', gap: 8, background: BG, borderBottom: `1px solid ${BORDER}`, position: 'relative', zIndex: 40 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
           <button onClick={() => navigate('/dashboard')} title="Back"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', color: TEXT2, padding: '6px 8px', display: 'flex', alignItems: 'center', borderRadius: 4, flexShrink: 0 }}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: TEXT2, padding: '5px 7px', display: 'flex', alignItems: 'center', borderRadius: 4, flexShrink: 0 }}
             onMouseEnter={e => (e.currentTarget.style.background = RAISED)}
             onMouseLeave={e => (e.currentTarget.style.background = 'none')}
-          ><ArrowLeft size={16} /></button>
-          <div style={{ width: 1, height: 20, background: BORDER, flexShrink: 0 }} />
-          <VerusLogo size={22} wordmarkColor="#0A0A0A" />
-          <div style={{ width: 1, height: 20, background: BORDER, flexShrink: 0 }} />
+          ><ArrowLeft size={15} /></button>
+          <div style={{ width: 1, height: 18, background: BORDER, flexShrink: 0 }} />
           {editingProject
             ? <input autoFocus value={projectName} onChange={e => setProjectName(e.target.value)}
                 onBlur={() => setEditingProject(false)} onKeyDown={e => e.key === 'Enter' && setEditingProject(false)}
                 style={{ background: RAISED, border: `1px solid ${BORDER2}`, color: TEXT, fontSize: 13, fontWeight: 600, padding: '3px 8px', outline: 'none', width: 160, fontFamily: 'Inter, sans-serif' }} />
             : <span onClick={() => setEditingProject(true)} title="Rename"
-                style={{ fontSize: 13, fontWeight: 600, color: TEXT, cursor: 'text', padding: '3px 6px', borderRadius: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 160 }}
+                style={{ fontSize: 13, fontWeight: 600, color: TEXT, cursor: 'text', padding: '3px 6px', borderRadius: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 180 }}
                 onMouseEnter={e => (e.currentTarget.style.background = RAISED)}
                 onMouseLeave={e => (e.currentTarget.style.background = 'none')}
               >{projectName}</span>
           }
-          <span style={{ color: TEXT2, fontSize: 12, flexShrink: 0 }}>/</span>
+          <span style={{ color: TEXT2, fontSize: 11, flexShrink: 0 }}>/</span>
           {editingStructure
             ? <input autoFocus value={structureName} onChange={e => setStructureName(e.target.value)}
                 onBlur={() => setEditingStructure(false)} onKeyDown={e => e.key === 'Enter' && setEditingStructure(false)}
                 style={{ background: RAISED, border: `1px solid ${BORDER2}`, color: TEXT2, fontSize: 12, padding: '3px 8px', outline: 'none', width: 130, fontFamily: 'Inter, sans-serif' }} />
             : <span onClick={() => setEditingStructure(true)} title="Rename"
-                style={{ fontSize: 12, color: TEXT2, cursor: 'text', padding: '3px 6px', borderRadius: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 130 }}
+                style={{ fontSize: 12, color: TEXT2, cursor: 'text', padding: '3px 6px', borderRadius: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 150 }}
                 onMouseEnter={e => (e.currentTarget.style.background = RAISED)}
                 onMouseLeave={e => (e.currentTarget.style.background = 'none')}
               >{structureName}</span>
@@ -637,40 +628,45 @@ export default function GPRWorkspace() {
               </button>
             ))}
           </div>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, justifyContent: 'flex-end', position: 'relative' }}>
           {mouseCoords && activeView === 'cscan' && outputTab === 'gps' && (
             <span style={{ fontSize: 11, color: TEXT2, fontVariantNumeric: 'tabular-nums', minWidth: 130 }}>
               X {mouseCoords.x.toLocaleString()} ft &nbsp;|&nbsp; Y {mouseCoords.y.toLocaleString()} ft
             </span>
           )}
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, justifyContent: 'flex-end', position: 'relative' }}>
           {setupDone && (
-            <>
-              {viewJobId && hasResult && (
-                <button onClick={() => { fileInputRef.current?.click(); setRightTab('analysis'); }}
-                  style={{ padding: '6px 12px', background: ACCENT, border: 'none', color: '#fff', fontSize: 11, fontWeight: 700, letterSpacing: '0.05em', cursor: 'pointer', fontFamily: 'Inter, sans-serif', borderRadius: 4, display: 'flex', alignItems: 'center', gap: 5 }}
-                ><Radio size={12} /> Re-run Analysis</button>
+            <div style={{ position: 'relative' }}>
+              <button onClick={() => setShowSettingsMenu(v => !v)} title="Settings"
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, background: showSettingsMenu ? RAISED : 'none', border: `1px solid ${showSettingsMenu ? BORDER2 : 'transparent'}`, color: TEXT2, cursor: 'pointer', borderRadius: 6 }}
+                onMouseEnter={e => { e.currentTarget.style.background = RAISED; e.currentTarget.style.borderColor = BORDER2; }}
+                onMouseLeave={e => { if (!showSettingsMenu) { e.currentTarget.style.background = 'none'; e.currentTarget.style.borderColor = 'transparent'; } }}
+              ><Settings size={15} /></button>
+              {showSettingsMenu && (
+                <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, background: RAISED, border: `1px solid ${BORDER2}`, zIndex: 100, minWidth: 180, boxShadow: '0 8px 24px rgba(0,0,0,0.4)' }}>
+                  {[
+                    { label: 'Edit Equipment',  action: () => { setSetupDone(false); setSetupStep(1); setShowSettingsMenu(false); } },
+                    { label: 'Re-run Analysis', action: () => { fileInputRef.current?.click(); setRightIconOpen('analysis'); setShowSettingsMenu(false); } },
+                    { label: 'New Project',     action: () => { newProject(); setShowSettingsMenu(false); } },
+                  ].map(({ label, action }) => (
+                    <button key={label} onClick={action}
+                      style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 16px', background: 'none', border: 'none', color: TEXT, fontSize: 12, cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}
+                      onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.06)')}
+                      onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                    >{label}</button>
+                  ))}
+                </div>
               )}
-              <button onClick={() => { setSetupDone(false); setSetupStep(1); }}
-                style={{ padding: '6px 12px', background: 'none', border: `1px solid ${BORDER}`, color: TEXT2, fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'Inter, sans-serif', borderRadius: 4, display: 'flex', alignItems: 'center', gap: 5 }}
-                onMouseEnter={e => (e.currentTarget.style.background = RAISED)}
-                onMouseLeave={e => (e.currentTarget.style.background = 'none')}
-              ><Pencil size={12} /> Edit Equipment</button>
-              <button onClick={newProject}
-                style={{ padding: '6px 12px', background: 'none', border: `1px solid ${BORDER}`, color: TEXT2, fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'Inter, sans-serif', borderRadius: 4, display: 'flex', alignItems: 'center', gap: 5 }}
-                onMouseEnter={e => (e.currentTarget.style.background = RAISED)}
-                onMouseLeave={e => (e.currentTarget.style.background = 'none')}
-              ><Settings size={12} /> New Project</button>
-            </>
+            </div>
           )}
           <div style={{ position: 'relative' }}>
             <button onClick={() => setShowExportMenu(v => !v)}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 14px', background: RAISED, border: `1px solid ${BORDER2}`, color: TEXT, fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', cursor: 'pointer', fontFamily: 'Inter, sans-serif', borderRadius: 4 }}>
-              <Download size={13} /> Export <ChevronDown size={11} />
+              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 14px', background: ACCENT, border: 'none', color: '#fff', fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', cursor: 'pointer', fontFamily: 'Inter, sans-serif', borderRadius: 4 }}>
+              <Download size={12} /> Export
             </button>
             {showExportMenu && (
-              <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, background: RAISED, border: `1px solid ${BORDER2}`, zIndex: 100, minWidth: 180, boxShadow: '0 8px 24px rgba(0,0,0,0.12)' }}>
+              <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, background: RAISED, border: `1px solid ${BORDER2}`, zIndex: 100, minWidth: 180, boxShadow: '0 8px 24px rgba(0,0,0,0.4)' }}>
                 {[
                   { label: 'Export Current Map', action: exportPNG },
                   { label: 'Export PDF Report',  action: () => setShowExportMenu(false) },
@@ -678,7 +674,7 @@ export default function GPRWorkspace() {
                 ].map(({ label, action }) => (
                   <button key={label} onClick={action}
                     style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 16px', background: 'none', border: 'none', color: TEXT, fontSize: 12, cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}
-                    onMouseEnter={e => (e.currentTarget.style.background = 'rgba(0,0,0,0.05)')}
+                    onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.06)')}
                     onMouseLeave={e => (e.currentTarget.style.background = 'none')}
                   >{label}</button>
                 ))}
@@ -689,20 +685,18 @@ export default function GPRWorkspace() {
       </div>
 
       {/* ── MAIN CONTENT ──────────────────────────────────────────────────────── */}
-      <div style={{ flex: 1, overflow: 'hidden' }}>
-        <PanelGroup direction="horizontal" style={{ height: '100%' }}>
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
 
-          {/* ── LEFT SIDEBAR ────────────────────────────────────────────────────── */}
-          <Panel defaultSize={18} minSize={12} maxSize={28}
-            style={{ background: PANEL, borderRight: `1px solid ${BORDER}`, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-            <div style={{ padding: '12px 14px 10px', borderBottom: `1px solid ${BORDER}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: TEXT2 }}>Layers</span>
-            </div>
-            <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
+        {/* ── LEFT SIDEBAR 220px ──────────────────────────────────────────────── */}
+        <div style={{ width: 220, flexShrink: 0, background: PANEL, borderRight: `1px solid ${BORDER}`, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div style={{ padding: '10px 14px 8px', borderBottom: `1px solid ${BORDER}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: TEXT2 }}>Layers</span>
+          </div>
+          <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
               {LAYER_DEFS.map(({ id, label }) => (
-                <div key={id} onClick={() => { setSelectedLayer(id); setRightTab('properties'); }}
-                  style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 14px', cursor: 'pointer', background: selectedLayer === id ? 'rgba(232,96,28,0.1)' : 'none', borderLeft: `2px solid ${selectedLayer === id ? ACCENT : 'transparent'}`, transition: 'background 0.12s' }}
-                  onMouseEnter={e => { if (selectedLayer !== id) e.currentTarget.style.background = 'rgba(0,0,0,0.04)'; }}
+                <div key={id} onClick={() => { setSelectedLayer(id); setRightIconOpen('properties'); }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 14px', height: 36, cursor: 'pointer', background: selectedLayer === id ? 'rgba(249,115,22,0.1)' : 'none', borderLeft: `2px solid ${selectedLayer === id ? ACCENT : 'transparent'}`, transition: 'background 0.12s' }}
+                  onMouseEnter={e => { if (selectedLayer !== id) e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
                   onMouseLeave={e => { if (selectedLayer !== id) e.currentTarget.style.background = 'none'; }}
                 >
                   <span style={{ fontSize: 12, color: selectedLayer === id ? TEXT : TEXT2, flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -715,12 +709,12 @@ export default function GPRWorkspace() {
                 </div>
               ))}
               {files.length > 0 && (
-                <div style={{ borderTop: `1px solid ${BORDER}`, marginTop: 4 }}>
+              <div style={{ borderTop: `1px solid ${BORDER}`, marginTop: 4 }}>
                   {files.map((f, i) => (
                     <div key={f.name} onClick={() => { setSelectedFileIdx(i); setSelectedLayer('gpr'); }}
-                      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px 5px 28px', cursor: 'pointer', background: selectedFileIdx === i && selectedLayer === 'gpr' ? 'rgba(232,96,28,0.08)' : 'none' }}
-                      onMouseEnter={e => (e.currentTarget.style.background = 'rgba(0,0,0,0.04)')}
-                      onMouseLeave={e => (e.currentTarget.style.background = selectedFileIdx === i && selectedLayer === 'gpr' ? 'rgba(232,96,28,0.08)' : 'none')}
+                      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px 5px 28px', height: 30, cursor: 'pointer', background: selectedFileIdx === i && selectedLayer === 'gpr' ? 'rgba(249,115,22,0.08)' : 'none' }}
+                      onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.04)')}
+                      onMouseLeave={e => (e.currentTarget.style.background = selectedFileIdx === i && selectedLayer === 'gpr' ? 'rgba(249,115,22,0.08)' : 'none')}
                     >
                       {isAnalyzing ? <Loader2 size={10} style={{ color: ACCENT, animation: 'spin 1s linear infinite', flexShrink: 0 }} />
                         : jobStatus === 'complete' ? <Check size={10} style={{ color: '#22c55e', flexShrink: 0 }} /> : null}
@@ -737,60 +731,57 @@ export default function GPRWorkspace() {
                   ))}
                 </div>
               )}
-            </div>
-            <div style={{ borderTop: `1px solid ${BORDER}`, padding: 10, position: 'relative' }}>
-              <button onClick={() => setShowAddMenu(v => !v)}
-                style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '8px', background: 'rgba(0,0,0,0.03)', border: `1px dashed ${BORDER2}`, color: TEXT2, cursor: 'pointer', fontSize: 11, fontWeight: 600, fontFamily: 'Inter, sans-serif', borderRadius: 3 }}
-                onMouseEnter={e => { e.currentTarget.style.background='rgba(0,0,0,0.07)'; e.currentTarget.style.color=TEXT; }}
-                onMouseLeave={e => { e.currentTarget.style.background='rgba(0,0,0,0.03)'; e.currentTarget.style.color=TEXT2; }}>
-                <Plus size={12} /> Add Layer
-              </button>
-              {showAddMenu && (
-                <div style={{ position: 'absolute', bottom: '100%', left: 10, right: 10, background: RAISED, border: `1px solid ${BORDER2}`, boxShadow: '0 -8px 24px rgba(0,0,0,0.12)', zIndex: 50 }}>
-                  {['GPR Profiles','Point Annotations','Sketch','Notes'].map(opt => (
-                    <button key={opt} onClick={() => { if (opt === 'GPR Profiles') fileInputRef.current?.click(); else setShowAddMenu(false); }}
-                      style={{ display: 'block', width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: opt === 'GPR Profiles' ? TEXT : TEXT2, fontSize: 12, cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}
-                      onMouseEnter={e => (e.currentTarget.style.background = 'rgba(0,0,0,0.05)')}
-                      onMouseLeave={e => (e.currentTarget.style.background = 'none')}>
-                      {opt}{opt !== 'GPR Profiles' && <span style={{ marginLeft: 8, fontSize: 9, color: TEXT2, opacity: 0.6 }}>soon</span>}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div style={{ borderTop: `1px solid ${BORDER}`, padding: 10 }}>
-              <button onClick={() => setShowProjects(v => !v)}
-                style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: showProjects ? 'rgba(232,96,28,0.1)' : 'none', border: 'none', color: showProjects ? ACCENT : TEXT2, cursor: 'pointer', fontSize: 11, fontWeight: 600, fontFamily: 'Inter, sans-serif', borderRadius: 3 }}
-                onMouseEnter={e => { if (!showProjects) e.currentTarget.style.background='rgba(0,0,0,0.05)'; }}
-                onMouseLeave={e => { if (!showProjects) e.currentTarget.style.background='none'; }}>
-                <FolderOpen size={13} /> My Projects
-              </button>
-            </div>
-          </Panel>
+          </div>
+          <div style={{ borderTop: `1px solid ${BORDER}`, padding: 10, position: 'relative' }}>
+            <button onClick={() => setShowAddMenu(v => !v)}
+              style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '7px', background: 'rgba(255,255,255,0.03)', border: `1px dashed ${BORDER2}`, color: TEXT2, cursor: 'pointer', fontSize: 11, fontWeight: 600, fontFamily: 'Inter, sans-serif', borderRadius: 3 }}
+              onMouseEnter={e => { e.currentTarget.style.background='rgba(255,255,255,0.07)'; e.currentTarget.style.color=TEXT; }}
+              onMouseLeave={e => { e.currentTarget.style.background='rgba(255,255,255,0.03)'; e.currentTarget.style.color=TEXT2; }}>
+              <Plus size={12} /> Add Layer
+            </button>
+            {showAddMenu && (
+              <div style={{ position: 'absolute', bottom: '100%', left: 10, right: 10, background: RAISED, border: `1px solid ${BORDER2}`, boxShadow: '0 -8px 24px rgba(0,0,0,0.3)', zIndex: 50 }}>
+                {['Scan Lines','Notes'].map(opt => (
+                  <button key={opt} onClick={() => { if (opt === 'Scan Lines') fileInputRef.current?.click(); else setShowAddMenu(false); }}
+                    style={{ display: 'block', width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: opt === 'Scan Lines' ? TEXT : TEXT2, fontSize: 12, cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}
+                    onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.06)')}
+                    onMouseLeave={e => (e.currentTarget.style.background = 'none')}>
+                    {opt}{opt !== 'Scan Lines' && <span style={{ marginLeft: 8, fontSize: 9, color: TEXT2, opacity: 0.6 }}>soon</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div style={{ borderTop: `1px solid ${BORDER}`, padding: 10 }}>
+            <button onClick={() => setShowProjects(v => !v)}
+              style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', background: showProjects ? 'rgba(249,115,22,0.1)' : 'none', border: 'none', color: showProjects ? ACCENT : TEXT2, cursor: 'pointer', fontSize: 11, fontWeight: 600, fontFamily: 'Inter, sans-serif', borderRadius: 3 }}
+              onMouseEnter={e => { if (!showProjects) e.currentTarget.style.background='rgba(255,255,255,0.05)'; }}
+              onMouseLeave={e => { if (!showProjects) e.currentTarget.style.background='none'; }}>
+              <FolderOpen size={13} /> My Projects
+            </button>
+          </div>
+        </div>
 
-          <PanelResizeHandle style={{ width: 3, background: BORDER, cursor: 'col-resize' }} />
+        {/* ── CENTER: vertical split ───────────────────────────────────────────── */}
+        <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+          <PanelGroup direction="vertical" style={{ flex: 1 }}>
+            <Panel defaultSize={75} minSize={35} style={{ display: 'flex', overflow: 'hidden', position: 'relative' }}>
 
-          {/* ── CENTER ──────────────────────────────────────────────────────────── */}
-          <Panel style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
-            <PanelGroup direction="vertical" style={{ flex: 1 }}>
-              <Panel defaultSize={75} minSize={35} style={{ display: 'flex', overflow: 'hidden' }}>
-                <PanelGroup direction="horizontal" style={{ flex: 1 }}>
-
-                  {/* ── MAIN VIEWPORT ─────────────────────────────────────────── */}
-                  <Panel style={{ position: 'relative', overflow: 'hidden', background: '#F5F3EF' }}>
-                    <div ref={mapContainerRef} style={{ width: '100%', height: '100%', position: 'absolute', inset: 0, opacity: (activeView === 'cscan' && outputTab === 'gps') ? 1 : 0, pointerEvents: (activeView === 'cscan' && outputTab === 'gps') ? 'auto' : 'none', zIndex: (activeView === 'cscan' && outputTab === 'gps') ? 1 : 0, transition: 'opacity 0.2s' }} />
+              {/* ── MAIN VIEWPORT ─────────────────────────────────────────────── */}
+              <div style={{ flex: 1, position: 'relative', overflow: 'hidden', background: RAISED }}>
+                <div ref={mapContainerRef} style={{ width: '100%', height: '100%', position: 'absolute', inset: 0, opacity: (activeView === 'cscan' && outputTab === 'gps') ? 1 : 0, pointerEvents: (activeView === 'cscan' && outputTab === 'gps') ? 'auto' : 'none', zIndex: (activeView === 'cscan' && outputTab === 'gps') ? 1 : 0, transition: 'opacity 0.2s' }} />
                     {!MAPBOX_TOKEN && activeView === 'cscan' && outputTab === 'gps' && (
                       <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: PANEL, zIndex: 2 }}>
                         <p style={{ fontSize: 13, color: TEXT2 }}>Set <code style={{ background: RAISED, padding: '2px 6px', fontSize: 11 }}>VITE_MAPBOX_TOKEN</code> in .env.local.</p>
                       </div>
                     )}
-                    {activeView === 'cscan' && outputTab === 'gps' && !hasResult && !isAnalyzing && files.length === 0 && MAPBOX_TOKEN && (
-                      <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', background: 'rgba(255,255,255,0.92)', border: `1.5px solid ${BORDER}`, padding: '28px 36px', textAlign: 'center', pointerEvents: 'none', backdropFilter: 'blur(4px)', zIndex: 3 }}>
-                        <Radio size={28} style={{ color: '#B0A9A4', marginBottom: 12 }} />
-                        <p style={{ fontSize: 14, fontWeight: 600, color: TEXT, margin: '0 0 6px' }}>Upload GPR profiles to begin analysis</p>
-                        <p style={{ fontSize: 12, color: TEXT2, margin: 0 }}>Layers panel → Add Layer → GPR Profiles</p>
-                      </div>
-                    )}
+                {activeView === 'cscan' && outputTab === 'gps' && !hasResult && !isAnalyzing && files.length === 0 && MAPBOX_TOKEN && (
+                  <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', background: 'rgba(10,22,40,0.92)', border: `1px solid ${BORDER}`, padding: '28px 36px', textAlign: 'center', pointerEvents: 'none', backdropFilter: 'blur(4px)', zIndex: 3 }}>
+                    <Radio size={28} style={{ color: TEXT2, marginBottom: 12 }} />
+                    <p style={{ fontSize: 14, fontWeight: 600, color: TEXT, margin: '0 0 6px' }}>Upload GPR profiles to begin analysis</p>
+                    <p style={{ fontSize: 12, color: TEXT2, margin: 0 }}>Layers panel → Add Layer → Scan Lines</p>
+                  </div>
+                )}
                     {activeView === '3d' && (
                       <div style={{ position: 'absolute', inset: 0, zIndex: 5 }}>
                         {hasResult ? <ThreeDView perFileSummary={analysisResult!.per_file_summary} />
@@ -798,255 +789,253 @@ export default function GPRWorkspace() {
                       </div>
                     )}
 
-                    {activeView === 'cscan' && (
-                      <>
-                        {/* Output tab bar */}
-                        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10, height: 38, display: 'flex', alignItems: 'stretch', background: PANEL, borderBottom: `1px solid ${BORDER}` }}>
-                          {OUTPUT_TABS.map(tab => {
-                            const badge = tab.badge();
-                            const disabled = tab.id !== 'gps' && !hasResult;
-                            return (
-                              <button key={tab.id} onClick={() => !disabled && setOutputTab(tab.id)}
-                                style={{ padding: '0 14px', fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', background: 'none', border: 'none', cursor: disabled ? 'default' : 'pointer', color: outputTab === tab.id ? ACCENT : (disabled ? '#C8C3BD' : TEXT2), borderBottom: `2px solid ${outputTab === tab.id ? ACCENT : 'transparent'}`, display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'Inter, sans-serif', transition: 'color 0.12s', whiteSpace: 'nowrap' }}>
-                                {tab.label}
-                                {badge && <span style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 8, background: badge.color + '20', color: badge.color, letterSpacing: '0.04em' }}>{badge.text}</span>}
-                              </button>
-                            );
-                          })}
-                        </div>
+                {activeView === 'cscan' && (
+                  <>
+                    {/* Tab bar */}
+                    <div style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10, height: 40, display: 'flex', alignItems: 'stretch', background: PANEL, borderBottom: `1px solid ${BORDER}` }}>
+                      {OUTPUT_TABS.map(tab => {
+                        const disabled = tab.id !== 'gps' && !hasResult;
+                        return (
+                          <button key={tab.id} onClick={() => !disabled && setOutputTab(tab.id)}
+                            style={{ padding: '0 18px', fontSize: 13, fontWeight: 600, background: 'none', border: 'none', cursor: disabled ? 'default' : 'pointer', color: outputTab === tab.id ? TEXT : (disabled ? '#4a5568' : TEXT2), borderBottom: `2px solid ${outputTab === tab.id ? ACCENT : 'transparent'}`, fontFamily: 'Inter, sans-serif', transition: 'color 0.12s', whiteSpace: 'nowrap', letterSpacing: '-0.01em' }}>
+                            {tab.label}
+                          </button>
+                        );
+                      })}
+                    </div>
 
-                        {outputTab !== 'gps' && (
-                          <div style={{ position: 'absolute', inset: 0, top: 38, overflow: 'auto', background: PANEL, zIndex: 3 }}>
-                            <OutputMaps
-                              outputTab={outputTab} hasResult={hasResult} analysisResult={analysisResult}
-                              useCondCanvas={useCondCanvas} condCanvasRef={condCanvasRef}
-                              useRebarCanvas={useRebarCanvas} rebarCanvasRef={rebarCanvasRef}
-                              useAmpCanvas={useAmpCanvas} ampCanvasRef={ampCanvasRef}
-                              onExport={exportPNG}
-                              condBadge={condBadge} depthBadge={depthBadge} ampBadge={ampBadge}
-                            />
+                    {outputTab !== 'gps' && (
+                      <div style={{ position: 'absolute', inset: 0, top: 40, overflow: 'hidden', background: RAISED, zIndex: 3 }}>
+                        <OutputMaps
+                          outputTab={outputTab} hasResult={hasResult} analysisResult={analysisResult}
+                          useCondCanvas={useCondCanvas} condCanvasRef={condCanvasRef}
+                          useRebarCanvas={useRebarCanvas} rebarCanvasRef={rebarCanvasRef}
+                          useAmpCanvas={useAmpCanvas} ampCanvasRef={ampCanvasRef}
+                          onExport={exportPNG}
+                          condBadge={condBadge} depthBadge={depthBadge} ampBadge={ampBadge}
+                        />
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+
+              {/* ── ICON STRIP 44px ─────────────────────────────────────── */}
+              <div style={{ width: 44, flexShrink: 0, background: PANEL, borderLeft: `1px solid ${BORDER}`, display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: 10, gap: 4 }}>
+                {([
+                  { id: 'properties' as const, Icon: Layers,           title: 'Properties' },
+                  { id: 'analysis'   as const, Icon: BarChart2,         title: 'Analysis'   },
+                  { id: 'adjust'     as const, Icon: SlidersHorizontal, title: 'Adjust'     },
+                ]).map(({ id, Icon, title }) => (
+                  <button key={id} title={title}
+                    onClick={() => setRightIconOpen(prev => prev === id ? null : id)}
+                    style={{ width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', background: rightIconOpen === id ? 'rgba(249,115,22,0.15)' : 'none', border: 'none', borderRadius: 6, cursor: 'pointer', color: rightIconOpen === id ? ACCENT : TEXT2, transition: 'background 0.12s, color 0.12s' }}
+                    onMouseEnter={e => { if (rightIconOpen !== id) { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = TEXT; } }}
+                    onMouseLeave={e => { if (rightIconOpen !== id) { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = TEXT2; } }}
+                  ><Icon size={16} /></button>
+                ))}
+              </div>
+
+              {/* ── RIGHT SLIDE-OUT PANEL ────────────────────────────────── */}
+              <div style={{ width: rightIconOpen ? 280 : 0, transition: 'width 0.18s ease', flexShrink: 0, overflow: 'hidden', background: PANEL, borderLeft: rightIconOpen ? `1px solid ${BORDER}` : 'none', display: 'flex', flexDirection: 'column' }}>
+                <div style={{ width: 280, height: '100%', display: 'flex', flexDirection: 'column' }}>
+                  <div style={{ padding: '10px 14px 8px', borderBottom: `1px solid ${BORDER}`, flexShrink: 0 }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: TEXT2 }}>
+                      {rightIconOpen === 'properties' ? 'Properties' : rightIconOpen === 'analysis' ? 'Analysis' : 'Adjust'}
+                    </span>
+                  </div>
+                  <div style={{ flex: 1, overflowY: 'auto', padding: '12px 0' }}>
+                    {rightIconOpen === 'properties' && (
+                      <>
+                        {selectedLayer === 'gpr' && (
+                          <div>
+                            <div style={{ padding: '4px 14px 8px', fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: TEXT2 }}>Scan Lines</div>
+                            {hasResult ? analysisResult!.per_file_summary.map((f, i) => (
+                              <div key={f.filename} onClick={() => { setSelectedFileIdx(i); bottomPanelRef.current?.expand(); }}
+                                style={{ padding: '8px 14px', cursor: 'pointer', background: selectedFileIdx === i ? 'rgba(249,115,22,0.08)' : 'none', borderLeft: `2px solid ${selectedFileIdx === i ? ACCENT : 'transparent'}` }}
+                                onMouseEnter={e => { if (selectedFileIdx !== i) e.currentTarget.style.background='rgba(255,255,255,0.04)'; }}
+                                onMouseLeave={e => { if (selectedFileIdx !== i) e.currentTarget.style.background='none'; }}>
+                                <div style={{ fontSize: 11, color: TEXT, marginBottom: 4, fontFamily: 'monospace', wordBreak: 'break-all' }}>{f.filename}</div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                                  <span style={{ fontSize: 10, color: TEXT2 }}>{f.signals != null ? f.signals.toLocaleString() : '--'} signals</span>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    <div style={{ width: 40, height: 4, background: BORDER, borderRadius: 2, overflow: 'hidden' }}>
+                                      <div style={{ height: '100%', width: `${f.delam_pct ?? 0}%`, background: delamColor(f.delam_pct ?? 0), borderRadius: 2 }} />
+                                    </div>
+                                    <span style={{ fontSize: 10, color: delamColor(f.delam_pct ?? 0), fontWeight: 700, minWidth: 32, textAlign: 'right' }}>{f.delam_pct != null ? f.delam_pct.toFixed(1) : '--'}%</span>
+                                  </div>
+                                </div>
+                                {f.rebar_depth_mean != null && (
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 3, fontSize: 10 }}>
+                                    <span style={{ color: TEXT2 }}>Avg Depth</span>
+                                    <span style={{ color: TEXT, fontWeight: 700 }}>{f.rebar_depth_mean.toFixed(2)}"</span>
+                                  </div>
+                                )}
+                              </div>
+                            )) : <div style={{ padding: '24px 14px', textAlign: 'center' }}><p style={{ fontSize: 12, color: TEXT2 }}>No files analyzed yet.</p></div>}
+                          </div>
+                        )}
+                        {selectedLayer === 'condition' && (
+                          <div style={{ padding: '4px 14px' }}>
+                            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: TEXT2, marginBottom: 12 }}>Condition Map</div>
+                            <label style={{ display: 'block', fontSize: 10, color: TEXT2, marginBottom: 6 }}>Opacity: {conditionOpacity}%</label>
+                            <input type="range" min={0} max={100} value={conditionOpacity} onChange={e => setConditionOpacity(+e.target.value)} style={{ width: '100%', accentColor: ACCENT }} />
+                          </div>
+                        )}
+                        {selectedLayer !== 'gpr' && selectedLayer !== 'condition' && (
+                          <div style={{ padding: '24px 14px', textAlign: 'center' }}><p style={{ fontSize: 12, color: TEXT2 }}>No configurable properties for this layer.</p></div>
+                        )}
+                        {setupDone && (
+                          <div style={{ margin: '16px 14px 0', padding: '12px', background: RAISED, border: `1px solid ${BORDER}` }}>
+                            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: TEXT2, marginBottom: 8 }}>Setup</div>
+                            {[
+                              { label: 'Equipment', value: MANUFACTURERS.find(m => m.key === manufacturer)?.name || '—' },
+                              { label: 'Frequency', value: `${frequencyMhz} MHz` },
+                              { label: 'Bridge ID', value: bridgeId || '—' },
+                              { label: 'Insp. Date', value: inspDate },
+                            ].map(({ label, value }) => (
+                              <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 4 }}>
+                                <span style={{ color: TEXT2 }}>{label}</span>
+                                <span style={{ color: TEXT, fontWeight: 600, maxWidth: 120, textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</span>
+                              </div>
+                            ))}
                           </div>
                         )}
                       </>
                     )}
-                  </Panel>
-
-                  <PanelResizeHandle style={{ width: 3, background: BORDER, cursor: 'col-resize' }} />
-
-                  {/* ── RIGHT PANEL ───────────────────────────────────────────── */}
-                  <Panel ref={rightPanelRef} defaultSize={22} minSize={0} collapsible collapsedSize={0}
-                    style={{ background: PANEL, borderLeft: `1px solid ${BORDER}`, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-                    <div style={{ display: 'flex', borderBottom: `1px solid ${BORDER}`, flexShrink: 0 }}>
-                      {(['properties','analysis'] as const).map(tab => (
-                        <button key={tab} onClick={() => setRightTab(tab)}
-                          style={{ flex: 1, padding: '10px 0', fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', background: 'none', border: 'none', cursor: 'pointer', color: rightTab === tab ? TEXT : TEXT2, borderBottom: `2px solid ${rightTab === tab ? ACCENT : 'transparent'}`, fontFamily: 'Inter, sans-serif', transition: 'color 0.12s' }}>
-                          {tab}
-                        </button>
-                      ))}
-                      <button onClick={() => rightPanelRef.current?.collapse()} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 10px', color: TEXT2 }}><ChevronRight size={13} /></button>
-                    </div>
-
-                    <div style={{ flex: 1, overflowY: 'auto', padding: '12px 0' }}>
-                      {rightTab === 'properties' && (
-                        <>
-                          {selectedLayer === 'gpr' && (
-                            <div>
-                              <div style={{ padding: '4px 14px 8px', fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: TEXT2 }}>GPR Profiles</div>
-                              {hasResult ? analysisResult!.per_file_summary.map((f, i) => (
-                                <div key={f.filename} onClick={() => { setSelectedFileIdx(i); bottomPanelRef.current?.expand(); }}
-                                  style={{ padding: '8px 14px', cursor: 'pointer', background: selectedFileIdx === i ? 'rgba(232,96,28,0.08)' : 'none', borderLeft: `2px solid ${selectedFileIdx === i ? ACCENT : 'transparent'}` }}
-                                  onMouseEnter={e => { if (selectedFileIdx !== i) e.currentTarget.style.background='rgba(0,0,0,0.04)'; }}
-                                  onMouseLeave={e => { if (selectedFileIdx !== i) e.currentTarget.style.background='none'; }}>
-                                  <div style={{ fontSize: 11, color: TEXT, marginBottom: 4, fontFamily: 'monospace', wordBreak: 'break-all' }}>{f.filename}</div>
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-                                    <span style={{ fontSize: 10, color: TEXT2 }}>{f.signals != null ? f.signals.toLocaleString() : '--'} signals</span>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                      <div style={{ width: 40, height: 4, background: '#E2DED9', borderRadius: 2, overflow: 'hidden' }}>
-                                        <div style={{ height: '100%', width: `${f.delam_pct ?? 0}%`, background: delamColor(f.delam_pct ?? 0), borderRadius: 2 }} />
-                                      </div>
-                                      <span style={{ fontSize: 10, color: delamColor(f.delam_pct ?? 0), fontWeight: 700, minWidth: 32, textAlign: 'right' }}>{f.delam_pct != null ? f.delam_pct.toFixed(1) : '--'}%</span>
-                                    </div>
-                                  </div>
-                                  {f.rebar_depth_mean != null && (
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 3, fontSize: 10 }}>
-                                      <span style={{ color: TEXT2 }}>Avg Depth</span>
-                                      <span style={{ color: TEXT, fontWeight: 700 }}>{f.rebar_depth_mean.toFixed(2)}"</span>
-                                    </div>
-                                  )}
-                                </div>
-                              )) : <div style={{ padding: '24px 14px', textAlign: 'center' }}><p style={{ fontSize: 12, color: TEXT2 }}>No files analyzed yet.</p></div>}
-                            </div>
-                          )}
-                          {selectedLayer === 'condition' && (
-                            <div style={{ padding: '4px 14px' }}>
-                              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: TEXT2, marginBottom: 12 }}>Condition Grid</div>
-                              <label style={{ display: 'block', fontSize: 10, color: TEXT2, marginBottom: 6 }}>Color scheme</label>
-                              <select style={{ width: '100%', padding: '7px 10px', background: RAISED, border: `1px solid ${BORDER}`, color: TEXT, fontSize: 12, marginBottom: 16, fontFamily: 'Inter, sans-serif' }}>
-                                <option>Green → Yellow → Red</option><option>Viridis</option><option>Grayscale</option>
-                              </select>
-                              <label style={{ display: 'block', fontSize: 10, color: TEXT2, marginBottom: 6 }}>Opacity: {conditionOpacity}%</label>
-                              <input type="range" min={0} max={100} value={conditionOpacity} onChange={e => setConditionOpacity(+e.target.value)} style={{ width: '100%', accentColor: ACCENT, marginBottom: 16 }} />
-                            </div>
-                          )}
-                          {selectedLayer !== 'gpr' && selectedLayer !== 'condition' && (
-                            <div style={{ padding: '24px 14px', textAlign: 'center' }}><p style={{ fontSize: 12, color: TEXT2 }}>No configurable properties for this layer.</p></div>
-                          )}
-                          {setupDone && (
-                            <div style={{ margin: '16px 14px 0', padding: '12px', background: RAISED, border: `1px solid ${BORDER}` }}>
-                              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: TEXT2, marginBottom: 8 }}>Setup</div>
-                              {[
-                                { label: 'Equipment', value: MANUFACTURERS.find(m => m.key === manufacturer)?.name || '—' },
-                                { label: 'Frequency', value: `${frequencyMhz} MHz` },
-                                { label: 'Bridge ID', value: bridgeId || '—' },
-                                { label: 'Insp. Date', value: inspDate },
-                              ].map(({ label, value }) => (
-                                <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 4 }}>
-                                  <span style={{ color: TEXT2 }}>{label}</span>
-                                  <span style={{ color: TEXT, fontWeight: 600, maxWidth: 120, textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</span>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </>
-                      )}
-
-                      {rightTab === 'analysis' && (
-                        <div style={{ padding: '0 14px' }}>
-                          <div style={{ marginBottom: 20 }}>
-                            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: TEXT2, marginBottom: 10 }}>AI Model</div>
-                            <div style={{ background: RAISED, padding: '10px 12px', fontSize: 11 }}>
-                              {[
-                                { label: 'Equipment', value: MANUFACTURERS.find(m => m.key === manufacturer)?.name || '—' },
-                                { label: 'Frequency', value: `${frequencyMhz} MHz` },
-                                { label: 'Version',   value: 'model_v13.pth' },
-                                { label: 'Standard',  value: 'ASTM D6087' },
-                                { label: 'Threshold', value: detectionThreshold.toFixed(2) },
-                              ].map(({ label, value }) => (
-                                <div key={label} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                                  <span style={{ color: TEXT2 }}>{label}</span>
-                                  <span style={{ color: TEXT, fontWeight: 600 }}>{value}</span>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                          {files.length === 0 && (
-                            <button onClick={() => fileInputRef.current?.click()}
-                              style={{ width: '100%', padding: '10px', marginBottom: 16, background: 'rgba(232,96,28,0.12)', border: `1px solid rgba(232,96,28,0.3)`, color: ACCENT, fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}>
-                              Upload GPR Files
-                            </button>
-                          )}
-                          {(isAnalyzing || jobStatus === 'complete' || jobStatus === 'failed') && (
-                            <div style={{ marginBottom: 16 }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                                {isAnalyzing && <Loader2 size={13} style={{ color: ACCENT, animation: 'spin 1s linear infinite' }} />}
-                                {jobStatus === 'complete' && <Check size={13} style={{ color: '#22c55e' }} />}
-                                {jobStatus === 'failed' && <AlertCircle size={13} style={{ color: '#ef4444' }} />}
-                                <span style={{ fontSize: 12, color: isAnalyzing ? TEXT : jobStatus === 'complete' ? '#22c55e' : '#ef4444' }}>
-                                  {isAnalyzing ? statusMsg : jobStatus === 'complete' ? 'Analysis complete' : 'Analysis failed'}
-                                </span>
+                    {rightIconOpen === 'analysis' && (
+                      <div style={{ padding: '0 14px' }}>
+                        <div style={{ marginBottom: 20 }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: TEXT2, marginBottom: 10 }}>AI Model</div>
+                          <div style={{ background: RAISED, padding: '10px 12px', fontSize: 11 }}>
+                            {[
+                              { label: 'Equipment', value: MANUFACTURERS.find(m => m.key === manufacturer)?.name || '—' },
+                              { label: 'Frequency', value: `${frequencyMhz} MHz` },
+                              { label: 'Standard',  value: 'ASTM D6087' },
+                              { label: 'Threshold', value: detectionThreshold.toFixed(2) },
+                            ].map(({ label, value }) => (
+                              <div key={label} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                                <span style={{ color: TEXT2 }}>{label}</span>
+                                <span style={{ color: TEXT, fontWeight: 600 }}>{value}</span>
                               </div>
-                              {isAnalyzing && <div style={{ height: 3, background: '#E2DED9', overflow: 'hidden', borderRadius: 2 }}><div style={{ height: '100%', width: '40%', background: ACCENT, borderRadius: 2, animation: 'verus-bar 1.8s ease-in-out infinite' }} /></div>}
-                              {errorMsg && <p style={{ fontSize: 11, color: '#ef4444', marginTop: 6, lineHeight: 1.5 }}>{errorMsg}</p>}
-                            </div>
-                          )}
-                          {files.length > 0 && jobStatus !== 'pending' && jobStatus !== 'processing' && (
-                            <button onClick={() => setShowConfirm(true)}
-                              style={{ width: '100%', padding: '10px', marginBottom: 16, background: ACCENT, border: 'none', color: '#fff', fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}>
-                              Re-run Analysis
-                            </button>
-                          )}
-                          {hasResult && (
-                            <div style={{ background: RAISED, padding: '12px' }}>
-                              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: TEXT2, marginBottom: 10 }}>Summary</div>
-                              {[
-                                { label: 'Signals',       value: analysisResult!.signals_analyzed != null ? analysisResult!.signals_analyzed.toLocaleString() : '--' },
-                                { label: 'Delamination',  value: analysisResult!.delamination_pct != null ? `${analysisResult!.delamination_pct.toFixed(1)}%` : '--', color: delamColor(analysisResult!.delamination_pct ?? 0) },
-                                { label: 'Sound',         value: analysisResult!.sound_pct != null ? `${analysisResult!.sound_pct.toFixed(1)}%` : '--' },
-                                { label: 'Analysis time', value: analysisResult!.analysis_time_sec != null ? `${analysisResult!.analysis_time_sec.toFixed(1)}s` : '--' },
-                              ].map(({ label, value, color }) => (
-                                <div key={label} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontSize: 11 }}>
-                                  <span style={{ color: TEXT2 }}>{label}</span>
-                                  <span style={{ color: color || TEXT, fontWeight: 600 }}>{value}</span>
-                                </div>
-                              ))}
-                            </div>
-                          )}
+                            ))}
+                          </div>
                         </div>
-                      )}
-                    </div>
-
-                    <AdjustPanel
-                      hasResult={hasResult} outputTab={outputTab} analysisResult={analysisResult}
-                      detectionThreshold={detectionThreshold} setDetectionThreshold={setDetectionThreshold} setUseCondCanvas={setUseCondCanvas}
-                      dielectricEr={dielectricEr} setDielectricEr={setDielectricEr} setUseRebarCanvas={setUseRebarCanvas}
-                      ampClampMin={ampClampMin} setAmpClampMin={setAmpClampMin}
-                      ampClampMax={ampClampMax} setAmpClampMax={setAmpClampMax} setUseAmpCanvas={setUseAmpCanvas}
-                      projectId={projectId}
-                    />
-
-                    <div style={{ borderTop: `1px solid ${BORDER}`, padding: '6px 14px', flexShrink: 0 }}>
-                      <button onClick={() => rightPanelRef.current?.collapse()}
-                        style={{ width: '100%', background: 'none', border: 'none', cursor: 'pointer', color: TEXT2, fontSize: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
-                        <ChevronRight size={11} /> Collapse
-                      </button>
-                    </div>
-                  </Panel>
-                </PanelGroup>
-              </Panel>
-
-              <PanelResizeHandle style={{ height: 3, background: BORDER, cursor: 'row-resize' }} />
-
-              {/* ── BOTTOM B-SCAN PANEL ───────────────────────────────────────── */}
-              <Panel ref={bottomPanelRef} defaultSize={25} minSize={0} collapsible collapsedSize={0}
-                style={{ background: PANEL, borderTop: `1px solid ${BORDER}`, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-                <div style={{ height: 36, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '0 12px', borderBottom: `1px solid ${BORDER}`, background: RAISED }}>
-                  <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: TEXT2, flexShrink: 0 }}>B-Scan Profile</span>
-                  {hasResult && totalFiles > 0 && (
-                    <>
-                      <div style={{ width: 1, height: 16, background: BORDER, flexShrink: 0 }} />
-                      <button onClick={() => setSelectedFileIdx(i => Math.max(0, i-1))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: TEXT2, padding: 2 }}><ChevronLeft size={13} /></button>
-                      <span style={{ fontSize: 11, color: TEXT, minWidth: 80, textAlign: 'center' }}>Swath {selectedFileIdx+1} / {totalFiles}</span>
-                      <button onClick={() => setSelectedFileIdx(i => Math.min(totalFiles-1, i+1))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: TEXT2, padding: 2 }}><ChevronRight size={13} /></button>
-                      <div style={{ width: 1, height: 16, background: BORDER }} />
-                      {['In-Line','Cross'].map(t => (
-                        <button key={t} style={{ padding: '2px 10px', fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', background: t === 'In-Line' ? 'rgba(232,96,28,0.15)' : 'none', border: `1px solid ${t==='In-Line' ? 'rgba(232,96,28,0.3)' : BORDER}`, color: t === 'In-Line' ? ACCENT : TEXT2, cursor: 'pointer', fontFamily: 'Inter, sans-serif', borderRadius: 3 }}>{t}</button>
-                      ))}
-                    </>
-                  )}
-                  <div style={{ flex: 1 }} />
-                  <button onClick={() => setBottomExpanded(v => !v)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: TEXT2, display: 'flex', padding: 2 }}>
-                    {bottomExpanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
-                  </button>
-                  <button onClick={() => bottomPanelRef.current?.collapse()} style={{ background: 'none', border: 'none', cursor: 'pointer', color: TEXT2, display: 'flex', padding: 2 }}><ChevronDown size={13} /></button>
-                </div>
-                <div style={{ flex: 1, overflow: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F5F3EF', position: 'relative' }}>
-                  {hasResult ? (
-                    <div style={{ position: 'relative', width: '100%', height: '100%', display: 'flex', alignItems: 'stretch' }}>
-                      <div style={{ width: 28, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: TEXT2, letterSpacing: '0.06em', writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>Travel time [ns]</div>
-                      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-                        <canvas ref={bscanCanvasRef} style={{ width: '100%', height: '100%', imageRendering: 'pixelated', display: 'block' }} />
-                        <div style={{ height: 18, flexShrink: 0, textAlign: 'center', fontSize: 9, color: TEXT2, letterSpacing: '0.06em', paddingTop: 4 }}>Trace number</div>
+                        {files.length === 0 && (
+                          <button onClick={() => fileInputRef.current?.click()}
+                            style={{ width: '100%', padding: '10px', marginBottom: 16, background: `rgba(249,115,22,0.12)`, border: `1px solid rgba(249,115,22,0.3)`, color: ACCENT, fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}>
+                            Upload GPR Files
+                          </button>
+                        )}
+                        {(isAnalyzing || jobStatus === 'complete' || jobStatus === 'failed') && (
+                          <div style={{ marginBottom: 16 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                              {isAnalyzing && <Loader2 size={13} style={{ color: ACCENT, animation: 'spin 1s linear infinite' }} />}
+                              {jobStatus === 'complete' && <Check size={13} style={{ color: '#22c55e' }} />}
+                              {jobStatus === 'failed' && <AlertCircle size={13} style={{ color: '#ef4444' }} />}
+                              <span style={{ fontSize: 12, color: isAnalyzing ? TEXT : jobStatus === 'complete' ? '#22c55e' : '#ef4444' }}>
+                                {isAnalyzing ? statusMsg : jobStatus === 'complete' ? 'Analysis complete' : 'Analysis failed'}
+                              </span>
+                            </div>
+                            {isAnalyzing && <div style={{ height: 3, background: BORDER, overflow: 'hidden', borderRadius: 2 }}><div style={{ height: '100%', width: '40%', background: ACCENT, borderRadius: 2, animation: 'verus-bar 1.8s ease-in-out infinite' }} /></div>}
+                            {errorMsg && <p style={{ fontSize: 11, color: '#ef4444', marginTop: 6, lineHeight: 1.5 }}>{errorMsg}</p>}
+                          </div>
+                        )}
+                        {files.length > 0 && jobStatus !== 'pending' && jobStatus !== 'processing' && (
+                          <button onClick={() => setShowConfirm(true)}
+                            style={{ width: '100%', padding: '10px', marginBottom: 16, background: ACCENT, border: 'none', color: '#fff', fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}>
+                            Run Analysis
+                          </button>
+                        )}
+                        {hasResult && (
+                          <div style={{ background: RAISED, padding: '12px' }}>
+                            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: TEXT2, marginBottom: 10 }}>Summary</div>
+                            {[
+                              { label: 'Signals',      value: analysisResult!.signals_analyzed != null ? analysisResult!.signals_analyzed.toLocaleString() : '--' },
+                              { label: 'Delamination', value: analysisResult!.delamination_pct != null ? `${analysisResult!.delamination_pct.toFixed(1)}%` : '--', color: delamColor(analysisResult!.delamination_pct ?? 0) },
+                              { label: 'Sound',        value: analysisResult!.sound_pct != null ? `${analysisResult!.sound_pct.toFixed(1)}%` : '--' },
+                              { label: 'Time',         value: analysisResult!.analysis_time_sec != null ? `${analysisResult!.analysis_time_sec.toFixed(1)}s` : '--' },
+                            ].map(({ label, value, color }) => (
+                              <div key={label} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontSize: 11 }}>
+                                <span style={{ color: TEXT2 }}>{label}</span>
+                                <span style={{ color: (color as string | undefined) || TEXT, fontWeight: 600 }}>{value}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  ) : (
-                    <p style={{ fontSize: 12, color: TEXT2, textAlign: 'center', padding: 16 }}>Select a GPR profile to view B-scan</p>
-                  )}
+                    )}
+                    {rightIconOpen === 'adjust' && (
+                      <AdjustPanel
+                        hasResult={hasResult} outputTab={outputTab} analysisResult={analysisResult}
+                        detectionThreshold={detectionThreshold} setDetectionThreshold={setDetectionThreshold} setUseCondCanvas={setUseCondCanvas}
+                        dielectricEr={dielectricEr} setDielectricEr={setDielectricEr} setUseRebarCanvas={setUseRebarCanvas}
+                        ampClampMin={ampClampMin} setAmpClampMin={setAmpClampMin}
+                        ampClampMax={ampClampMax} setAmpClampMax={setAmpClampMax} setUseAmpCanvas={setUseAmpCanvas}
+                        projectId={projectId}
+                      />
+                    )}
+                  </div>
                 </div>
-              </Panel>
-            </PanelGroup>
+              </div>
 
-            <button onClick={() => rightPanelRef.current?.expand()}
-              style={{ position: 'absolute', right: 0, top: '50%', transform: 'translateY(-50%)', background: RAISED, border: `1px solid ${BORDER2}`, borderRight: 'none', color: TEXT2, cursor: 'pointer', padding: '10px 4px', zIndex: 30, display: 'flex' }}
-              title="Open properties panel"><ChevronLeft size={13} /></button>
-          </Panel>
-        </PanelGroup>
+            </Panel>
+
+            <PanelResizeHandle style={{ height: 3, background: BORDER, cursor: 'row-resize' }} />
+
+            {/* ── B-SCAN PANEL ─────────────────────────────────────────────── */}
+            <Panel ref={bottomPanelRef} defaultSize={25} minSize={0} collapsible collapsedSize={0}
+              style={{ background: PANEL, borderTop: `1px solid ${BORDER}`, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              <div style={{ height: 36, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10, padding: '0 14px', borderBottom: `1px solid ${BORDER}`, background: RAISED }}>
+                <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: TEXT2, flexShrink: 0 }}>B-Scan</span>
+                {hasResult && totalFiles > 0 && (
+                  <>
+                    <div style={{ width: 1, height: 16, background: BORDER, flexShrink: 0 }} />
+                    <button onClick={() => setSelectedFileIdx(i => Math.max(0, i-1))}
+                      style={{ background: 'none', border: `1px solid ${BORDER}`, cursor: 'pointer', color: TEXT2, padding: '2px 8px', borderRadius: 20, display: 'flex', alignItems: 'center' }}
+                      onMouseEnter={e => (e.currentTarget.style.color = TEXT)} onMouseLeave={e => (e.currentTarget.style.color = TEXT2)}
+                    ><ChevronLeft size={14} /></button>
+                    <span style={{ fontSize: 11, color: TEXT, minWidth: 80, textAlign: 'center', fontWeight: 600 }}>Swath {selectedFileIdx+1} / {totalFiles}</span>
+                    <button onClick={() => setSelectedFileIdx(i => Math.min(totalFiles-1, i+1))}
+                      style={{ background: 'none', border: `1px solid ${BORDER}`, cursor: 'pointer', color: TEXT2, padding: '2px 8px', borderRadius: 20, display: 'flex', alignItems: 'center' }}
+                      onMouseEnter={e => (e.currentTarget.style.color = TEXT)} onMouseLeave={e => (e.currentTarget.style.color = TEXT2)}
+                    ><ChevronRight size={14} /></button>
+                    <div style={{ width: 1, height: 16, background: BORDER }} />
+                    {(['In-Line','Cross'] as const).map(t => (
+                      <button key={t}
+                        style={{ padding: '3px 12px', fontSize: 10, fontWeight: 700, letterSpacing: '0.05em', background: t === 'In-Line' ? ACCENT : 'none', border: `1px solid ${t === 'In-Line' ? ACCENT : BORDER}`, color: t === 'In-Line' ? '#fff' : TEXT2, cursor: 'pointer', fontFamily: 'Inter, sans-serif', borderRadius: 20 }}>{t}</button>
+                    ))}
+                  </>
+                )}
+                <div style={{ flex: 1 }} />
+                <button onClick={() => setBottomExpanded(v => !v)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: TEXT2, display: 'flex', padding: 2 }}>
+                  {bottomExpanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+                </button>
+                <button onClick={() => bottomPanelRef.current?.collapse()} style={{ background: 'none', border: 'none', cursor: 'pointer', color: TEXT2, display: 'flex', padding: 2 }}><ChevronDown size={13} /></button>
+              </div>
+              <div style={{ flex: 1, overflow: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', background: RAISED, position: 'relative' }}>
+                {hasResult ? (
+                  <div style={{ position: 'relative', width: '100%', height: '100%', display: 'flex', alignItems: 'stretch' }}>
+                    <div style={{ width: 28, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: TEXT2, letterSpacing: '0.06em', writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>Travel time [ns]</div>
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                      <canvas ref={bscanCanvasRef} style={{ width: '100%', height: '100%', imageRendering: 'pixelated', display: 'block' }} />
+                      <div style={{ height: 18, flexShrink: 0, textAlign: 'center', fontSize: 9, color: TEXT2, letterSpacing: '0.06em', paddingTop: 4 }}>Trace number</div>
+                    </div>
+                  </div>
+                ) : (
+                  <p style={{ fontSize: 12, color: TEXT2, textAlign: 'center', padding: 16 }}>Select a GPR profile to view B-scan</p>
+                )}
+              </div>
+            </Panel>
+          </PanelGroup>
+        </div>
       </div>
 
       {/* ── MY PROJECTS DRAWER ──────────────────────────────────────────────── */}
       {showProjects && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex' }} onClick={() => setShowProjects(false)}>
           <div style={{ flex: 1 }} />
-          <div style={{ width: 360, height: '100%', background: PANEL, borderLeft: `1px solid ${BORDER2}`, display: 'flex', flexDirection: 'column', boxShadow: '-8px 0 32px rgba(0,0,0,0.15)' }} onClick={e => e.stopPropagation()}>
+          <div style={{ width: 360, height: '100%', background: PANEL, borderLeft: `1px solid ${BORDER2}`, display: 'flex', flexDirection: 'column', boxShadow: '-8px 0 32px rgba(0,0,0,0.4)' }} onClick={e => e.stopPropagation()}>
             <div style={{ padding: '14px 20px', borderBottom: `1px solid ${BORDER}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <span style={{ fontSize: 13, fontWeight: 700, color: TEXT }}>My Projects</span>
               <button onClick={() => setShowProjects(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: TEXT2 }}><X size={16} /></button>
