@@ -12,7 +12,30 @@ from pathlib import Path
 from typing import Optional
 
 import psutil
+import requests
 import torch
+
+
+def _download_gdrive(url: str, dest: Path) -> None:
+    """Download a Google Drive file, handling the virus-scan confirmation page."""
+    session = requests.Session()
+    response = session.get(url, stream=True)
+
+    token = None
+    for key, value in response.cookies.items():
+        if key.startswith('download_warning'):
+            token = value
+            break
+
+    if token:
+        response = session.get(url, params={'confirm': token}, stream=True)
+
+    with open(dest, 'wb') as f:
+        for chunk in response.iter_content(chunk_size=32768):
+            if chunk:
+                f.write(chunk)
+
+    print(f"[download] {dest.name} ({dest.stat().st_size:,} bytes)", flush=True)
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -88,11 +111,10 @@ def _load_model_background() -> None:
         if gdrive_url:
             print(f"[startup] Downloading model from {gdrive_url} …", flush=True)
             try:
-                import gdown
                 MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
-                gdown.download(gdrive_url, str(MODEL_PATH), quiet=False, fuzzy=True)
+                _download_gdrive(gdrive_url, MODEL_PATH)
             except Exception as exc:
-                print(f"[startup] ERROR: gdown download failed: {exc}", flush=True)
+                print(f"[startup] ERROR: model download failed: {exc}", flush=True)
                 return
         else:
             print(f"[startup] WARNING: {MODEL_PATH} missing and MODEL_GDRIVE_URL unset — /analyze returns 503.", flush=True)
@@ -106,8 +128,7 @@ def _load_model_background() -> None:
     cfg_url = os.environ.get("MODEL_CONFIG_GDRIVE_URL")
     if cfg_url and not MODEL_CONFIG_PATH.exists():
         try:
-            import gdown
-            gdown.download(cfg_url, str(MODEL_CONFIG_PATH), quiet=False, fuzzy=True)
+            _download_gdrive(cfg_url, MODEL_CONFIG_PATH)
         except Exception as exc:
             print(f"[startup] WARNING: model_config.json download failed: {exc}", flush=True)
 
@@ -140,9 +161,8 @@ def _load_model_background() -> None:
         if gdrive_url:
             print(f"[startup] Downloading rebar model from {gdrive_url} …", flush=True)
             try:
-                import gdown
                 REBAR_MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
-                gdown.download(gdrive_url, str(REBAR_MODEL_PATH), quiet=False, fuzzy=True)
+                _download_gdrive(gdrive_url, REBAR_MODEL_PATH)
             except Exception as exc:
                 print(f"[startup] WARNING: Rebar model download failed: {exc}", flush=True)
         else:

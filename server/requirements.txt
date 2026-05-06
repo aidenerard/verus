@@ -15,7 +15,7 @@ pillow==10.2.0
 
 # Utilities
 psutil==5.9.8
-gdown==4.7.1
+requests>=2.31.0
 
 # GPR format parsers (auto-installed on first use if absent; pinned here for reproducibility)
 readgssi>=0.0.18
