@@ -1,0 +1,14 @@
+{
+  "id": "aidenerard/rebardepthcnn-training",
+  "title": "rebardepthcnn-training",
+  "code_file": "rebar_training.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_tpu": false,
+  "enable_internet": true,
+  "dataset_sources": ["aidenerard/infrasense-dzt-both-bridges"],
+  "competition_sources": [],
+  "kernel_sources": []
+}
