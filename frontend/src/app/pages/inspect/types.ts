@@ -26,6 +26,7 @@ export interface AnalysisResult {
   analysis_time_sec:   number;
   cscan_image:         string;
   cscan_url?:          string;
+  manufacturer?:       string;
   per_file_summary:    FileResult[];
   // optional — present only from server v2+
   rebar_depth_image?:  string;
@@ -42,10 +43,12 @@ export interface AnalysisResult {
   depth_accuracy_in?:  number;
   signal_quality?:     string;
   // rebar model fields — present from server v3+
-  rebar_model_used?:   boolean;
-  rebar_cscan_image?:  string;
-  rebar_depth_grid?:   (number | null)[][];
-  rebar_twt_grid?:     (number | null)[][];
+  rebar_model_used?:        boolean;
+  rebar_cscan_image?:       string;
+  rebar_cscan_image_url?:   string;
+  amplitude_image_url?:     string;
+  rebar_depth_grid?:        (number | null)[][];
+  rebar_twt_grid?:          (number | null)[][];
 }
 
 export interface UploadedFile { file: File; name: string }

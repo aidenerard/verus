@@ -130,12 +130,10 @@ export default function OutputMaps({
             {useRebarCanvas
               ? <canvas ref={rebarCanvasRef} style={canvasStyle} />
               : (r.rebar_cscan_image || r.rebar_depth_image)
-                ? <img
-                    src={`data:image/png;base64,${r.rebar_cscan_image || r.rebar_depth_image}`}
-                    alt="Rebar depth map"
-                    style={imgStyle}
-                  />
-                : <div style={naStyle}>Rebar depth map not available — re-run analysis.</div>
+                ? <img src={`data:image/png;base64,${r.rebar_cscan_image || r.rebar_depth_image}`} alt="Rebar depth map" style={imgStyle} />
+                : r.rebar_cscan_image_url
+                  ? <img src={r.rebar_cscan_image_url} alt="Rebar depth map" style={imgStyle} />
+                  : <div style={naStyle}>Rebar depth map not available — re-run analysis.</div>
             }
           </div>
           <div style={legendStyle}>
@@ -159,7 +157,9 @@ export default function OutputMaps({
               ? <canvas ref={ampCanvasRef} style={canvasStyle} />
               : r.amplitude_image
                 ? <img src={`data:image/png;base64,${r.amplitude_image}`} alt="Amplitude map" style={imgStyle} />
-                : <div style={naStyle}>Amplitude map not available — re-run analysis with server v2.</div>
+                : r.amplitude_image_url
+                  ? <img src={r.amplitude_image_url} alt="Amplitude map" style={imgStyle} />
+                  : <div style={naStyle}>Amplitude map not available — re-run analysis.</div>
             }
           </div>
           <div style={legendStyle}>

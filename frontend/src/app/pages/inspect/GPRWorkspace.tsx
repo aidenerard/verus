@@ -137,26 +137,47 @@ export default function GPRWorkspace() {
     fetch(`${SERVER}/job/${viewJobId}`, { headers })
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((job: any) => {
-        const result = job.result ?? (job.signals_analyzed != null ? {
-          signals_analyzed:  job.signals_analyzed,
-          delamination_pct:  job.delamination_pct  ?? 0,
-          sound_pct:         job.sound_pct          ?? 0,
-          analysis_time_sec: job.analysis_time_sec  ?? 0,
-          cscan_image:       '',
-          cscan_url:         job.cscan_url,
-          per_file_summary:  job.per_file_summary   ?? [],
-        } : null);
+        // In-memory path: job.result has the full payload incl. base64 images.
+        // Supabase fallback: job.result is absent; all fields are at the top level.
+        const result: AnalysisResult = job.result ?? (job.signals_analyzed != null ? {
+          signals_analyzed:      job.signals_analyzed,
+          delamination_pct:      job.delamination_pct     ?? 0,
+          sound_pct:             job.sound_pct             ?? 0,
+          analysis_time_sec:     job.analysis_time_sec     ?? 0,
+          cscan_image:           '',
+          cscan_url:             job.cscan_url,
+          per_file_summary:      job.per_file_summary      ?? [],
+          rebar_cscan_image:     '',
+          rebar_cscan_image_url: job.rebar_cscan_image_url,
+          amplitude_image:       '',
+          amplitude_image_url:   job.amplitude_image_url,
+          prob_grid:             job.prob_grid,
+          prob_grid_rows:        job.prob_grid_rows,
+          prob_grid_cols:        job.prob_grid_cols,
+          otsu_threshold:        job.otsu_threshold,
+          twt_grid:              job.twt_grid,
+          twt_grid_rows:         job.twt_grid_rows,
+          twt_grid_cols:         job.twt_grid_cols,
+          frequency_mhz:         job.frequency_mhz,
+          manufacturer:          job.manufacturer,
+          rebar_model_used:      job.rebar_model_used,
+          model_confidence_pct:  job.model_confidence_pct,
+          depth_accuracy_in:     job.depth_accuracy_in,
+          signal_quality:        job.signal_quality,
+        } : null as unknown as AnalysisResult);
+
         if (result) {
           setAnalysisResult(result);
+          const mfr = result.manufacturer ?? job.manufacturer;
+          if (mfr) setManufacturer(mfr as ManufacturerKey);
+          const freq = result.frequency_mhz ?? job.frequency_mhz;
+          if (freq) { setFrequencyMhz(freq); setDielectricEr(DEFAULT_ER[freq] ?? 6); }
           if (result.otsu_threshold) setDetectionThreshold(result.otsu_threshold);
-          if (result.frequency_mhz) {
-            setFrequencyMhz(result.frequency_mhz);
-            setDielectricEr(DEFAULT_ER[result.frequency_mhz] ?? 6);
-          }
           setJobStatus('complete');
           setOutputTab('condition');
           setRightTab('properties');
           setActiveView('cscan');
+          bottomPanelRef.current?.expand();
         }
         setSetupDone(true);
         setSetupChecking(false);
@@ -459,14 +480,14 @@ export default function GPRWorkspace() {
     const a = document.createElement('a');
     const slug = projectName.replace(/\s+/g, '_');
     if (outputTab === 'condition') {
-      a.href = `data:image/png;base64,${analysisResult.cscan_image}`;
-      a.download = `${slug}_condition.png`;
-    } else if (outputTab === 'rebar_depth' && analysisResult.rebar_depth_image) {
-      a.href = `data:image/png;base64,${analysisResult.rebar_depth_image}`;
-      a.download = `${slug}_rebar_depth.png`;
-    } else if (outputTab === 'amplitude' && analysisResult.amplitude_image) {
-      a.href = `data:image/png;base64,${analysisResult.amplitude_image}`;
-      a.download = `${slug}_amplitude.png`;
+      if (analysisResult.cscan_image) { a.href = `data:image/png;base64,${analysisResult.cscan_image}`; a.download = `${slug}_condition.png`; }
+      else if (analysisResult.cscan_url) { a.href = analysisResult.cscan_url; a.download = `${slug}_condition.png`; }
+    } else if (outputTab === 'rebar_depth') {
+      if (analysisResult.rebar_depth_image) { a.href = `data:image/png;base64,${analysisResult.rebar_depth_image}`; a.download = `${slug}_rebar_depth.png`; }
+      else if (analysisResult.rebar_cscan_image_url) { a.href = analysisResult.rebar_cscan_image_url; a.download = `${slug}_rebar_depth.png`; }
+    } else if (outputTab === 'amplitude') {
+      if (analysisResult.amplitude_image) { a.href = `data:image/png;base64,${analysisResult.amplitude_image}`; a.download = `${slug}_amplitude.png`; }
+      else if (analysisResult.amplitude_image_url) { a.href = analysisResult.amplitude_image_url; a.download = `${slug}_amplitude.png`; }
     } else {
       const map = mapRef.current;
       if (map) { a.href = map.getCanvas().toDataURL(); a.download = `${slug}_map.png`; }
@@ -603,6 +624,11 @@ export default function GPRWorkspace() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, justifyContent: 'flex-end', position: 'relative' }}>
           {setupDone && (
             <>
+              {viewJobId && hasResult && (
+                <button onClick={() => { fileInputRef.current?.click(); setRightTab('analysis'); }}
+                  style={{ padding: '6px 12px', background: ACCENT, border: 'none', color: '#fff', fontSize: 11, fontWeight: 700, letterSpacing: '0.05em', cursor: 'pointer', fontFamily: 'Inter, sans-serif', borderRadius: 4, display: 'flex', alignItems: 'center', gap: 5 }}
+                ><Radio size={12} /> Re-run Analysis</button>
+              )}
               <button onClick={() => { setSetupDone(false); setSetupStep(1); }}
                 style={{ padding: '6px 12px', background: 'none', border: `1px solid ${BORDER}`, color: TEXT2, fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'Inter, sans-serif', borderRadius: 4, display: 'flex', alignItems: 'center', gap: 5 }}
                 onMouseEnter={e => (e.currentTarget.style.background = RAISED)}

@@ -31,6 +31,18 @@ _jobs: dict[str, dict] = {}
 _executor = ThreadPoolExecutor(max_workers=2)
 
 
+def _upload_png(sb, b64: str, uid: str, job_id: str, suffix: str) -> Optional[str]:
+    if not sb or not b64:
+        return None
+    try:
+        path = f"{uid}/{job_id}{suffix}.png"
+        sb.storage.from_("cscan-images").upload(path, _b64.b64decode(b64), {"content-type": "image/png"})
+        return sb.storage.from_("cscan-images").get_public_url(path)
+    except Exception as exc:
+        print(f"[upload] {suffix or 'cscan'} failed: {exc}", flush=True)
+        return None
+
+
 # ── Worker ────────────────────────────────────────────────────────────────────
 
 def run_analysis_job(
@@ -227,40 +239,34 @@ def run_analysis_job(
             "twt_grid_rows":       twt_rows,
             "twt_grid_cols":       twt_cols,
             "frequency_mhz":       frequency_mhz,
+            "manufacturer":        manufacturer,
             "model_confidence_pct": conf_pct,
             "depth_accuracy_in":   depth_acc_in,
             "signal_quality":      sig_quality,
         }
 
         # ── Supabase: storage + DB row ────────────────────────────────────────
-        cscan_url: Optional[str] = None
-        if supabase_client and cscan_b64:
-            try:
-                png_bytes    = _b64.b64decode(cscan_b64)
-                uid          = user_id or "anonymous"
-                storage_path = f"{uid}/{job_id}.png"
-                supabase_client.storage.from_("cscan-images").upload(
-                    storage_path, png_bytes, {"content-type": "image/png"},
-                )
-                cscan_url = supabase_client.storage.from_("cscan-images").get_public_url(storage_path)
-                print(f"[job:{job_id}] C-scan uploaded: {storage_path}", flush=True)
-            except Exception as exc:
-                print(f"[job:{job_id}] Storage upload failed: {exc}", flush=True)
+        uid             = user_id or "anonymous"
+        cscan_url       = _upload_png(supabase_client, cscan_b64,       uid, job_id, "")
+        rebar_cscan_url = _upload_png(supabase_client, rebar_cscan_b64, uid, job_id, "_rebar")
+        amplitude_url   = _upload_png(supabase_client, amp_b64,         uid, job_id, "_amplitude")
 
         if supabase_client:
             try:
                 supabase_client.table("analysis_jobs").upsert({
-                    "id":               job_id,
-                    "user_id":          user_id,
-                    "status":           "complete",
-                    "signals_analyzed": total_sigs,
-                    "delamination_pct": delam_pct_total,
-                    "sound_pct":        sound_pct_total,
-                    "analysis_time_sec": elapsed,
-                    "cscan_url":        cscan_url,
-                    "per_file_summary": per_file_summary,
-                    "file_names":       file_names,
-                    "completed_at":     "now()",
+                    "id": job_id, "user_id": user_id, "status": "complete", "completed_at": "now()",
+                    "signals_analyzed": total_sigs, "delamination_pct": delam_pct_total,
+                    "sound_pct": sound_pct_total, "analysis_time_sec": elapsed,
+                    "file_names": file_names, "per_file_summary": per_file_summary,
+                    "cscan_url": cscan_url, "rebar_cscan_image_url": rebar_cscan_url,
+                    "amplitude_image_url": amplitude_url,
+                    "manufacturer": manufacturer, "frequency_mhz": frequency_mhz,
+                    "rebar_model_used": rebar_model is not None,
+                    "prob_grid": prob_b64, "prob_grid_rows": pg_rows, "prob_grid_cols": pg_cols,
+                    "otsu_threshold": round(float(otsu_T), 4),
+                    "twt_grid": twt_b64, "twt_grid_rows": twt_rows, "twt_grid_cols": twt_cols,
+                    "model_confidence_pct": conf_pct, "depth_accuracy_in": depth_acc_in,
+                    "signal_quality": sig_quality,
                 }).execute()
                 print(f"[job:{job_id}] DB row written", flush=True)
             except Exception as exc:
