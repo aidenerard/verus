@@ -1,97 +1,37 @@
 """
 server/server.py
-FastAPI inference server wrapping the CNN1D GPR delamination classifier.
-
-Startup behaviour
------------------
-  - If MODEL_PATH does not exist, download it from the URL in the
-    MODEL_GDRIVE_URL environment variable using gdown.
-  - Load CNN1D + TemporalAttention onto CPU (or CUDA if available).
-  - Print "Model loaded successfully".
-
-Endpoints
----------
-  GET  /health          → liveness check
-  GET  /memory          → RAM usage via psutil
-  GET  /formats         → supported GPR file formats
-  POST /analyze         → multipart upload → {job_id} (returns immediately)
-  GET  /job/{job_id}    → poll job status + result
-
-Background job pattern (fixes Render 60-second timeout)
----------------------------------------------------------
-  POST /analyze reads file bytes, saves to a tmpdir, enqueues a job in a
-  ThreadPoolExecutor (max_workers=2), and returns {job_id} immediately.
-  The frontend polls GET /job/{job_id} every 3 s until status is
-  "complete" or "failed".  Results are stored in _jobs (in-memory dict)
-  and written to Supabase analysis_jobs + Storage when env vars are set.
-
-Memory budget (Render free tier = 512 MB RAM)
----------------------------------------------
-  Python runtime + uvicorn + torch idle:  ~150 MB
-  Model weights (CNN1D, 86 k params):     ~  1 MB
-  One SDNET file loaded (16 383 × 512 × 4 bytes float32):  ~33 MB
-  Spatial averaging peak:                 ~ 66 MB
-  Inference batch (INFER_BATCH = 1 000):  ~  2 MB
-  C-scan PNG at 72 DPI:                   ~  5 MB
-  Peak total (one file at a time):        ~225 MB ✓
+FastAPI app: startup, health/memory/formats endpoints, /analyze + /job polling.
 """
 
-import gc
-import io
 import os
-import shutil
 import tempfile
 import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional
 
-import numpy as np
 import psutil
 import torch
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
-# All model / inference / rendering logic lives in run.py
-from run import (
-    CNN1D,
-    load_csv,
-    run_inference,
-    render_cscan_b64,
-    extract_bscan_b64,
-    extract_peak_info,
-    build_prob_grid,
-    build_extra_grids,
-    render_rebar_depth_b64,
-    render_amplitude_b64,
-    compute_confidence_metrics,
-    INFER_BATCH,
-    MAX_GRID_ROWS,
-    MAX_GRID_COLS,
-    DEVICE,
-)
+from auth import verify_token
+from jobs import _jobs, _executor, run_analysis_job
+from run import CNN1D, DEVICE
+from ingest import SUPPORTED_EXTENSIONS, COMPANION_EXTENSIONS, FORMAT_INFO
 
-# Format detection and binary-to-CSV conversion
-from ingest import (
-    detect_and_convert,
-    SUPPORTED_EXTENSIONS,
-    COMPANION_EXTENSIONS,
-    FORMAT_INFO,
-)
-
-# ── Supabase client (optional — graceful if env vars not set) ─────────────────
+# ── Supabase client (optional) ────────────────────────────────────────────────
 
 _supabase = None
 
-def _init_supabase():
+
+def _init_supabase() -> None:
     global _supabase
     url = os.environ.get("SUPABASE_URL")
-    key = os.environ.get("SUPABASE_SERVICE_KEY")  # service role key for server
+    key = os.environ.get("SUPABASE_SERVICE_KEY")
     if url and key:
         try:
             from supabase import create_client
@@ -107,52 +47,13 @@ def _init_supabase():
         )
 
 
-# ── JWT auth (optional) ───────────────────────────────────────────────────────
-
-_bearer = HTTPBearer(auto_error=False)
-
-
-def _decode_jwt_user_id(token: str) -> Optional[str]:
-    """Extract the 'sub' (user_id) from a JWT without a network call.
-    We trust the token for user_id association only — Supabase already
-    validates it on the frontend before the user can reach this endpoint.
-    """
-    try:
-        import base64, json
-        payload_b64 = token.split('.')[1]
-        # Add padding so b64decode works for any length
-        payload_b64 += '=' * (4 - len(payload_b64) % 4)
-        payload = json.loads(base64.b64decode(payload_b64))
-        return payload.get('sub')
-    except Exception:
-        return None
-
-
-async def verify_token(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
-) -> Optional[str]:
-    """
-    Extract user_id from the JWT without a blocking network call to Supabase.
-    Returns None if no token provided. Never raises 401 — unauthenticated
-    users can still run analysis; user_id just won't be associated.
-    """
-    if credentials is None:
-        return None
-    return _decode_jwt_user_id(credentials.credentials)
-
-
-# ── Server-specific configuration ─────────────────────────────────────────────
+# ── Configuration ─────────────────────────────────────────────────────────────
 
 MODEL_PATH   = Path(os.environ.get("MODEL_PATH", Path(__file__).parent / "model.pth"))
 MAX_FILE_MB  = 50
 MAX_TOTAL_MB = 2000
 
-# Background job state
-_jobs: dict[str, dict] = {}
-_executor = ThreadPoolExecutor(max_workers=2)
-
-
-# ── App + startup ─────────────────────────────────────────────────────────────
+# ── App ───────────────────────────────────────────────────────────────────────
 
 app = FastAPI(title="Verus GPR Inference Server", version="2.0.0")
 
@@ -209,254 +110,8 @@ def _load_model_background() -> None:
 @app.on_event("startup")
 def startup_event() -> None:
     _init_supabase()
-    t = threading.Thread(target=_load_model_background, daemon=True)
-    t.start()
+    threading.Thread(target=_load_model_background, daemon=True).start()
     print("[startup] Server ready — model loading in background.", flush=True)
-
-
-# ── Background job worker ─────────────────────────────────────────────────────
-
-def run_analysis_job(
-    job_id: str,
-    file_data: list[tuple[str, bytes]],   # [(filename, bytes), ...]
-    user_id: Optional[str],
-    tmpdir: Path,
-    manufacturer: Optional[str] = None,
-    frequency_mhz: int = 1600,
-) -> None:
-    """
-    Runs in a ThreadPoolExecutor worker thread.
-    Saves files, runs inference, writes results to Supabase, updates _jobs.
-    """
-    _jobs[job_id]["status"] = "processing"
-    t0 = time.perf_counter()
-
-    try:
-        # Wait for model to finish loading (up to 120s on cold start)
-        if _model is None:
-            print(f"[job:{job_id}] Model not yet loaded — waiting up to 120s…", flush=True)
-            deadline = time.time() + 120
-            while _model is None and time.time() < deadline:
-                time.sleep(2)
-            if _model is None:
-                raise RuntimeError("Model failed to load within 120 seconds.")
-            print(f"[job:{job_id}] Model ready, proceeding.", flush=True)
-
-        # Save uploaded bytes to tmpdir
-        saved_paths: list[tuple[str, Path]] = []
-        for fname, content in file_data:
-            dest = tmpdir / fname
-            dest.write_bytes(content)
-            saved_paths.append((fname, dest))
-            print(f"[job:{job_id}] Saved {fname} ({len(content)/1024:.1f} KB)", flush=True)
-
-        # ── Inference ─────────────────────────────────────────────────────────
-        file_preds:     list[np.ndarray] = []
-        file_confs:     list[np.ndarray] = []
-        file_names:     list[str]        = []
-        file_peak_idxs: list[np.ndarray] = []
-        file_peak_amps: list[np.ndarray] = []
-        per_file_summary: list[dict] = []
-        total_sigs = 0
-
-        for fname, dest in saved_paths:
-            ext = dest.suffix.lower()
-            if ext in COMPANION_EXTENSIONS:
-                print(f"[job:{job_id}] Skipping companion: {fname}", flush=True)
-                continue
-            if ext not in SUPPORTED_EXTENSIONS:
-                print(f"[job:{job_id}] Unsupported ext {ext!r} — skipping", flush=True)
-                continue
-
-            print(f"[job:{job_id}] Processing: {fname}", flush=True)
-            try:
-                csv_path, gps = detect_and_convert(dest, upload_dir=tmpdir,
-                                                    manufacturer=manufacturer)
-            except Exception as exc:
-                print(f"[job:{job_id}] Conversion failed for {fname}: {exc}", flush=True)
-                continue
-
-            try:
-                signals = load_csv(csv_path)
-            except Exception as exc:
-                print(f"[job:{job_id}] load_csv failed for {fname}: {exc}", flush=True)
-                continue
-
-            print(f"[job:{job_id}]   → {signals.shape[0]} signals, running inference…", flush=True)
-            bscan_info  = extract_bscan_b64(signals)
-            peak_idx, peak_amp = extract_peak_info(signals)
-            preds, confs = run_inference(_model, signals)
-            del signals
-            if csv_path != dest:
-                csv_path.unlink(missing_ok=True)
-            gc.collect()
-
-            n         = len(preds)
-            n_delam   = int((preds == 0).sum())
-            delam_pct = round(n_delam / n * 100, 2) if n else 0.0
-
-            file_preds.append(preds)
-            file_confs.append(confs)
-            file_names.append(fname)
-            file_peak_idxs.append(peak_idx)
-            file_peak_amps.append(peak_amp)
-            per_file_summary.append({
-                "filename":  fname,
-                "signals":   n,
-                "delam_pct": delam_pct,
-                "gps":       gps,
-                "bscan":     bscan_info,
-            })
-            total_sigs += n
-
-        if total_sigs == 0:
-            raise ValueError("No valid GPR signals found in uploaded files.")
-
-        # Aggregate
-        all_preds       = np.concatenate(file_preds)
-        n_del_total     = int((all_preds == 0).sum())
-        del all_preds
-        delam_pct_total = round(n_del_total / total_sigs * 100, 2)
-        sound_pct_total = round(100.0 - delam_pct_total, 2)
-
-        # ── Render images and build extra grids ──────────────────────────────
-        gc.collect()
-        try:
-            cscan_b64 = render_cscan_b64(file_preds, file_confs, file_names)
-            print(f"[job:{job_id}] C-scan rendered ({len(cscan_b64)//1024} KB b64)", flush=True)
-        except Exception as exc:
-            print(f"[job:{job_id}] C-scan render failed: {exc}", flush=True)
-            cscan_b64 = ""
-
-        # Prob grid for client-side threshold re-render
-        try:
-            import base64 as _b64
-            prob_grid, otsu_T = build_prob_grid(file_preds, file_confs)
-            prob_b64  = _b64.b64encode(prob_grid.tobytes()).decode()
-            pg_rows, pg_cols = prob_grid.shape
-            del prob_grid
-        except Exception as exc:
-            print(f"[job:{job_id}] prob_grid failed: {exc}", flush=True)
-            prob_b64 = ""; pg_rows = pg_cols = 0; otsu_T = 0.65
-
-        # Extra grids: rebar depth, amplitude, TWT
-        rebar_b64 = amp_b64 = twt_b64 = ""
-        twt_rows = twt_cols = 0
-        conf_pct = depth_acc_in = 0.0
-        sig_quality = "Fair"
-        try:
-            depth_grid, amp_grid, twt_grid = build_extra_grids(
-                file_peak_idxs, file_peak_amps, frequency_mhz
-            )
-            rebar_b64 = render_rebar_depth_b64(depth_grid)
-            amp_b64   = render_amplitude_b64(amp_grid)
-            twt_b64   = _b64.b64encode(twt_grid.tobytes()).decode()
-            twt_rows, twt_cols = twt_grid.shape
-
-            all_confs_flat = np.concatenate(file_confs)
-            conf_pct, depth_acc_in, sig_quality = compute_confidence_metrics(
-                all_confs_flat, amp_grid, frequency_mhz
-            )
-            del depth_grid, amp_grid, twt_grid, all_confs_flat
-            print(f"[job:{job_id}] Extra grids rendered. Confidence={conf_pct:.1f}%", flush=True)
-        except Exception as exc:
-            print(f"[job:{job_id}] Extra grids failed: {exc}", flush=True)
-
-        elapsed = round(time.perf_counter() - t0, 3)
-
-        result = {
-            "signals_analyzed":    total_sigs,
-            "delamination_pct":    delam_pct_total,
-            "sound_pct":           sound_pct_total,
-            "analysis_time_sec":   elapsed,
-            "cscan_image":         cscan_b64,
-            "per_file_summary":    per_file_summary,
-            # new fields
-            "rebar_depth_image":   rebar_b64,
-            "amplitude_image":     amp_b64,
-            "prob_grid":           prob_b64,
-            "prob_grid_rows":      pg_rows,
-            "prob_grid_cols":      pg_cols,
-            "otsu_threshold":      round(float(otsu_T), 4),
-            "twt_grid":            twt_b64,
-            "twt_grid_rows":       twt_rows,
-            "twt_grid_cols":       twt_cols,
-            "frequency_mhz":       frequency_mhz,
-            "model_confidence_pct": conf_pct,
-            "depth_accuracy_in":   depth_acc_in,
-            "signal_quality":      sig_quality,
-        }
-
-        # ── Supabase: upload C-scan PNG + write DB row ────────────────────────
-        cscan_url: Optional[str] = None
-        if _supabase and cscan_b64:
-            try:
-                import base64
-                png_bytes = base64.b64decode(cscan_b64)
-                uid = user_id or "anonymous"
-                storage_path = f"{uid}/{job_id}.png"
-                _supabase.storage.from_("cscan-images").upload(
-                    storage_path,
-                    png_bytes,
-                    {"content-type": "image/png"},
-                )
-                cscan_url = _supabase.storage.from_("cscan-images").get_public_url(storage_path)
-                print(f"[job:{job_id}] C-scan uploaded to storage: {storage_path}", flush=True)
-            except Exception as exc:
-                print(f"[job:{job_id}] Storage upload failed: {exc}", flush=True)
-
-        if _supabase:
-            try:
-                row = {
-                    "id":               job_id,
-                    "user_id":          user_id,
-                    "status":           "complete",
-                    "signals_analyzed": total_sigs,
-                    "delamination_pct": delam_pct_total,
-                    "sound_pct":        sound_pct_total,
-                    "analysis_time_sec": elapsed,
-                    "cscan_url":        cscan_url,
-                    "per_file_summary": per_file_summary,
-                    "file_names":       file_names,
-                    "completed_at":     "now()",
-                }
-                _supabase.table("analysis_jobs").upsert(row).execute()
-                print(f"[job:{job_id}] DB row written", flush=True)
-            except Exception as exc:
-                print(f"[job:{job_id}] DB write failed: {exc}", flush=True)
-
-        _jobs[job_id].update({
-            "status":     "complete",
-            "result":     result,
-            "cscan_url":  cscan_url,
-            "completed_at": time.time(),
-        })
-        print(f"[job:{job_id}] Done in {elapsed}s", flush=True)
-
-    except Exception as exc:
-        print(f"[job:{job_id}] FAILED: {exc}", flush=True)
-        err_msg = str(exc)
-
-        if _supabase:
-            try:
-                _supabase.table("analysis_jobs").upsert({
-                    "id":          job_id,
-                    "user_id":     user_id,
-                    "status":      "failed",
-                    "error_msg":   err_msg,
-                    "completed_at": "now()",
-                }).execute()
-            except Exception:
-                pass
-
-        _jobs[job_id].update({
-            "status":    "failed",
-            "error":     err_msg,
-            "completed_at": time.time(),
-        })
-
-    finally:
-        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -472,15 +127,6 @@ def health() -> dict:
     }
 
 
-@app.get("/formats")
-def formats() -> dict:
-    return {
-        "supported_extensions": sorted(SUPPORTED_EXTENSIONS),
-        "companion_extensions":  sorted(COMPANION_EXTENSIONS),
-        "formats":               FORMAT_INFO,
-    }
-
-
 @app.get("/memory")
 def memory() -> dict:
     vm = psutil.virtual_memory()
@@ -492,6 +138,15 @@ def memory() -> dict:
     }
 
 
+@app.get("/formats")
+def formats() -> dict:
+    return {
+        "supported_extensions": sorted(SUPPORTED_EXTENSIONS),
+        "companion_extensions":  sorted(COMPANION_EXTENSIONS),
+        "formats":               FORMAT_INFO,
+    }
+
+
 @app.post("/analyze")
 async def analyze(
     files:         list[UploadFile] = File(...),
@@ -500,17 +155,13 @@ async def analyze(
     project_id:    Optional[str]    = Form(None),
     user_id:       Optional[str]    = Depends(verify_token),
 ) -> JSONResponse:
-    """
-    Accepts file uploads, queues a background inference job, returns {job_id}
-    immediately so the frontend can poll GET /job/{job_id}.
-    """
+    """Accept uploads, queue a background job, return {job_id} immediately."""
     print(f"[analyze] {len(files)} file(s), manufacturer={manufacturer!r}, "
           f"freq={frequency_mhz} MHz, user_id={user_id}", flush=True)
 
     if not files:
         raise HTTPException(status_code=400, detail="No files uploaded.")
 
-    # Read all file bytes while still in the async request context
     file_data: list[tuple[str, bytes]] = []
     total_bytes = 0
     for i, upload in enumerate(files):
@@ -532,7 +183,6 @@ async def analyze(
         file_data.append((fname, content))
         del content
 
-    # Create job + tmpdir
     job_id = str(uuid.uuid4())
     tmpdir = Path(tempfile.mkdtemp(prefix=f"verus_{job_id}_"))
 
@@ -542,7 +192,6 @@ async def analyze(
         "created_at": time.time(),
     }
 
-    # Write initial DB row so the frontend sees it in history immediately
     if _supabase:
         try:
             _supabase.table("analysis_jobs").insert({
@@ -553,9 +202,11 @@ async def analyze(
         except Exception as exc:
             print(f"[analyze] DB insert failed: {exc}", flush=True)
 
-    # Submit to thread pool (tmpdir cleaned up inside run_analysis_job)
-    _executor.submit(run_analysis_job, job_id, file_data, user_id, tmpdir,
-                     manufacturer, frequency_mhz)
+    _executor.submit(
+        run_analysis_job,
+        job_id, file_data, user_id, tmpdir,
+        manufacturer, frequency_mhz, _model, _supabase,
+    )
     print(f"[analyze] Queued job {job_id}", flush=True)
 
     return JSONResponse({"job_id": job_id, "status": "pending"})
@@ -569,7 +220,6 @@ def get_job(
     """Poll job status. Returns status + result when complete."""
     job = _jobs.get(job_id)
     if job is None:
-        # Fall back to Supabase if job was processed by another instance
         if _supabase:
             try:
                 row = _supabase.table("analysis_jobs") \
@@ -579,7 +229,6 @@ def get_job(
             except Exception:
                 pass
         raise HTTPException(status_code=404, detail="Job not found.")
-
     return JSONResponse(job)
 
 
