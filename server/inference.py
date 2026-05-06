@@ -43,10 +43,15 @@ def run_inference(
 
     cropped = signals[:, crop_start:crop_end]
 
+    if in_ch == 2:
+        envelope = np.abs(_hilbert(cropped, axis=1)).astype(np.float32)
+        dual     = np.stack([cropped, envelope], axis=1)  # (n, 2, n_crop)
+
     if not _infer_logged:
+        extra = f" → hilbert-stack={dual.shape}" if in_ch == 2 else ""
         print(
             f"[inference] preprocess: raw={signals.shape} "
-            f"→ crop[{crop_start}:{crop_end}]={cropped.shape} "
+            f"→ crop[{crop_start}:{crop_end}]={cropped.shape}{extra} "
             f"patch_k={patch_k} in_channels={in_ch}",
             flush=True,
         )
@@ -58,7 +63,9 @@ def run_inference(
         for start in range(0, len(cropped), INFER_BATCH):
             batch_np = cropped[start : start + INFER_BATCH]
             end      = start + len(batch_np)
-            if patch_k > 1:
+            if in_ch == 2:
+                batch_t = torch.tensor(dual[start:end], dtype=torch.float32)
+            elif patch_k > 1:
                 batch_t = _make_patch_batch(cropped, start, end, patch_k)
             else:
                 batch_t = torch.tensor(batch_np, dtype=torch.float32).unsqueeze(1)
