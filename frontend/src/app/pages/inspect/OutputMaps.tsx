@@ -77,7 +77,7 @@ export default function OutputMaps({
         <>
           <MapHeader
             title="C-Scan Condition Map"
-            subtitle={`ASTM D6087 · ${r.signals_analyzed.toLocaleString()} signals`}
+            subtitle={`ASTM D6087 · ${r.signals_analyzed != null ? r.signals_analyzed.toLocaleString() : '--'} signals`}
             badge={condBadge() ? { text: `Model Confidence: ${condBadge()!.text}`, color: condBadge()!.color } : null}
             onExport={onExport}
           />
@@ -93,14 +93,14 @@ export default function OutputMaps({
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
             {[
-              { label: 'Signals Analyzed', value: r.signals_analyzed.toLocaleString() },
-              { label: 'Delamination', value: `${r.delamination_pct.toFixed(1)}%`, hi: true },
-              { label: 'Sound', value: `${r.sound_pct.toFixed(1)}%` },
-              { label: 'Analysis Time', value: `${r.analysis_time_sec.toFixed(1)}s` },
+              { label: 'Signals Analyzed', value: r.signals_analyzed != null ? r.signals_analyzed.toLocaleString() : '--' },
+              { label: 'Delamination', value: r.delamination_pct != null ? `${r.delamination_pct.toFixed(1)}%` : '--', hi: true },
+              { label: 'Sound', value: r.sound_pct != null ? `${r.sound_pct.toFixed(1)}%` : '--' },
+              { label: 'Analysis Time', value: r.analysis_time_sec != null ? `${r.analysis_time_sec.toFixed(1)}s` : '--' },
             ].map(({ label, value, hi }) => (
               <div key={label} style={{ background: RAISED, border: `1px solid ${BORDER}`, padding: '14px 16px' }}>
                 <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: TEXT2, marginBottom: 6 }}>{label}</div>
-                <div style={{ fontSize: 22, fontWeight: 700, color: hi ? delamColor(r.delamination_pct) : TEXT }}>{value}</div>
+                <div style={{ fontSize: 22, fontWeight: 700, color: hi ? delamColor(r.delamination_pct ?? 0) : TEXT }}>{value}</div>
               </div>
             ))}
           </div>

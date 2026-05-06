@@ -519,11 +519,11 @@ export default function GPRWorkspace() {
     ? MANUFACTURER_EXTS[manufacturer]
     : '.csv,.dzt,.DZT,.dt1,.DT1,.rd3,.rd7,.segy,.sgy,.dzg,.hd,.rad,.dt,.gec,.iprb,.iprh';
 
-  const condBadge  = () => hasResult && analysisResult!.model_confidence_pct !== undefined
+  const condBadge  = () => hasResult && analysisResult!.model_confidence_pct != null
     ? { text: `${analysisResult!.model_confidence_pct.toFixed(0)}%`, color: badgeColor(analysisResult!.model_confidence_pct >= 80, analysisResult!.model_confidence_pct >= 60) }
     : null;
-  const depthBadge = () => hasResult && analysisResult!.depth_accuracy_in !== undefined
-    ? { text: `±${analysisResult!.depth_accuracy_in}"`, color: badgeColor(analysisResult!.depth_accuracy_in <= 0.25, analysisResult!.depth_accuracy_in <= 0.5) }
+  const depthBadge = () => hasResult && analysisResult!.depth_accuracy_in != null
+    ? { text: `±${analysisResult!.depth_accuracy_in.toFixed(2)}"`, color: badgeColor(analysisResult!.depth_accuracy_in <= 0.25, analysisResult!.depth_accuracy_in <= 0.5) }
     : null;
   const ampBadge   = () => hasResult && analysisResult!.signal_quality
     ? { text: analysisResult!.signal_quality!, color: badgeColor(analysisResult!.signal_quality === 'Good', analysisResult!.signal_quality === 'Fair') }
@@ -836,15 +836,15 @@ export default function GPRWorkspace() {
                                   onMouseLeave={e => { if (selectedFileIdx !== i) e.currentTarget.style.background='none'; }}>
                                   <div style={{ fontSize: 11, color: TEXT, marginBottom: 4, fontFamily: 'monospace', wordBreak: 'break-all' }}>{f.filename}</div>
                                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-                                    <span style={{ fontSize: 10, color: TEXT2 }}>{f.signals.toLocaleString()} signals</span>
+                                    <span style={{ fontSize: 10, color: TEXT2 }}>{f.signals != null ? f.signals.toLocaleString() : '--'} signals</span>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                                       <div style={{ width: 40, height: 4, background: '#E2DED9', borderRadius: 2, overflow: 'hidden' }}>
-                                        <div style={{ height: '100%', width: `${f.delam_pct}%`, background: delamColor(f.delam_pct), borderRadius: 2 }} />
+                                        <div style={{ height: '100%', width: `${f.delam_pct ?? 0}%`, background: delamColor(f.delam_pct ?? 0), borderRadius: 2 }} />
                                       </div>
-                                      <span style={{ fontSize: 10, color: delamColor(f.delam_pct), fontWeight: 700, minWidth: 32, textAlign: 'right' }}>{f.delam_pct.toFixed(1)}%</span>
+                                      <span style={{ fontSize: 10, color: delamColor(f.delam_pct ?? 0), fontWeight: 700, minWidth: 32, textAlign: 'right' }}>{f.delam_pct != null ? f.delam_pct.toFixed(1) : '--'}%</span>
                                     </div>
                                   </div>
-                                  {f.rebar_depth_mean !== undefined && (
+                                  {f.rebar_depth_mean != null && (
                                     <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 3, fontSize: 10 }}>
                                       <span style={{ color: TEXT2 }}>Avg Depth</span>
                                       <span style={{ color: TEXT, fontWeight: 700 }}>{f.rebar_depth_mean.toFixed(2)}"</span>
@@ -936,10 +936,10 @@ export default function GPRWorkspace() {
                             <div style={{ background: RAISED, padding: '12px' }}>
                               <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: TEXT2, marginBottom: 10 }}>Summary</div>
                               {[
-                                { label: 'Signals',       value: analysisResult!.signals_analyzed.toLocaleString() },
-                                { label: 'Delamination',  value: `${analysisResult!.delamination_pct.toFixed(1)}%`, color: delamColor(analysisResult!.delamination_pct) },
-                                { label: 'Sound',         value: `${analysisResult!.sound_pct.toFixed(1)}%` },
-                                { label: 'Analysis time', value: `${analysisResult!.analysis_time_sec.toFixed(1)}s` },
+                                { label: 'Signals',       value: analysisResult!.signals_analyzed != null ? analysisResult!.signals_analyzed.toLocaleString() : '--' },
+                                { label: 'Delamination',  value: analysisResult!.delamination_pct != null ? `${analysisResult!.delamination_pct.toFixed(1)}%` : '--', color: delamColor(analysisResult!.delamination_pct ?? 0) },
+                                { label: 'Sound',         value: analysisResult!.sound_pct != null ? `${analysisResult!.sound_pct.toFixed(1)}%` : '--' },
+                                { label: 'Analysis time', value: analysisResult!.analysis_time_sec != null ? `${analysisResult!.analysis_time_sec.toFixed(1)}s` : '--' },
                               ].map(({ label, value, color }) => (
                                 <div key={label} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontSize: 11 }}>
                                   <span style={{ color: TEXT2 }}>{label}</span>
