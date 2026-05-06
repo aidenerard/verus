@@ -411,6 +411,21 @@ if MODEL_PATH.exists():
     m2 = evaluate(model, eval_dl, threshold=best_t)
     print_metrics(m2, label=f"EVALUATION — threshold={best_t:.2f} (val-selected)")
 
+    import json
+    config = {
+        "in_channels": 2,
+        "conv_channels": [32, 128, 128],
+        "head_hidden": 128,
+        "patch_k": 1,
+        "n_samples": N_SAMPLES,
+        "crop_start": CROP_START,
+        "crop_end": CROP_END,
+        "threshold": float(best_t),
+    }
+    with open("/kaggle/working/model_config.json", "w") as f:
+        json.dump(config, f, indent=2)
+    print(f"Config saved: {config}", flush=True)
+
 
 # ═══ Training branch ══════════════════════════════════════════════════════════
 
@@ -530,8 +545,6 @@ else:
             break
 
     model.load_state_dict(best_state)
-    torch.save(model.state_dict(), MODEL_PATH)
-    print(f"\nModel saved → {MODEL_PATH}", flush=True)
 
     # ── Final evaluation ───────────────────────────────────────────────────────
 
@@ -539,6 +552,9 @@ else:
     m_val  = evaluate(model, val_dl, threshold=0.5)
     best_t = select_threshold(m_val['y_true'], m_val['y_prob'],
                               label="Val-set threshold sweep")
+
+    torch.save(model.state_dict(), MODEL_PATH)
+    print(f"\nModel saved → {MODEL_PATH}", flush=True)
 
     import json
     config = {
@@ -553,7 +569,7 @@ else:
     }
     with open("/kaggle/working/model_config.json", "w") as f:
         json.dump(config, f, indent=2)
-    print(f"Config saved: {config}")
+    print(f"Config saved: {config}", flush=True)
 
     # 2. Report test set at default and selected thresholds
     m_t50 = evaluate(model, test_dl, threshold=0.5)
