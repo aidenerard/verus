@@ -57,6 +57,8 @@ def run_analysis_job(
     rebar_model,
     model_config: Optional[dict],
     supabase_client,
+    structure_name: str = "Bridge Deck",
+    swath_spacing_ft: float = 1.0,
 ) -> None:
     """
     Runs in a ThreadPoolExecutor worker thread.
@@ -168,7 +170,11 @@ def run_analysis_job(
         # ── Render images and build extra grids ──────────────────────────────
         gc.collect()
         try:
-            cscan_b64 = render_cscan_b64(file_preds, file_confs, file_names)
+            cscan_b64 = render_cscan_b64(
+                file_preds, file_confs, file_names,
+                swath_spacing_ft=swath_spacing_ft,
+                structure_name=structure_name,
+            )
             print(f"[job:{job_id}] C-scan rendered ({len(cscan_b64)//1024} KB b64)", flush=True)
         except Exception as exc:
             print(f"[job:{job_id}] C-scan render failed: {exc}", flush=True)
@@ -188,7 +194,32 @@ def run_analysis_job(
         rebar_twt_grid_j:   list = []
         try:
             rebar_dg, rebar_tg = build_rebar_grids(rebar_depth_arrs, rebar_twt_arrs)
-            rebar_cscan_b64    = render_rebar_cscan_b64(rebar_dg, frequency_mhz, rebar_model is not None)
+
+            # Estimate along-track scale from GPS if available; fallback to 1.0 ft/col
+            along_track_ft_per_col = 1.0
+            try:
+                from math import radians, cos, sin, sqrt, atan2
+                total_ft = 0.0
+                for _f in per_file_summary:
+                    _gps = _f.get('gps')
+                    if _gps and len(_gps.get('coordinates', [])) >= 2:
+                        _c = _gps['coordinates']
+                        lat1, lon1 = radians(_c[0][0]), radians(_c[0][1])
+                        lat2, lon2 = radians(_c[-1][0]), radians(_c[-1][1])
+                        dlat, dlon = lat2 - lat1, lon2 - lon1
+                        a = sin(dlat/2)**2 + cos(lat1)*cos(lat2)*sin(dlon/2)**2
+                        total_ft += 2 * 6_371_000 * atan2(sqrt(a), sqrt(1-a)) * 3.28084
+                if total_ft > 0 and rebar_dg.shape[1] > 0:
+                    along_track_ft_per_col = total_ft / rebar_dg.shape[1]
+            except Exception:
+                pass
+
+            rebar_cscan_b64 = render_rebar_cscan_b64(
+                rebar_dg,
+                swath_spacing_ft=swath_spacing_ft,
+                along_track_ft_per_col=along_track_ft_per_col,
+                structure_name=structure_name,
+            )
             rebar_depth_grid_j = grid_to_list(rebar_dg)
             rebar_twt_grid_j   = grid_to_list(rebar_tg)
             del rebar_dg, rebar_tg
