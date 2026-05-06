@@ -124,6 +124,8 @@ def _load_model_background() -> None:
         print(f"[startup] ERROR: Model still missing after download: {MODEL_PATH}", flush=True)
         return
 
+    print(f"[startup] model.pth size: {MODEL_PATH.stat().st_size:,} bytes", flush=True)
+
     # Try downloading model_config.json if available
     cfg_url = os.environ.get("MODEL_CONFIG_GDRIVE_URL")
     if cfg_url and not MODEL_CONFIG_PATH.exists():
@@ -137,11 +139,14 @@ def _load_model_background() -> None:
         try:
             import json
             loaded_cfg = json.loads(MODEL_CONFIG_PATH.read_text())
+            print(f"[startup] Config contents: {loaded_cfg}", flush=True)
         except Exception as exc:
             print(f"[startup] WARNING: model_config.json parse failed: {exc}", flush=True)
 
-    for cfg in ([loaded_cfg] if loaded_cfg else _FALLBACK_CONFIGS):
+    configs_to_try = [loaded_cfg] if loaded_cfg else _FALLBACK_CONFIGS
+    for cfg in configs_to_try:
         arch = {k: cfg[k] for k in ("in_channels", "conv_channels", "head_hidden") if k in cfg}
+        print(f"[startup] Trying arch: {arch}", flush=True)
         try:
             m = CNN1D(**arch).to(DEVICE)
             m.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE, weights_only=False))
@@ -150,8 +155,8 @@ def _load_model_background() -> None:
             _model, _model_config = m, cfg
             print(f"[startup] Model loaded ({n_p:,} params) with config: {arch}", flush=True)
             break
-        except Exception:
-            continue
+        except Exception as exc:
+            print(f"[startup] Arch {arch} failed: {exc}", flush=True)
     if _model is None:
         print("[startup] ERROR: all model configs failed to load weights.", flush=True)
 
