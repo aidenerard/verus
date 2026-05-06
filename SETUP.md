@@ -9,18 +9,18 @@
 
 ---
 
-## 2. Run the database migration
+## 2. Run the database migrations
 
-Open **SQL Editor** in your Supabase dashboard and paste the contents of:
+Open **SQL Editor** in your Supabase dashboard and run each migration **in order**:
 
-```
-supabase/migrations/001_initial.sql
-```
+| File | What it creates |
+|---|---|
+| `supabase/migrations/001_initial.sql` | `profiles` table, auth trigger, RLS policies; `analysis_jobs` table |
+| `supabase/migrations/002_projects.sql` | `projects` table with `manufacturer`, `frequency_mhz`, `name`, `structure_name`; links `analysis_jobs.project_id` |
+| `supabase/migrations/003_result_fields.sql` | Extra result columns on `analysis_jobs` (rebar, amplitude, grids, confidence metrics) |
+| `supabase/migrations/004_project_equipment.sql` | Safety net: `add column if not exists` for all equipment fields + `inspection_method` on `projects` |
 
-This creates:
-- `profiles` table (auto-populated on signup via trigger)
-- `analysis_jobs` table (one row per analysis run)
-- Row-level security policies so users only see their own rows
+All migrations are idempotent (`if not exists`) — safe to re-run.
 
 ---
 

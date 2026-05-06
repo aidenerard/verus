@@ -454,27 +454,37 @@ export default function GPRWorkspace() {
   const completeSetup = useCallback(async () => {
     const effectiveFreq = useCustomFreq ? (parseInt(customFreq) || 1600) : frequencyMhz;
     if (session?.user?.id) {
+      const payload = {
+        name: projectName, structure_name: structureName,
+        bridge_id: bridgeId || null, inspection_date: inspDate,
+        notes: notes || null, manufacturer: manufacturer || null,
+        frequency_mhz: effectiveFreq, inspection_method: 'GPR',
+        updated_at: new Date().toISOString(),
+      };
       try {
         if (projectId) {
-          await supabase.from('projects').update({
-            name: projectName, structure_name: structureName,
-            bridge_id: bridgeId || null, inspection_date: inspDate,
-            notes: notes || null, manufacturer: manufacturer || null,
-            frequency_mhz: effectiveFreq,
-          }).eq('id', projectId);
+          const { data, error } = await supabase.from('projects')
+            .update(payload).eq('id', projectId).select().single();
+          if (error) console.error('[setup] projects update failed:', error);
+          else console.log('[setup] projects updated:', data);
         } else {
-          const { data } = await supabase.from('projects').insert({
-            user_id: session.user.id, name: projectName,
-            structure_name: structureName, bridge_id: bridgeId || null,
-            inspection_date: inspDate, notes: notes || null,
-            manufacturer: manufacturer || null, frequency_mhz: effectiveFreq,
-          }).select('id').single();
-          if (data?.id) {
-            setProjectId(data.id);
-            localStorage.setItem('verus_project_id', data.id);
+          const { data, error } = await supabase.from('projects')
+            .insert({ user_id: session.user.id, ...payload }).select('id').single();
+          if (error) {
+            console.error('[setup] projects insert failed:', error);
+          } else {
+            console.log('[setup] projects inserted:', data);
+            if (data?.id) {
+              setProjectId(data.id);
+              localStorage.setItem('verus_project_id', data.id);
+            }
           }
         }
-      } catch { /* non-fatal */ }
+      } catch (err) {
+        console.error('[setup] unexpected error:', err);
+      }
+    } else {
+      console.warn('[setup] no session — skipping Supabase write');
     }
     setDielectricEr(DEFAULT_ER[effectiveFreq] ?? 6);
     setSetupDone(true);
