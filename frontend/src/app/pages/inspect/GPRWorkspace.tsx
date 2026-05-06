@@ -7,7 +7,7 @@ import 'mapbox-gl/dist/mapbox-gl.css';
 import {
   ArrowLeft, Eye, EyeOff, Plus, ChevronDown, ChevronLeft, ChevronRight,
   Layers, Download, X, FolderOpen, Loader2, Check, AlertCircle,
-  Maximize2, Minimize2, Radio, Settings,
+  Maximize2, Minimize2, Radio, Settings, Pencil,
 } from 'lucide-react';
 
 import ThreeDView from '../../components/ThreeDView';
@@ -34,6 +34,7 @@ export default function GPRWorkspace() {
   const { session } = useAuth();
 
   // ── Setup ─────────────────────────────────────────────────────────────────────
+  const [setupChecking,  setSetupChecking]  = useState(() => !!localStorage.getItem('verus_project_id'));
   const [setupDone,      setSetupDone]      = useState(false);
   const [setupStep,      setSetupStep]      = useState<1|2|3>(1);
   const [manufacturer,   setManufacturer]   = useState<ManufacturerKey | ''>('');
@@ -96,20 +97,28 @@ export default function GPRWorkspace() {
   const rightPanelRef   = useRef<ImperativePanelHandle>(null);
   const bottomPanelRef  = useRef<ImperativePanelHandle>(null);
 
-  // ── Restore setup from localStorage ──────────────────────────────────────────
+  // ── Restore setup from Supabase (keyed by project_id in localStorage) ────────
   useEffect(() => {
-    const pid  = localStorage.getItem('verus_project_id');
-    const mfr  = localStorage.getItem('verus_manufacturer') as ManufacturerKey | null;
-    const freq = parseInt(localStorage.getItem('verus_frequency_mhz') || '1600');
-    const pn   = localStorage.getItem('verus_project_name');
-    const sn   = localStorage.getItem('verus_structure_name');
-    if (pid && mfr) {
-      setProjectId(pid); setManufacturer(mfr); setFrequencyMhz(freq);
-      setDielectricEr(DEFAULT_ER[freq] ?? 6);
-      if (pn) setProjectName(pn);
-      if (sn) setStructureName(sn);
-      setSetupDone(true);
-    }
+    const pid = localStorage.getItem('verus_project_id');
+    if (!pid) { setSetupChecking(false); return; }
+    supabase.from('projects').select('*').eq('id', pid).single()
+      .then(({ data }) => {
+        if (data?.manufacturer) {
+          const freq = data.frequency_mhz ?? 1600;
+          setProjectId(data.id);
+          setManufacturer(data.manufacturer as ManufacturerKey);
+          setFrequencyMhz(freq);
+          setDielectricEr(DEFAULT_ER[freq] ?? 6);
+          if (data.name)             setProjectName(data.name);
+          if (data.structure_name)   setStructureName(data.structure_name);
+          if (data.bridge_id)        setBridgeId(data.bridge_id);
+          if (data.inspection_date)  setInspDate(data.inspection_date);
+          if (data.notes)            setNotes(data.notes);
+          setSetupDone(true);
+        }
+        setSetupChecking(false);
+      })
+      .catch(() => setSetupChecking(false));
   }, []);
 
   useEffect(() => { setDielectricEr(DEFAULT_ER[frequencyMhz] ?? 6); }, [frequencyMhz]);
@@ -353,29 +362,35 @@ export default function GPRWorkspace() {
   // ── Setup completion ──────────────────────────────────────────────────────────
   const completeSetup = useCallback(async () => {
     const effectiveFreq = useCustomFreq ? (parseInt(customFreq) || 1600) : frequencyMhz;
-    localStorage.setItem('verus_manufacturer',    manufacturer);
-    localStorage.setItem('verus_frequency_mhz',   String(effectiveFreq));
-    localStorage.setItem('verus_project_name',     projectName);
-    localStorage.setItem('verus_structure_name',   structureName);
-
     if (session?.user?.id) {
       try {
-        const { data } = await supabase.from('projects').insert({
-          user_id:         session.user.id, name: projectName,
-          structure_name:  structureName,   bridge_id: bridgeId || null,
-          inspection_date: inspDate,        notes: notes || null,
-          manufacturer:    manufacturer || null, frequency_mhz: effectiveFreq,
-        }).select('id').single();
-        if (data?.id) { setProjectId(data.id); localStorage.setItem('verus_project_id', data.id); }
+        if (projectId) {
+          await supabase.from('projects').update({
+            name: projectName, structure_name: structureName,
+            bridge_id: bridgeId || null, inspection_date: inspDate,
+            notes: notes || null, manufacturer: manufacturer || null,
+            frequency_mhz: effectiveFreq,
+          }).eq('id', projectId);
+        } else {
+          const { data } = await supabase.from('projects').insert({
+            user_id: session.user.id, name: projectName,
+            structure_name: structureName, bridge_id: bridgeId || null,
+            inspection_date: inspDate, notes: notes || null,
+            manufacturer: manufacturer || null, frequency_mhz: effectiveFreq,
+          }).select('id').single();
+          if (data?.id) {
+            setProjectId(data.id);
+            localStorage.setItem('verus_project_id', data.id);
+          }
+        }
       } catch { /* non-fatal */ }
     }
     setDielectricEr(DEFAULT_ER[effectiveFreq] ?? 6);
     setSetupDone(true);
-  }, [manufacturer, frequencyMhz, useCustomFreq, customFreq, structureName, projectName, bridgeId, inspDate, notes, session]);
+  }, [manufacturer, frequencyMhz, useCustomFreq, customFreq, structureName, projectName, bridgeId, inspDate, notes, session, projectId]);
 
   const newProject = useCallback(() => {
     localStorage.removeItem('verus_project_id');
-    localStorage.removeItem('verus_manufacturer');
     setManufacturer(''); setFrequencyMhz(1600); setProjectId(null);
     setSetupDone(false); setSetupStep(1);
     setFiles([]); setJobStatus('idle'); setAnalysisResult(null); setErrorMsg(null);
@@ -453,7 +468,7 @@ export default function GPRWorkspace() {
       <input ref={fileInputRef} type="file" multiple accept={fileAccept}
         onChange={onFileInput} style={{ display: 'none' }} />
 
-      {!setupDone && (
+      {!setupDone && !setupChecking && (
         <SetupWizard
           setupStep={setupStep} setSetupStep={setSetupStep}
           manufacturer={manufacturer} setManufacturer={setManufacturer}
@@ -521,11 +536,18 @@ export default function GPRWorkspace() {
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, justifyContent: 'flex-end', position: 'relative' }}>
           {setupDone && (
-            <button onClick={newProject}
-              style={{ padding: '6px 12px', background: 'none', border: `1px solid ${BORDER}`, color: TEXT2, fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'Inter, sans-serif', borderRadius: 4, display: 'flex', alignItems: 'center', gap: 5 }}
-              onMouseEnter={e => (e.currentTarget.style.background = RAISED)}
-              onMouseLeave={e => (e.currentTarget.style.background = 'none')}
-            ><Settings size={12} /> New Project</button>
+            <>
+              <button onClick={() => { setSetupDone(false); setSetupStep(1); }}
+                style={{ padding: '6px 12px', background: 'none', border: `1px solid ${BORDER}`, color: TEXT2, fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'Inter, sans-serif', borderRadius: 4, display: 'flex', alignItems: 'center', gap: 5 }}
+                onMouseEnter={e => (e.currentTarget.style.background = RAISED)}
+                onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+              ><Pencil size={12} /> Edit Equipment</button>
+              <button onClick={newProject}
+                style={{ padding: '6px 12px', background: 'none', border: `1px solid ${BORDER}`, color: TEXT2, fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'Inter, sans-serif', borderRadius: 4, display: 'flex', alignItems: 'center', gap: 5 }}
+                onMouseEnter={e => (e.currentTarget.style.background = RAISED)}
+                onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+              ><Settings size={12} /> New Project</button>
+            </>
           )}
           <div style={{ position: 'relative' }}>
             <button onClick={() => setShowExportMenu(v => !v)}
@@ -730,6 +752,12 @@ export default function GPRWorkspace() {
                                       <span style={{ fontSize: 10, color: delamColor(f.delam_pct), fontWeight: 700, minWidth: 32, textAlign: 'right' }}>{f.delam_pct.toFixed(1)}%</span>
                                     </div>
                                   </div>
+                                  {f.rebar_depth_mean !== undefined && (
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 3, fontSize: 10 }}>
+                                      <span style={{ color: TEXT2 }}>Avg Depth</span>
+                                      <span style={{ color: TEXT, fontWeight: 700 }}>{f.rebar_depth_mean.toFixed(2)}"</span>
+                                    </div>
+                                  )}
                                 </div>
                               )) : <div style={{ padding: '24px 14px', textAlign: 'center' }}><p style={{ fontSize: 12, color: TEXT2 }}>No files analyzed yet.</p></div>}
                             </div>
