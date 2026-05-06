@@ -17,6 +17,8 @@ import matplotlib.colors as mcolors
 
 from grids import build_prob_grid
 
+_DEPTH_ACC_IN = {400: 1.0, 900: 0.5, 1600: 0.25, 2000: 0.25, 2600: 0.125}
+
 
 def _fig_to_b64(fig: plt.Figure, dpi: int) -> str:
     buf = io.BytesIO()
@@ -140,6 +142,61 @@ def render_amplitude_b64(amplitude_grid: np.ndarray, dpi: int = 100) -> str:
     _styled_hbar(fig, ax, cmap_obj, norm,
                  [0.0, 0.5, 1.0],
                  ['Low Amplitude (Deteriorated)', 'Boundary', 'High Amplitude (Sound)'])
+
+    return _fig_to_b64(fig, dpi)
+
+
+def render_rebar_cscan_b64(
+    depth_grid:    np.ndarray,
+    frequency_mhz: int  = 1600,
+    model_used:    bool = False,
+    dpi:           int  = 200,
+) -> str:
+    """
+    Landscape (20×4 in, 200 DPI) rebar depth map.
+    Blue = shallow (0.5"), red = deep (4"+).
+    """
+    cmap_obj = mcolors.LinearSegmentedColormap.from_list(
+        "rebar_cs", ['#2563EB', '#10B981', '#FBBF24', '#EF4444'], N=256,
+    )
+    cmap_obj.set_bad(color='#F0EFEC')
+
+    nan_mask = np.isnan(depth_grid)
+    norm     = mcolors.Normalize(vmin=0.5, vmax=4.0)
+    smooth   = gaussian_filter(
+        np.where(nan_mask, 2.25, depth_grid), sigma=(1.0, 2.0)
+    )
+    masked = np.ma.array(smooth, mask=nan_mask)
+
+    fig, ax = plt.subplots(figsize=(20, 4), facecolor='white')
+    fig.subplots_adjust(left=0.04, right=0.98, top=0.82, bottom=0.22)
+    ax.imshow(masked, cmap=cmap_obj, norm=norm, aspect='auto',
+              origin='upper', interpolation='bilinear')
+    ax.set_xlabel('Longitudinal Distance (ft)', fontsize=9, color='#555555', labelpad=6)
+    ax.set_ylabel('Lateral Distance (ft)',      fontsize=9, color='#555555', labelpad=6)
+    for spine in ax.spines.values():
+        spine.set_linewidth(0.8)
+        spine.set_color('#CCCCCC')
+    ax.tick_params(colors='#777777', length=3, width=0.6, labelsize=8)
+
+    cbar = fig.colorbar(
+        plt.cm.ScalarMappable(cmap=cmap_obj, norm=norm),
+        ax=ax, orientation='horizontal', pad=0.22, fraction=0.04, aspect=60,
+    )
+    cbar.set_ticks([0.5, 4.0])
+    cbar.set_ticklabels(['Shallow Cover (0.5")', 'Deep Cover (4")'], fontsize=8)
+    cbar.ax.tick_params(length=0)
+    cbar.outline.set_linewidth(0.5)
+    cbar.outline.set_edgecolor('#CCCCCC')
+
+    acc   = _DEPTH_ACC_IN.get(frequency_mhz, 0.5)
+    src   = 'AI Model' if model_used else 'Physics Estimate'
+    fig.text(0.02, 0.93,
+             f'Rebar Depth Map — estimated cover depth in inches [{src}]',
+             fontsize=9, fontweight='bold', va='top', color='#333333')
+    fig.text(0.98, 0.93,
+             f'±{acc}" accuracy at {frequency_mhz} MHz',
+             fontsize=8, va='top', ha='right', color='#777777')
 
     return _fig_to_b64(fig, dpi)
 

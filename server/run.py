@@ -15,20 +15,22 @@ CLI usage:
 # ── Re-exports (keep server.py imports working unchanged) ─────────────────────
 
 from model import (                                         # noqa: F401
-    CNN1D, TemporalAttention, THRESHOLD, DC_OFFSET,
-    N_SAMPLES, INFER_BATCH, DEVICE,
+    CNN1D, TemporalAttention, RebarDepthCNN,
+    THRESHOLD, DC_OFFSET, N_SAMPLES, INFER_BATCH, DEVICE,
 )
 from data import load_csv                                   # noqa: F401
 from inference import (                                     # noqa: F401
-    run_inference, make_predictions_list, extract_bscan_b64,
+    run_inference, run_rebar_inference,
+    make_predictions_list, extract_bscan_b64,
 )
 from grids import (                                         # noqa: F401
     MAX_GRID_ROWS, MAX_GRID_COLS,
     extract_peak_info, build_prob_grid, build_extra_grids,
+    build_rebar_grids, grid_to_list,
 )
 from render import (                                        # noqa: F401
     render_cscan_b64, render_rebar_depth_b64, render_amplitude_b64,
-    compute_confidence_metrics,
+    render_rebar_cscan_b64, compute_confidence_metrics,
 )
 
 # ── CLI ───────────────────────────────────────────────────────────────────────

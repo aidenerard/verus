@@ -9,6 +9,9 @@ from scipy.ndimage import zoom
 MAX_GRID_ROWS = 200
 MAX_GRID_COLS = 500
 
+_REBAR_MAX_ROWS = 100
+_REBAR_MAX_COLS = 512
+
 _FREQ_TIME_WINDOW_NS: dict[int, float] = {
     400:  40.0,
     900:  20.0,
@@ -166,3 +169,45 @@ def build_extra_grids(
         _fill_trailing_nan(g)
 
     return depth_grid, amp_grid, twt_grid
+
+
+def build_rebar_grids(
+    file_depth_arrs: list[np.ndarray],
+    file_twt_arrs:   list[np.ndarray],
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Stack per-file rebar depth and TWT arrays into 2D grids,
+    then downsample to ≤ _REBAR_MAX_ROWS × _REBAR_MAX_COLS.
+
+    Returns (depth_grid_in, twt_grid_ns) as float32, NaN for padding.
+    """
+    n_files  = len(file_depth_arrs)
+    max_sigs = max(len(a) for a in file_depth_arrs)
+
+    depth_g = np.full((n_files, max_sigs), np.nan, dtype=np.float32)
+    twt_g   = np.full((n_files, max_sigs), np.nan, dtype=np.float32)
+
+    for row, (d, t) in enumerate(zip(file_depth_arrs, file_twt_arrs)):
+        n = len(d)
+        depth_g[row, :n] = d
+        twt_g[row,   :n] = t
+
+    r, c = depth_g.shape
+    if r > _REBAR_MAX_ROWS:
+        idx    = np.linspace(0, r - 1, _REBAR_MAX_ROWS, dtype=int)
+        depth_g = depth_g[idx, :]
+        twt_g   = twt_g[idx, :]
+    if c > _REBAR_MAX_COLS:
+        idx    = np.linspace(0, c - 1, _REBAR_MAX_COLS, dtype=int)
+        depth_g = depth_g[:, idx]
+        twt_g   = twt_g[:, idx]
+
+    for g in (depth_g, twt_g):
+        _fill_trailing_nan(g)
+
+    return depth_g, twt_g
+
+
+def grid_to_list(arr: np.ndarray) -> list:
+    """Convert float32 grid (possibly with NaN) to nested Python list; NaN → None."""
+    return [[None if np.isnan(v) else round(float(v), 3) for v in row] for row in arr]
