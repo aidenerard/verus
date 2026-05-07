@@ -407,7 +407,7 @@ export default function GPRWorkspace() {
             if (Date.now() - t0 > 2000) setEstimatedSecs(prev => prev + 30);
           }
           if (h.ok) { const hj = await h.json(); if (hj.model_loaded) { serverReady = true; break; } setStatusMsg('Loading AI model…'); }
-        } catch {
+        } catch (_e) {
           if (!coldChecked) { coldChecked = true; if (Date.now() - t0 > 2000) setEstimatedSecs(prev => prev + 30); }
         }
         await new Promise(r => setTimeout(r, WAKE_INTERVAL_MS));
@@ -427,7 +427,7 @@ export default function GPRWorkspace() {
       });
       if (!res.ok) {
         let msg = `HTTP ${res.status}`;
-        try { const j = await res.json(); msg = j.detail || j.error || msg; } catch {}
+        try { const j = await res.json(); msg = j.detail || j.error || msg; } catch (_e) {}
         setErrorMsg(msg); setJobStatus('failed'); return;
       }
 
@@ -474,7 +474,7 @@ export default function GPRWorkspace() {
             clearInterval(pollRef.current!);
             setErrorMsg(s.error || 'Analysis failed'); setJobStatus('failed');
           }
-        } catch { /* poll silently */ }
+        } catch (_e) { /* poll silently */ }
       }, 1000);
     } catch (err) {
       clearInterval(statusCycleRef.current!);
