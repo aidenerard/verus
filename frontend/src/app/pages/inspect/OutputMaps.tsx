@@ -1,4 +1,4 @@
-import type { RefObject } from 'react';
+import { useEffect, useRef, type RefObject } from 'react';
 import { Download } from 'lucide-react';
 import { RAISED, BORDER, TEXT, TEXT2 } from './constants';
 import type { AnalysisResult, OutputTab } from './types';
@@ -24,6 +24,24 @@ export default function OutputMaps({
   condCanvasRef, rebarCanvasRef, ampCanvasRef,
   onExport, condBadge, depthBadge, ampBadge,
 }: Props) {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // ResizeObserver: log when container gains a real size (helps diagnose layout issues)
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const obs = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect;
+        if (width > 0 && height > 0) {
+          console.log('[OutputMaps] container sized:', Math.round(width), 'x', Math.round(height));
+        }
+      }
+    });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
+
   if (!hasResult) {
     return (
       <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -36,8 +54,18 @@ export default function OutputMaps({
   }
 
   const r = analysisResult!;
+
+  // Diagnostic: log grid data on each render so we can confirm it arrived
+  const pd = r.prob_grid_data;
+  console.log(
+    '[OutputMaps] prob_grid_data:',
+    pd ? `${pd.length} rows × ${pd[0]?.length ?? 0} cols, sample[0][0]=` + pd[0]?.[0] : 'missing',
+    '| prob_grid (b64):', r.prob_grid ? `${r.prob_grid.length} chars` : 'missing',
+  );
+
   const canvasStyle: React.CSSProperties = {
-    width: '100%', height: '100%', display: 'block', imageRendering: 'pixelated',
+    position: 'absolute', inset: 0, width: '100%', height: '100%',
+    display: 'block', imageRendering: 'pixelated',
   };
   const imgStyle: React.CSSProperties = {
     width: '100%', height: '100%', objectFit: 'contain', display: 'block',
@@ -74,14 +102,17 @@ export default function OutputMaps({
     return null;
   })();
 
-  // Canvas is used when we have JSON grid data (new) or base64 grid data (old)
-  const hasCondCanvas  = !!(r.prob_grid_data || r.prob_grid);
-  const hasRebarCanvas = !!(r.rebar_depth_grid);
-  const hasAmpCanvas   = !!(r.amplitude_grid_data);
+  // Canvas is used when we have valid JSON grid data (length > 0) or base64 grid data
+  const hasCondCanvas  = !!(
+    (r.prob_grid_data  && r.prob_grid_data.length  > 0) || r.prob_grid
+  );
+  const hasRebarCanvas = !!(r.rebar_depth_grid && r.rebar_depth_grid.length > 0);
+  const hasAmpCanvas   = !!(r.amplitude_grid_data && r.amplitude_grid_data.length > 0);
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <div style={{ flex: 1, position: 'relative', overflow: 'hidden', background: RAISED, minHeight: 0 }}>
+      {/* Main display area — canvases always mounted for stable refs */}
+      <div ref={containerRef} style={{ flex: 1, position: 'relative', overflow: 'hidden', background: RAISED, minHeight: 0 }}>
         {badge && (
           <div style={{ position: 'absolute', top: 10, right: 10, zIndex: 5, fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: badge.color + '20', color: badge.color, backdropFilter: 'blur(4px)' }}>
             {badge.text}
@@ -91,40 +122,46 @@ export default function OutputMaps({
           <Download size={11} /> Export
         </button>
 
-        {outputTab === 'condition' && (
-          hasCondCanvas
-            ? <canvas ref={condCanvasRef} style={canvasStyle} />
-            : r.cscan_url
-              ? <img src={r.cscan_url} alt="Condition map" style={imgStyle} />
-              : <div style={naStyle}>C-scan not available — re-run analysis.</div>
+        {/* ── Condition canvas — always mounted so ref is valid when effect fires ── */}
+        <canvas
+          ref={condCanvasRef}
+          style={{ ...canvasStyle, display: outputTab === 'condition' && hasCondCanvas ? 'block' : 'none' }}
+        />
+        {outputTab === 'condition' && !hasCondCanvas && (
+          r.cscan_url
+            ? <img src={r.cscan_url} alt="Condition map" style={imgStyle} />
+            : <div style={naStyle}>C-scan not available — re-run analysis.</div>
         )}
 
-        {outputTab === 'rebar_depth' && (
-          <>
-            {r.rebar_model_used !== undefined && (
-              <div style={{ position: 'absolute', top: 10, left: 10, zIndex: 5 }}>
-                <span style={{ fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: r.rebar_model_used ? '#22c55e20' : '#f59e0b20', color: r.rebar_model_used ? '#16a34a' : '#d97706' }}>
-                  {r.rebar_model_used ? 'AI Model' : 'Physics Estimate'}
-                </span>
-              </div>
-            )}
-            {hasRebarCanvas
-              ? <canvas ref={rebarCanvasRef} style={canvasStyle} />
-              : r.rebar_cscan_image_url
-                ? <img src={r.rebar_cscan_image_url} alt="Rebar depth map" style={imgStyle} />
-                : <div style={naStyle}>Rebar depth map not available — re-run analysis.</div>
-            }
-          </>
+        {/* ── Rebar depth canvas — always mounted ── */}
+        {outputTab === 'rebar_depth' && r.rebar_model_used !== undefined && (
+          <div style={{ position: 'absolute', top: 10, left: 10, zIndex: 5 }}>
+            <span style={{ fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: r.rebar_model_used ? '#22c55e20' : '#f59e0b20', color: r.rebar_model_used ? '#16a34a' : '#d97706' }}>
+              {r.rebar_model_used ? 'AI Model' : 'Physics Estimate'}
+            </span>
+          </div>
+        )}
+        <canvas
+          ref={rebarCanvasRef}
+          style={{ ...canvasStyle, display: outputTab === 'rebar_depth' && hasRebarCanvas ? 'block' : 'none' }}
+        />
+        {outputTab === 'rebar_depth' && !hasRebarCanvas && (
+          r.rebar_cscan_image_url
+            ? <img src={r.rebar_cscan_image_url} alt="Rebar depth map" style={imgStyle} />
+            : <div style={naStyle}>Rebar depth map not available — re-run analysis.</div>
         )}
 
-        {outputTab === 'amplitude' && (
-          hasAmpCanvas
-            ? <canvas ref={ampCanvasRef} style={canvasStyle} />
-            : r.amplitude_image_url
-              ? <img src={r.amplitude_image_url} alt="Amplitude map" style={imgStyle} />
-              : r.amplitude_image
-                ? <img src={`data:image/png;base64,${r.amplitude_image}`} alt="Amplitude map" style={imgStyle} />
-                : <div style={naStyle}>Amplitude map not available — re-run analysis.</div>
+        {/* ── Amplitude canvas — always mounted ── */}
+        <canvas
+          ref={ampCanvasRef}
+          style={{ ...canvasStyle, display: outputTab === 'amplitude' && hasAmpCanvas ? 'block' : 'none' }}
+        />
+        {outputTab === 'amplitude' && !hasAmpCanvas && (
+          r.amplitude_image_url
+            ? <img src={r.amplitude_image_url} alt="Amplitude map" style={imgStyle} />
+            : r.amplitude_image
+              ? <img src={`data:image/png;base64,${r.amplitude_image}`} alt="Amplitude map" style={imgStyle} />
+              : <div style={naStyle}>Amplitude map not available — re-run analysis.</div>
         )}
       </div>
 

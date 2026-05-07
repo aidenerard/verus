@@ -141,10 +141,25 @@ def run_analysis_job(
                 print(f"[job:{job_id}] load_csv failed for {fname}: {exc}", flush=True)
                 continue
 
-            print(f"[job:{job_id}]   → {signals.shape[0]} signals, running inference…", flush=True)
+            n_signals = signals.shape[0]
+            print(f"[job:{job_id}]   → {n_signals} signals, running inference…", flush=True)
+            _set_progress(job_id, 15 + round(65 * files_done / max(n_data_files, 1)),
+                          f"Preprocessing file {files_done + 1}/{max(n_data_files,1)}", supabase_client)
+
             bscan_info         = extract_bscan_b64(signals)
             peak_idx, peak_amp = extract_peak_info(signals)
-            preds, confs       = run_inference(model, signals, model_config=model_config)
+
+            file_prog_start = 15 + round(65 * files_done / max(n_data_files, 1))
+            file_prog_end   = 15 + round(65 * (files_done + 1) / max(n_data_files, 1))
+
+            def _infer_cb(processed: int, total: int) -> None:
+                t = processed / max(total, 1)
+                p = file_prog_start + round((file_prog_end - file_prog_start) * t)
+                _jobs[job_id]['progress'] = p
+                _jobs[job_id]['stage']    = "Running inference"
+
+            preds, confs       = run_inference(model, signals, model_config=model_config,
+                                               progress_callback=_infer_cb)
             depth_arr, twt_arr = run_rebar_inference(rebar_model, signals, frequency_mhz)
             del signals
             if csv_path != dest:
@@ -179,8 +194,7 @@ def run_analysis_job(
             })
             total_sigs += n
             files_done += 1
-            prog = 15 + round(65 * files_done / max(n_data_files, 1))
-            _set_progress(job_id, prog, f"Analyzing file {files_done}/{max(n_data_files,1)}", supabase_client)
+            _set_progress(job_id, file_prog_end, "Ingesting", supabase_client)
 
         if total_sigs == 0:
             raise ValueError("No valid GPR signals found in uploaded files.")

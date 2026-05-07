@@ -32,8 +32,8 @@ import AnalysisProgressOverlay from './AnalysisProgressOverlay';
 
 // TODO: refine after 20+ real jobs by comparing analysis_jobs.signals_analyzed
 // vs analysis_jobs.analysis_time_sec in Supabase.
-const SIGNALS_PER_SEC = 2000;
-const FIXED_OVERHEAD  = 25;  // seconds: ingest + convert + render + Supabase write
+const SIGNALS_PER_SEC = 65;
+const FIXED_OVERHEAD  = 8;   // seconds: ingest + convert + render + Supabase write
 const BYTES_PER_SIG   = 1000; // rough: ~1 KB per GPR trace in a DZT file
 
 export default function GPRWorkspace() {
@@ -319,31 +319,47 @@ export default function GPRWorkspace() {
 
   useEffect(() => { renderBscan(); }, [renderBscan]);
 
-  // ── Canvas renderers — always draw when data is available ────────────────────
+  // ── Canvas renderers — redraw when data, sliders, or active tab change ───────
   useEffect(() => {
-    if (!condCanvasRef.current || !analysisResult) return;
-    if (analysisResult.prob_grid_data) {
-      renderConditionGrid(condCanvasRef.current, analysisResult.prob_grid_data, detectionThreshold);
-    } else if (analysisResult.prob_grid) {
-      renderConditionToCanvas(condCanvasRef.current, decodeF32(analysisResult.prob_grid),
-        analysisResult.prob_grid_rows!, analysisResult.prob_grid_cols!, detectionThreshold);
-    }
-  }, [detectionThreshold, analysisResult]);
+    const canvas = condCanvasRef.current;
+    if (!canvas || !analysisResult) return;
+    console.log('[canvas:cond] ref OK, canvas px:', canvas.width, 'x', canvas.height);
+    const pgd = analysisResult.prob_grid_data;
+    try {
+      if (pgd && pgd.length > 0) {
+        console.log('[canvas:cond] rendering grid', pgd.length, 'x', pgd[0]?.length);
+        renderConditionGrid(canvas, pgd, detectionThreshold);
+      } else if (analysisResult.prob_grid) {
+        console.log('[canvas:cond] falling back to b64, rows/cols:', analysisResult.prob_grid_rows, analysisResult.prob_grid_cols);
+        renderConditionToCanvas(canvas, decodeF32(analysisResult.prob_grid),
+          analysisResult.prob_grid_rows!, analysisResult.prob_grid_cols!, detectionThreshold);
+      } else {
+        console.warn('[canvas:cond] no data available');
+      }
+    } catch (e) { console.error('[canvas:cond] render failed:', e); }
+  }, [detectionThreshold, analysisResult, outputTab]);
 
   useEffect(() => {
-    if (!rebarCanvasRef.current || !analysisResult) return;
-    if (analysisResult.rebar_depth_grid) {
-      renderRebarGrid(rebarCanvasRef.current, analysisResult.rebar_depth_grid);
-    } else if (analysisResult.twt_grid) {
-      renderDepthToCanvas(rebarCanvasRef.current, decodeF32(analysisResult.twt_grid),
-        analysisResult.twt_grid_rows!, analysisResult.twt_grid_cols!, dielectricEr);
-    }
-  }, [dielectricEr, analysisResult]);
+    const canvas = rebarCanvasRef.current;
+    if (!canvas || !analysisResult) return;
+    const rdg = analysisResult.rebar_depth_grid;
+    try {
+      if (rdg && rdg.length > 0) {
+        renderRebarGrid(canvas, rdg);
+      } else if (analysisResult.twt_grid) {
+        renderDepthToCanvas(canvas, decodeF32(analysisResult.twt_grid),
+          analysisResult.twt_grid_rows!, analysisResult.twt_grid_cols!, dielectricEr);
+      }
+    } catch (e) { console.error('[canvas:rebar] render failed:', e); }
+  }, [dielectricEr, analysisResult, outputTab]);
 
   useEffect(() => {
-    if (!ampCanvasRef.current || !analysisResult?.amplitude_grid_data) return;
-    renderAmpGrid(ampCanvasRef.current, analysisResult.amplitude_grid_data, ampClampMin, ampClampMax);
-  }, [ampClampMin, ampClampMax, analysisResult]);
+    const canvas = ampCanvasRef.current;
+    const agd = analysisResult?.amplitude_grid_data;
+    if (!canvas || !agd || agd.length === 0) return;
+    try { renderAmpGrid(canvas, agd, ampClampMin, ampClampMax); }
+    catch (e) { console.error('[canvas:amp] render failed:', e); }
+  }, [ampClampMin, ampClampMax, analysisResult, outputTab]);
 
   // ── File handling ─────────────────────────────────────────────────────────────
   const onFileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {

@@ -1,6 +1,8 @@
 data/
 media/
 frontend/dist/
+frontend/node_modules/
+node_modules/
 bscan_parts/
 scripts/
 verus-server/

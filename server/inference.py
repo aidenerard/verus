@@ -4,7 +4,7 @@ Batch inference + B-scan extraction + predictions helper.
 """
 
 import base64
-from typing import Optional
+from typing import Callable, Optional
 
 import numpy as np
 import torch
@@ -32,6 +32,7 @@ def run_inference(
     signals: np.ndarray,
     threshold: float = THRESHOLD,
     model_config: Optional[dict] = None,
+    progress_callback: Optional[Callable[[int, int], None]] = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     global _infer_logged
     cfg        = model_config or {}
@@ -77,6 +78,8 @@ def run_inference(
             out = model(batch_t.to(DEVICE)).sigmoid().cpu().numpy()
             probs_list.append(out)
             del batch_t, out
+            if progress_callback:
+                progress_callback(min(start + INFER_BATCH, len(cropped)), len(cropped))
 
     probs = np.concatenate(probs_list)
     preds = (probs >= threshold).astype(int)

@@ -21,6 +21,9 @@ export default function AnalysisProgressOverlay({
 }: Props) {
   const startRef = useRef(Date.now());
   const [elapsed, setElapsed] = useState(0);
+  const [displayedProgress, setDisplayedProgress] = useState(0);
+  const displayedRef = useRef(0);
+  const rafRef = useRef<number | null>(null);
 
   const isDone    = jobStatus === 'complete' || jobStatus === 'failed';
   const isSuccess = jobStatus === 'complete';
@@ -34,6 +37,33 @@ export default function AnalysisProgressOverlay({
     return () => clearInterval(iv);
   }, [isDone]);
 
+  // Smooth rAF interpolation: ease displayedProgress toward jobProgress
+  useEffect(() => {
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+
+    if (isDone) {
+      displayedRef.current = 100;
+      setDisplayedProgress(100);
+      return;
+    }
+
+    const animate = () => {
+      const curr   = displayedRef.current;
+      const target = jobProgress;
+      const next   = curr + (target - curr) * 0.08;
+      if (Math.abs(next - target) > 0.05) {
+        displayedRef.current = next;
+        setDisplayedProgress(next);
+        rafRef.current = requestAnimationFrame(animate);
+      } else {
+        displayedRef.current = target;
+        setDisplayedProgress(target);
+      }
+    };
+    rafRef.current = requestAnimationFrame(animate);
+    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
+  }, [jobProgress, isDone]);
+
   // Honest remaining time: rate-based when we have real progress, else use estimate
   const remaining = (() => {
     if (isDone) return 0;
@@ -43,7 +73,7 @@ export default function AnalysisProgressOverlay({
     return Math.max(0, estimatedSecs - elapsed);
   })();
 
-  const barPct    = isDone ? 100 : Math.max(0, jobProgress);
+  const barPct    = displayedProgress;
   const barColor  = isDone && !isSuccess ? '#ef4444' : ACCENT;
   const stageText = isDone
     ? (isSuccess ? 'Analysis complete!' : (errorMsg ?? 'Analysis failed'))
@@ -77,12 +107,11 @@ export default function AnalysisProgressOverlay({
           <div style={{
             height: '100%', borderRadius: 3, background: barColor,
             width: `${barPct}%`,
-            transition: isDone ? 'width 0.3s ease' : 'width 0.9s ease',
           }} />
         </div>
 
         <div style={{ fontSize: 10, color: TEXT2, marginBottom: 24, textAlign: 'right' }}>
-          {barPct}%
+          {Math.round(barPct)}%
         </div>
 
         <div style={{ fontSize: 12, color: isDone && !isSuccess ? '#ef4444' : TEXT2, minHeight: 18 }}>
