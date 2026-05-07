@@ -31,6 +31,18 @@ _jobs: dict[str, dict] = {}
 _executor = ThreadPoolExecutor(max_workers=2)
 
 
+def _set_progress(job_id: str, progress: int, stage: str, sb) -> None:
+    _jobs[job_id]['progress'] = progress
+    _jobs[job_id]['stage']    = stage
+    if sb:
+        try:
+            sb.table("analysis_jobs").update(
+                {"progress": progress, "stage": stage}
+            ).eq("id", job_id).execute()
+        except Exception as exc:
+            print(f"[job:{job_id}] progress {progress}% update failed: {exc}", flush=True)
+
+
 def _upload_png(sb, b64: str, uid: str, job_id: str, suffix: str) -> Optional[str]:
     if not sb or not b64:
         return None
@@ -64,7 +76,9 @@ def run_analysis_job(
     Runs in a ThreadPoolExecutor worker thread.
     Saves files, runs inference, writes results to Supabase, updates _jobs.
     """
-    _jobs[job_id]["status"] = "processing"
+    _jobs[job_id]["status"]   = "processing"
+    _jobs[job_id]["progress"] = 0
+    _jobs[job_id]["stage"]    = "Starting"
     t0 = time.perf_counter()
 
     try:
@@ -86,6 +100,8 @@ def run_analysis_job(
             saved_paths.append((fname, dest))
             print(f"[job:{job_id}] Saved {fname} ({len(content)/1024:.1f} KB)", flush=True)
 
+        _set_progress(job_id, 5, "Ingesting", supabase_client)
+
         # ── Inference ─────────────────────────────────────────────────────────
         file_preds:      list[np.ndarray] = []
         file_confs:      list[np.ndarray] = []
@@ -96,6 +112,11 @@ def run_analysis_job(
         rebar_twt_arrs:   list[np.ndarray] = []
         per_file_summary: list[dict]       = []
         total_sigs = 0
+        n_data_files = sum(
+            1 for _, d in saved_paths
+            if d.suffix.lower() in SUPPORTED_EXTENSIONS and d.suffix.lower() not in COMPANION_EXTENSIONS
+        )
+        files_done = 0
 
         for fname, dest in saved_paths:
             ext = dest.suffix.lower()
@@ -157,10 +178,14 @@ def run_analysis_job(
                 "twt_array":         twt_arr[:512].tolist(),
             })
             total_sigs += n
+            files_done += 1
+            prog = 15 + round(65 * files_done / max(n_data_files, 1))
+            _set_progress(job_id, prog, f"Analyzing file {files_done}/{max(n_data_files,1)}", supabase_client)
 
         if total_sigs == 0:
             raise ValueError("No valid GPR signals found in uploaded files.")
 
+        _set_progress(job_id, 80, "Building grids", supabase_client)
         all_preds       = np.concatenate(file_preds)
         n_del_total     = int((all_preds == 0).sum())
         del all_preds
@@ -249,6 +274,7 @@ def run_analysis_job(
             print(f"[job:{job_id}] Extra grids failed: {exc}", flush=True)
 
         elapsed = round(time.perf_counter() - t0, 3)
+        _set_progress(job_id, 90, "Rendering maps", supabase_client)
 
         result = {
             "signals_analyzed":    total_sigs,
@@ -278,6 +304,7 @@ def run_analysis_job(
         }
 
         # ── Supabase: storage + DB row ────────────────────────────────────────
+        _set_progress(job_id, 95, "Finalizing", supabase_client)
         uid             = user_id or "anonymous"
         cscan_url       = _upload_png(supabase_client, cscan_b64,       uid, job_id, "")
         rebar_cscan_url = _upload_png(supabase_client, rebar_cscan_b64, uid, job_id, "_rebar")

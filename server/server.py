@@ -335,6 +335,32 @@ async def analyze(
     return JSONResponse({"job_id": job_id, "status": "pending"})
 
 
+@app.get("/job/{job_id}/status")
+def get_job_status(
+    job_id: str,
+    user_id: Optional[str] = Depends(verify_token),
+) -> JSONResponse:
+    """Lightweight 1-second poll — returns {status, progress, stage, elapsed_seconds, error}."""
+    job = _jobs.get(job_id)
+    if job:
+        return JSONResponse({
+            "status":          job.get("status"),
+            "progress":        job.get("progress", 0),
+            "stage":           job.get("stage", ""),
+            "elapsed_seconds": round(time.time() - job.get("created_at", time.time()), 1),
+            "error":           job.get("error"),
+        })
+    if _supabase:
+        try:
+            row = _supabase.table("analysis_jobs") \
+                .select("status,progress,stage").eq("id", job_id).single().execute()
+            if row.data:
+                return JSONResponse(row.data)
+        except Exception:
+            pass
+    raise HTTPException(status_code=404, detail="Job not found.")
+
+
 @app.get("/job/{job_id}")
 def get_job(
     job_id: str,

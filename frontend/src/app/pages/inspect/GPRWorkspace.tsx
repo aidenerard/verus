@@ -30,6 +30,12 @@ import OutputMaps from './OutputMaps';
 import ConfirmAnalysisModal from './ConfirmAnalysisModal';
 import AnalysisProgressOverlay from './AnalysisProgressOverlay';
 
+// TODO: refine after 20+ real jobs by comparing analysis_jobs.signals_analyzed
+// vs analysis_jobs.analysis_time_sec in Supabase.
+const SIGNALS_PER_SEC = 2000;
+const FIXED_OVERHEAD  = 25;  // seconds: ingest + convert + render + Supabase write
+const BYTES_PER_SIG   = 1000; // rough: ~1 KB per GPR trace in a DZT file
+
 export default function GPRWorkspace() {
   const navigate    = useNavigate();
   const { session } = useAuth();
@@ -90,6 +96,8 @@ export default function GPRWorkspace() {
   const [showConfirm,          setShowConfirm]          = useState(false);
   const [estimatedSecs,        setEstimatedSecs]        = useState(15);
   const [showProgressOverlay,  setShowProgressOverlay]  = useState(false);
+  const [jobProgress,          setJobProgress]          = useState(0);
+  const [jobStage,             setJobStage]             = useState('');
 
   // ── Refs ──────────────────────────────────────────────────────────────────────
   const fileInputRef    = useRef<HTMLInputElement>(null);
@@ -360,11 +368,19 @@ export default function GPRWorkspace() {
     try {
       const wakeDeadline = Date.now() + WAKE_TIMEOUT_MS;
       let serverReady = false;
+      let coldChecked = false;
       while (Date.now() < wakeDeadline) {
+        const t0 = Date.now();
         try {
           const h = await fetch(`${SERVER}/health`, { signal: AbortSignal.timeout(10000) });
+          if (!coldChecked) {
+            coldChecked = true;
+            if (Date.now() - t0 > 2000) setEstimatedSecs(prev => prev + 30);
+          }
           if (h.ok) { const hj = await h.json(); if (hj.model_loaded) { serverReady = true; break; } setStatusMsg('Loading AI model…'); }
-        } catch { /* waking */ }
+        } catch {
+          if (!coldChecked) { coldChecked = true; if (Date.now() - t0 > 2000) setEstimatedSecs(prev => prev + 30); }
+        }
         await new Promise(r => setTimeout(r, WAKE_INTERVAL_MS));
       }
       if (!serverReady) { setErrorMsg('Server did not respond in time.'); setJobStatus('failed'); return; }
@@ -389,40 +405,48 @@ export default function GPRWorkspace() {
       const { job_id } = await res.json();
       setJobId(job_id);
       setJobStatus('processing');
-      let msgIdx = 2;
-      statusCycleRef.current = setInterval(() => {
-        msgIdx = 2 + ((msgIdx - 1) % (STATUS_MSGS.length - 2));
-        setStatusMsg(STATUS_MSGS[msgIdx]);
-      }, 4000);
+      setJobProgress(0);
+      setJobStage('Starting…');
 
       const pollDeadline = Date.now() + POLL_TIMEOUT_MS;
       if (pollRef.current) clearInterval(pollRef.current);
       pollRef.current = setInterval(async () => {
         if (Date.now() > pollDeadline) {
-          clearInterval(pollRef.current!); clearInterval(statusCycleRef.current!);
+          clearInterval(pollRef.current!);
           setErrorMsg('Analysis timed out.'); setJobStatus('failed'); return;
         }
         try {
-          const jr = await fetch(`${SERVER}/job/${job_id}`, { headers });
-          if (!jr.ok) return;
-          const job = await jr.json();
-          if (job.status === 'complete' && job.result) {
-            clearInterval(pollRef.current!); clearInterval(statusCycleRef.current!);
-            setAnalysisResult(job.result);
-            setJobStatus('complete');
-            setRightIconOpen('properties');
-            setSelectedFileIdx(0);
-            setActiveView('cscan');
-            setOutputTab('condition');
-            if (job.result.otsu_threshold) setDetectionThreshold(job.result.otsu_threshold);
-            if (job.result.frequency_mhz) setDielectricEr(DEFAULT_ER[job.result.frequency_mhz] ?? 6);
-            bottomPanelRef.current?.expand();
-          } else if (job.status === 'failed') {
-            clearInterval(pollRef.current!); clearInterval(statusCycleRef.current!);
-            setErrorMsg(job.error || 'Analysis failed'); setJobStatus('failed');
+          // Lightweight 1s poll for progress/stage
+          const sr = await fetch(`${SERVER}/job/${job_id}/status`, { headers });
+          if (!sr.ok) return;
+          const s = await sr.json();
+          setJobProgress(s.progress ?? 0);
+          setJobStage(s.stage ?? '');
+          if (s.status === 'complete') {
+            clearInterval(pollRef.current!);
+            // Fetch full result once on completion
+            const jr = await fetch(`${SERVER}/job/${job_id}`, { headers });
+            if (!jr.ok) { setErrorMsg(`HTTP ${jr.status}`); setJobStatus('failed'); return; }
+            const job = await jr.json();
+            const result: AnalysisResult = job.result ?? (job.signals_analyzed != null ? job : null);
+            if (result) {
+              setAnalysisResult(result);
+              setJobStatus('complete');
+              setJobProgress(100);
+              setRightIconOpen('properties');
+              setSelectedFileIdx(0);
+              setActiveView('cscan');
+              setOutputTab('condition');
+              if (result.otsu_threshold) setDetectionThreshold(result.otsu_threshold);
+              if (result.frequency_mhz) setDielectricEr(DEFAULT_ER[result.frequency_mhz] ?? 6);
+              bottomPanelRef.current?.expand();
+            }
+          } else if (s.status === 'failed') {
+            clearInterval(pollRef.current!);
+            setErrorMsg(s.error || 'Analysis failed'); setJobStatus('failed');
           }
         } catch { /* poll silently */ }
-      }, 3000);
+      }, 1000);
     } catch (err) {
       clearInterval(statusCycleRef.current!);
       setErrorMsg(err instanceof Error ? err.message : 'Analysis failed');
@@ -436,11 +460,15 @@ export default function GPRWorkspace() {
   }, []);
 
   const onConfirmAnalysis = useCallback(() => {
-    setEstimatedSecs(files.length * 4 + 15);
+    const totalBytes = files.reduce((s, f) => s + f.file.size, 0);
+    const estSecs    = Math.ceil(totalBytes / (BYTES_PER_SIG * SIGNALS_PER_SEC)) + FIXED_OVERHEAD;
+    setEstimatedSecs(estSecs);
+    setJobProgress(0);
+    setJobStage('');
     setShowConfirm(false);
     setShowProgressOverlay(true);
     startAnalysis();
-  }, [files.length, startAnalysis]);
+  }, [files, startAnalysis]);
 
   useEffect(() => {
     if (jobStatus === 'complete' || jobStatus === 'failed') {
@@ -1079,7 +1107,10 @@ export default function GPRWorkspace() {
 
       {showProgressOverlay && (
         <AnalysisProgressOverlay
-          fileCount={files.length} estimatedSecs={estimatedSecs}
+          structureName={structureName}
+          estimatedSecs={estimatedSecs}
+          jobProgress={jobProgress}
+          jobStage={jobStage}
           jobStatus={jobStatus as 'pending' | 'processing' | 'complete' | 'failed'}
           errorMsg={errorMsg}
         />
