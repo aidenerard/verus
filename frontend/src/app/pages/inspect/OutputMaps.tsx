@@ -1,8 +1,7 @@
 import type { RefObject } from 'react';
 import { Download } from 'lucide-react';
-import { RAISED, BORDER, TEXT, TEXT2, ACCENT } from './constants';
+import { RAISED, BORDER, TEXT, TEXT2 } from './constants';
 import type { AnalysisResult, OutputTab } from './types';
-import { delamColor } from './utils';
 import MapColorBar from './MapColorBar';
 
 interface Badge { text: string; color: string }
@@ -11,11 +10,8 @@ interface Props {
   outputTab: OutputTab;
   hasResult: boolean;
   analysisResult: AnalysisResult | null;
-  useCondCanvas: boolean;
   condCanvasRef: RefObject<HTMLCanvasElement>;
-  useRebarCanvas: boolean;
   rebarCanvasRef: RefObject<HTMLCanvasElement>;
-  useAmpCanvas: boolean;
   ampCanvasRef: RefObject<HTMLCanvasElement>;
   onExport: () => void;
   condBadge: () => Badge | null;
@@ -25,9 +21,7 @@ interface Props {
 
 export default function OutputMaps({
   outputTab, hasResult, analysisResult,
-  useCondCanvas, condCanvasRef,
-  useRebarCanvas, rebarCanvasRef,
-  useAmpCanvas, ampCanvasRef,
+  condCanvasRef, rebarCanvasRef, ampCanvasRef,
   onExport, condBadge, depthBadge, ampBadge,
 }: Props) {
   if (!hasResult) {
@@ -42,19 +36,24 @@ export default function OutputMaps({
   }
 
   const r = analysisResult!;
-  const imgStyle: React.CSSProperties = { width: '100%', height: 'auto', display: 'block' };
-  const canvasStyle: React.CSSProperties = { width: '100%', height: 'auto', display: 'block', imageRendering: 'pixelated' };
-  const naStyle: React.CSSProperties = { padding: 48, textAlign: 'center', color: TEXT2, fontSize: 12 };
+  const canvasStyle: React.CSSProperties = {
+    width: '100%', height: '100%', display: 'block', imageRendering: 'pixelated',
+  };
+  const imgStyle: React.CSSProperties = {
+    width: '100%', height: '100%', objectFit: 'contain', display: 'block',
+  };
+  const naStyle: React.CSSProperties = {
+    padding: 48, textAlign: 'center', color: TEXT2, fontSize: 12,
+  };
 
   const getBadge = (): Badge | null => {
-    if (outputTab === 'condition') return condBadge();
+    if (outputTab === 'condition')   return condBadge();
     if (outputTab === 'rebar_depth') return depthBadge();
-    if (outputTab === 'amplitude') return ampBadge();
+    if (outputTab === 'amplitude')   return ampBadge();
     return null;
   };
   const badge = getBadge();
 
-  // Rebar depth range from per-file summaries
   const rebarFiles = r.per_file_summary.filter(
     f => f.rebar_depth_min != null && f.rebar_depth_max != null,
   );
@@ -75,26 +74,14 @@ export default function OutputMaps({
     return null;
   })();
 
-  const statsBar = outputTab === 'condition' ? (
-    <div style={{ flexShrink: 0, display: 'flex', gap: 40, padding: '10px 20px', borderTop: `1px solid ${BORDER}` }}>
-      {[
-        { label: 'Signals',       value: r.signals_analyzed  != null ? r.signals_analyzed.toLocaleString()         : '--' },
-        { label: 'Delamination',  value: r.delamination_pct  != null ? `${r.delamination_pct.toFixed(1)}%`          : '--', color: r.delamination_pct != null ? delamColor(r.delamination_pct) : TEXT },
-        { label: 'Sound',         value: r.sound_pct         != null ? `${r.sound_pct.toFixed(1)}%`                 : '--' },
-        { label: 'Analysis Time', value: r.analysis_time_sec != null ? `${r.analysis_time_sec.toFixed(1)}s`         : '--' },
-      ].map(({ label, value, color }) => (
-        <div key={label}>
-          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.09em', textTransform: 'uppercase', color: TEXT2, marginBottom: 2 }}>{label}</div>
-          <div style={{ fontSize: 15, fontWeight: 700, color: color || TEXT }}>{value}</div>
-        </div>
-      ))}
-    </div>
-  ) : null;
+  // Canvas is used when we have JSON grid data (new) or base64 grid data (old)
+  const hasCondCanvas  = !!(r.prob_grid_data || r.prob_grid);
+  const hasRebarCanvas = !!(r.rebar_depth_grid);
+  const hasAmpCanvas   = !!(r.amplitude_grid_data);
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      {/* Map area */}
-      <div style={{ flex: 1, position: 'relative', overflow: 'auto', background: RAISED, minHeight: 0 }}>
+      <div style={{ flex: 1, position: 'relative', overflow: 'hidden', background: RAISED, minHeight: 0 }}>
         {badge && (
           <div style={{ position: 'absolute', top: 10, right: 10, zIndex: 5, fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: badge.color + '20', color: badge.color, backdropFilter: 'blur(4px)' }}>
             {badge.text}
@@ -105,13 +92,11 @@ export default function OutputMaps({
         </button>
 
         {outputTab === 'condition' && (
-          useCondCanvas
+          hasCondCanvas
             ? <canvas ref={condCanvasRef} style={canvasStyle} />
-            : r.cscan_image
-              ? <img src={`data:image/png;base64,${r.cscan_image}`} alt="Condition map" style={imgStyle} />
-              : r.cscan_url
-                ? <img src={r.cscan_url} alt="Condition map" style={imgStyle} />
-                : <div style={naStyle}>C-scan not available — re-run analysis.</div>
+            : r.cscan_url
+              ? <img src={r.cscan_url} alt="Condition map" style={imgStyle} />
+              : <div style={naStyle}>C-scan not available — re-run analysis.</div>
         )}
 
         {outputTab === 'rebar_depth' && (
@@ -123,29 +108,26 @@ export default function OutputMaps({
                 </span>
               </div>
             )}
-            {useRebarCanvas
+            {hasRebarCanvas
               ? <canvas ref={rebarCanvasRef} style={canvasStyle} />
-              : (r.rebar_cscan_image || r.rebar_depth_image)
-                ? <img src={`data:image/png;base64,${r.rebar_cscan_image || r.rebar_depth_image}`} alt="Rebar depth map" style={imgStyle} />
-                : r.rebar_cscan_image_url
-                  ? <img src={r.rebar_cscan_image_url} alt="Rebar depth map" style={imgStyle} />
-                  : <div style={naStyle}>Rebar depth map not available — re-run analysis.</div>
+              : r.rebar_cscan_image_url
+                ? <img src={r.rebar_cscan_image_url} alt="Rebar depth map" style={imgStyle} />
+                : <div style={naStyle}>Rebar depth map not available — re-run analysis.</div>
             }
           </>
         )}
 
         {outputTab === 'amplitude' && (
-          useAmpCanvas
+          hasAmpCanvas
             ? <canvas ref={ampCanvasRef} style={canvasStyle} />
-            : r.amplitude_image
-              ? <img src={`data:image/png;base64,${r.amplitude_image}`} alt="Amplitude map" style={imgStyle} />
-              : r.amplitude_image_url
-                ? <img src={r.amplitude_image_url} alt="Amplitude map" style={imgStyle} />
+            : r.amplitude_image_url
+              ? <img src={r.amplitude_image_url} alt="Amplitude map" style={imgStyle} />
+              : r.amplitude_image
+                ? <img src={`data:image/png;base64,${r.amplitude_image}`} alt="Amplitude map" style={imgStyle} />
                 : <div style={naStyle}>Amplitude map not available — re-run analysis.</div>
         )}
       </div>
 
-      {statsBar}
       {colorBar}
     </div>
   );

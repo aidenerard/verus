@@ -78,6 +78,81 @@ export function renderDepthToCanvas(
   ctx.putImageData(img, 0, 0);
 }
 
+// ── JSON-array canvas renderers ───────────────────────────────────────────────
+
+type Grid = (number | null)[][];
+
+function spectralColor(t: number): RGB {
+  const stops: RGB[] = [
+    [0, 0, 255], [0, 255, 255], [0, 255, 0], [255, 255, 0], [255, 128, 0], [255, 0, 0],
+  ];
+  const n = stops.length - 1;
+  const s = Math.max(0, Math.min(1, t)) * n;
+  const lo = Math.min(n - 1, Math.floor(s));
+  return lerpRGB(stops[lo], stops[lo + 1], s - lo);
+}
+
+function rebarColor(t: number): RGB {
+  const stops: RGB[] = [
+    [255, 255, 100], [255, 200, 0], [255, 140, 0], [220, 60, 0], [180, 0, 0],
+  ];
+  const n = stops.length - 1;
+  const s = Math.max(0, Math.min(1, t)) * n;
+  const lo = Math.min(n - 1, Math.floor(s));
+  return lerpRGB(stops[lo], stops[lo + 1], s - lo);
+}
+
+function drawGrid(
+  canvas: HTMLCanvasElement,
+  data: Grid,
+  colorFn: (t: number) => RGB,
+  toT: (v: number) => number,
+): void {
+  if (!data.length || !data[0].length) return;
+  const rows = data.length, cols = data[0].length;
+  canvas.width = cols; canvas.height = rows;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  const img = ctx.createImageData(cols, rows);
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const v = data[r][c];
+      const idx = (r * cols + c) * 4;
+      if (v === null || v !== v) {
+        img.data[idx] = BG_FILL[0]; img.data[idx+1] = BG_FILL[1]; img.data[idx+2] = BG_FILL[2];
+      } else {
+        const [R, G, B] = colorFn(Math.max(0, Math.min(1, toT(v))));
+        img.data[idx] = R; img.data[idx+1] = G; img.data[idx+2] = B;
+      }
+      img.data[idx+3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+export function renderConditionGrid(
+  canvas: HTMLCanvasElement, data: Grid, _threshold: number,
+): void {
+  drawGrid(canvas, data, spectralColor, v => 1 - v);
+}
+
+export function renderRebarGrid(canvas: HTMLCanvasElement, data: Grid): void {
+  let min = Infinity, max = -Infinity;
+  for (const row of data) for (const v of row) {
+    if (v !== null && v === v) { if (v < min) min = v; if (v > max) max = v; }
+  }
+  if (min === Infinity) { min = 1; max = 5; }
+  const range = Math.max(0.001, max - min);
+  drawGrid(canvas, data, rebarColor, v => (v - min) / range);
+}
+
+export function renderAmpGrid(
+  canvas: HTMLCanvasElement, data: Grid, ampMin: number, ampMax: number,
+): void {
+  const range = Math.max(0.001, ampMax - ampMin);
+  drawGrid(canvas, data, t => applyStops(t, COND_STOPS), v => (v - ampMin) / range);
+}
+
 export function renderAmpToCanvas(
   canvas: HTMLCanvasElement,
   ampData: Float32Array, rows: number, cols: number,

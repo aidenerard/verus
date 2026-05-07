@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { X, FolderOpen, Trash2 } from 'lucide-react';
 import type { AnalysisJob } from './types';
 
@@ -10,6 +11,8 @@ interface Props {
 }
 
 export default function JobTable({ jobs, loading, onView, onDelete, onStartFirst }: Props) {
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+
   if (loading) {
     return <div style={{ padding: '48px 24px', textAlign: 'center' }}><p style={{ fontSize: 13, color: '#B0A9A4' }}>Loading…</p></div>;
   }
@@ -43,9 +46,12 @@ export default function JobTable({ jobs, loading, onView, onDelete, onStartFirst
           const date = new Date(job.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
           const statusColor = job.status === 'complete' ? '#2E7D32' : job.status === 'failed' ? '#C0392B' : '#B0A9A4';
           const statusLabel = job.status === 'complete' ? 'Complete' : job.status === 'failed' ? 'Failed' : job.status === 'processing' ? 'Processing…' : 'Pending…';
+          const isConfirming = confirmingId === job.id;
           return (
-            <tr key={job.id} style={{ borderTop: '1px solid #E2DED9' }}>
-              <td style={{ padding: '12px 20px', fontSize: 12, fontWeight: 600, color: '#0A0A0A', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{job.project_name ?? 'Untitled Project'}</td>
+            <tr key={job.id} style={{ borderTop: '1px solid #E2DED9', background: isConfirming ? 'rgba(239,68,68,0.04)' : 'transparent', transition: 'background 0.2s' }}>
+              <td style={{ padding: '12px 20px', fontSize: 12, fontWeight: 600, color: '#0A0A0A', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {job.project_name ?? 'Untitled Project'}
+              </td>
               <td style={{ padding: '12px 20px', fontSize: 12, color: '#0A0A0A' }}>{date}</td>
               <td style={{ padding: '12px 20px', fontSize: 11, color: '#7A7470', maxWidth: 200 }}>
                 <span style={{ fontFamily: 'monospace', fontSize: 10 }}>
@@ -57,20 +63,37 @@ export default function JobTable({ jobs, loading, onView, onDelete, onStartFirst
               <td style={{ padding: '12px 20px' }}>
                 <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: statusColor }}>{statusLabel}</span>
               </td>
-              <td style={{ padding: '12px 20px', textAlign: 'right' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
-                  {job.status === 'complete' && (
-                    <button onClick={() => onView(job)} style={{ padding: '5px 14px', fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', background: 'none', border: '1.5px solid #E2DED9', color: '#7A7470', cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}>
-                      View
+              <td style={{ padding: '8px 20px', textAlign: 'right' }}>
+                {isConfirming ? (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
+                    <span style={{ fontSize: 11, color: '#7A7470', whiteSpace: 'nowrap' }}>Permanently delete?</span>
+                    <button
+                      onClick={() => setConfirmingId(null)}
+                      style={{ padding: '5px 12px', fontSize: 10, fontWeight: 600, background: 'none', border: '1.5px solid #E2DED9', color: '#7A7470', cursor: 'pointer', fontFamily: 'Inter, sans-serif', display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <X size={10} /> Cancel
                     </button>
-                  )}
-                  <button onClick={() => onDelete(job)} title="Delete project"
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#B0A9A4', padding: 4, display: 'flex', alignItems: 'center', borderRadius: 3 }}
-                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = '#ef4444'; }}
-                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = '#B0A9A4'; }}>
-                    <Trash2 size={14} />
-                  </button>
-                </div>
+                    <button
+                      onClick={() => { onDelete(job); setConfirmingId(null); }}
+                      style={{ padding: '5px 14px', fontSize: 10, fontWeight: 700, background: '#ef4444', border: '1.5px solid #ef4444', color: '#fff', cursor: 'pointer', fontFamily: 'Inter, sans-serif', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+                      Delete
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
+                    {job.status === 'complete' && (
+                      <button onClick={() => onView(job)}
+                        style={{ padding: '5px 14px', fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', background: 'none', border: '1.5px solid #E2DED9', color: '#7A7470', cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}>
+                        View
+                      </button>
+                    )}
+                    <button onClick={() => setConfirmingId(job.id)} title="Delete project"
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#B0A9A4', padding: 4, display: 'flex', alignItems: 'center', borderRadius: 3 }}
+                      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = '#ef4444'; }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = '#B0A9A4'; }}>
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                )}
               </td>
             </tr>
           );

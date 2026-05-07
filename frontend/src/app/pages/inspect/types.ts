@@ -24,7 +24,7 @@ export interface AnalysisResult {
   delamination_pct:    number;
   sound_pct:           number;
   analysis_time_sec:   number;
-  cscan_image:         string;
+  cscan_image?:        string;
   cscan_url?:          string;
   manufacturer?:       string;
   per_file_summary:    FileResult[];
@@ -49,6 +49,9 @@ export interface AnalysisResult {
   amplitude_image_url?:     string;
   rebar_depth_grid?:        (number | null)[][];
   rebar_twt_grid?:          (number | null)[][];
+  // v4+ canvas grid data (JSON arrays, pre-downsampled)
+  prob_grid_data?:          (number | null)[][];
+  amplitude_grid_data?:     (number | null)[][];
 }
 
 export interface UploadedFile { file: File; name: string }

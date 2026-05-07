@@ -207,12 +207,13 @@ def run_analysis_job(
 
         try:
             prob_grid, otsu_T = build_prob_grid(file_preds, file_confs)
-            prob_b64  = _b64.b64encode(prob_grid.tobytes()).decode()
+            prob_b64         = _b64.b64encode(prob_grid.tobytes()).decode()
+            prob_grid_data_j = grid_to_list(prob_grid)
             pg_rows, pg_cols = prob_grid.shape
             del prob_grid
         except Exception as exc:
             print(f"[job:{job_id}] prob_grid failed: {exc}", flush=True)
-            prob_b64 = ""; pg_rows = pg_cols = 0; otsu_T = 0.65
+            prob_b64 = ""; prob_grid_data_j = []; pg_rows = pg_cols = 0; otsu_T = 0.65
 
         rebar_cscan_b64    = ""
         rebar_depth_grid_j: list = []
@@ -252,6 +253,7 @@ def run_analysis_job(
             print(f"[job:{job_id}] Rebar grid render failed: {exc}", flush=True)
 
         rebar_b64 = amp_b64 = twt_b64 = ""
+        amplitude_grid_data_j: list = []
         twt_rows = twt_cols = 0
         conf_pct = depth_acc_in = 0.0
         sig_quality = "Fair"
@@ -259,9 +261,10 @@ def run_analysis_job(
             depth_grid, amp_grid, twt_grid = build_extra_grids(
                 file_peak_idxs, file_peak_amps, frequency_mhz
             )
-            rebar_b64 = render_rebar_depth_b64(depth_grid)
-            amp_b64   = render_amplitude_b64(amp_grid)
-            twt_b64   = _b64.b64encode(twt_grid.tobytes()).decode()
+            rebar_b64             = render_rebar_depth_b64(depth_grid)
+            amp_b64               = render_amplitude_b64(amp_grid)
+            amplitude_grid_data_j = grid_to_list(amp_grid)
+            twt_b64               = _b64.b64encode(twt_grid.tobytes()).decode()
             twt_rows, twt_cols = twt_grid.shape
 
             all_confs_flat = np.concatenate(file_confs)
@@ -281,10 +284,10 @@ def run_analysis_job(
             "delamination_pct":    delam_pct_total,
             "sound_pct":           sound_pct_total,
             "analysis_time_sec":   elapsed,
-            "cscan_image":         cscan_b64,
             "per_file_summary":    per_file_summary,
             "rebar_model_used":    rebar_model is not None,
-            "rebar_cscan_image":   rebar_cscan_b64,
+            "prob_grid_data":      prob_grid_data_j,
+            "amplitude_grid_data": amplitude_grid_data_j,
             "rebar_depth_grid":    rebar_depth_grid_j,
             "rebar_twt_grid":      rebar_twt_grid_j,
             "rebar_depth_image":   rebar_b64,

@@ -106,20 +106,12 @@ def render_rebar_cscan_b64(
         np.arange(n_rows) * swath_spacing_ft,
     )
 
-    fig = plt.figure(figsize=(22, 5), facecolor='white')
-    ax  = fig.add_axes([0.06, 0.22, 0.91, 0.64])
-    cf  = _astm_axes(ax, X, Y, Z, levels, 'YlOrRd_r', '%g',
-                     x_max, y_max, scan_line_boundaries_ft, pier_positions_ft)
+    fig = plt.figure(figsize=(22, 4.5), facecolor='white')
+    ax  = fig.add_axes([0.06, 0.08, 0.91, 0.82])
+    _astm_axes(ax, X, Y, Z, levels, 'YlOrRd_r', '%g',
+               x_max, y_max, scan_line_boundaries_ft, pier_positions_ft)
     ax.set_title(f'{structure_name} — Rebar Cover Depth',
                  fontsize=10, fontweight='bold', pad=6)
-
-    cax  = fig.add_axes([0.06, 0.06, 0.91, 0.07])
-    cbar = fig.colorbar(cf, cax=cax, orientation='horizontal')
-    cbar.set_ticks(levels)
-    cbar.set_ticklabels([f'{v:g}' for v in levels], fontsize=7)
-    cbar.ax.tick_params(length=3)
-    cbar.set_label('Cover depth (in)', fontsize=8)
-    cbar.outline.set_linewidth(0.5)
 
     return _fig_to_b64(fig, dpi)
 
@@ -156,20 +148,12 @@ def render_cscan_b64(
         np.arange(n_rows) * swath_spacing_ft,
     )
 
-    fig = plt.figure(figsize=(22, 5), facecolor='white')
-    ax  = fig.add_axes([0.06, 0.22, 0.91, 0.64])
-    cf  = _astm_axes(ax, X, Y, Z, levels, 'Spectral_r', '%g%%',
-                     x_max, y_max, scan_line_boundaries_ft, pier_positions_ft)
+    fig = plt.figure(figsize=(22, 4.5), facecolor='white')
+    ax  = fig.add_axes([0.06, 0.08, 0.91, 0.82])
+    _astm_axes(ax, X, Y, Z, levels, 'Spectral_r', '%g%%',
+               x_max, y_max, scan_line_boundaries_ft, pier_positions_ft)
     ax.set_title(f'{structure_name} — Condition Map',
                  fontsize=10, fontweight='bold', pad=6)
-
-    cax  = fig.add_axes([0.06, 0.06, 0.91, 0.07])
-    cbar = fig.colorbar(cf, cax=cax, orientation='horizontal')
-    cbar.set_ticks(levels)
-    cbar.set_ticklabels([f'{v:g}%' for v in levels], fontsize=7)
-    cbar.ax.tick_params(length=3)
-    cbar.set_label('Delamination probability (%)', fontsize=8)
-    cbar.outline.set_linewidth(0.5)
 
     del prob_grid, Z
     gc.collect()

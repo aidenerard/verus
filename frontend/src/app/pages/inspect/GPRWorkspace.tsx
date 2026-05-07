@@ -22,7 +22,7 @@ import {
 } from './constants';
 import type { ManufacturerKey, LayerId } from './constants';
 import type { AnalysisResult, OutputTab, UploadedFile } from './types';
-import { decodeF32, renderConditionToCanvas, renderDepthToCanvas } from './colormaps';
+import { decodeF32, renderConditionToCanvas, renderDepthToCanvas, renderConditionGrid, renderRebarGrid, renderAmpGrid } from './colormaps';
 import { delamColor, badgeColor } from './utils';
 import SetupWizard from './SetupWizard';
 import AdjustPanel from './AdjustPanel';
@@ -319,18 +319,31 @@ export default function GPRWorkspace() {
 
   useEffect(() => { renderBscan(); }, [renderBscan]);
 
-  // ── Canvas re-renders on slider change ────────────────────────────────────────
+  // ── Canvas renderers — always draw when data is available ────────────────────
   useEffect(() => {
-    if (!useCondCanvas || !condCanvasRef.current || !analysisResult?.prob_grid) return;
-    renderConditionToCanvas(condCanvasRef.current, decodeF32(analysisResult.prob_grid),
-      analysisResult.prob_grid_rows!, analysisResult.prob_grid_cols!, detectionThreshold);
-  }, [useCondCanvas, detectionThreshold, analysisResult]);
+    if (!condCanvasRef.current || !analysisResult) return;
+    if (analysisResult.prob_grid_data) {
+      renderConditionGrid(condCanvasRef.current, analysisResult.prob_grid_data, detectionThreshold);
+    } else if (analysisResult.prob_grid) {
+      renderConditionToCanvas(condCanvasRef.current, decodeF32(analysisResult.prob_grid),
+        analysisResult.prob_grid_rows!, analysisResult.prob_grid_cols!, detectionThreshold);
+    }
+  }, [detectionThreshold, analysisResult]);
 
   useEffect(() => {
-    if (!useRebarCanvas || !rebarCanvasRef.current || !analysisResult?.twt_grid) return;
-    renderDepthToCanvas(rebarCanvasRef.current, decodeF32(analysisResult.twt_grid),
-      analysisResult.twt_grid_rows!, analysisResult.twt_grid_cols!, dielectricEr);
-  }, [useRebarCanvas, dielectricEr, analysisResult]);
+    if (!rebarCanvasRef.current || !analysisResult) return;
+    if (analysisResult.rebar_depth_grid) {
+      renderRebarGrid(rebarCanvasRef.current, analysisResult.rebar_depth_grid);
+    } else if (analysisResult.twt_grid) {
+      renderDepthToCanvas(rebarCanvasRef.current, decodeF32(analysisResult.twt_grid),
+        analysisResult.twt_grid_rows!, analysisResult.twt_grid_cols!, dielectricEr);
+    }
+  }, [dielectricEr, analysisResult]);
+
+  useEffect(() => {
+    if (!ampCanvasRef.current || !analysisResult?.amplitude_grid_data) return;
+    renderAmpGrid(ampCanvasRef.current, analysisResult.amplitude_grid_data, ampClampMin, ampClampMax);
+  }, [ampClampMin, ampClampMax, analysisResult]);
 
   // ── File handling ─────────────────────────────────────────────────────────────
   const onFileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -526,25 +539,31 @@ export default function GPRWorkspace() {
 
   // ── Export ────────────────────────────────────────────────────────────────────
   const exportPNG = useCallback(() => {
-    if (!analysisResult) return;
     const a = document.createElement('a');
     const slug = projectName.replace(/\s+/g, '_');
-    if (outputTab === 'condition') {
-      if (analysisResult.cscan_image) { a.href = `data:image/png;base64,${analysisResult.cscan_image}`; a.download = `${slug}_condition.png`; }
-      else if (analysisResult.cscan_url) { a.href = analysisResult.cscan_url; a.download = `${slug}_condition.png`; }
-    } else if (outputTab === 'rebar_depth') {
-      if (analysisResult.rebar_depth_image) { a.href = `data:image/png;base64,${analysisResult.rebar_depth_image}`; a.download = `${slug}_rebar_depth.png`; }
-      else if (analysisResult.rebar_cscan_image_url) { a.href = analysisResult.rebar_cscan_image_url; a.download = `${slug}_rebar_depth.png`; }
-    } else if (outputTab === 'amplitude') {
-      if (analysisResult.amplitude_image) { a.href = `data:image/png;base64,${analysisResult.amplitude_image}`; a.download = `${slug}_amplitude.png`; }
-      else if (analysisResult.amplitude_image_url) { a.href = analysisResult.amplitude_image_url; a.download = `${slug}_amplitude.png`; }
-    } else {
+    if (outputTab === 'gps') {
       const map = mapRef.current;
-      if (map) { a.href = map.getCanvas().toDataURL(); a.download = `${slug}_map.png`; }
+      if (map) { a.href = map.getCanvas().toDataURL(); a.download = `${slug}_map.png`; a.click(); }
+      setShowExportMenu(false);
+      return;
     }
-    if (a.href) a.click();
+    const canvasMap: Record<string, HTMLCanvasElement | null> = {
+      condition:   condCanvasRef.current,
+      rebar_depth: rebarCanvasRef.current,
+      amplitude:   ampCanvasRef.current,
+    };
+    const canvas = canvasMap[outputTab];
+    if (canvas && canvas.width > 0) {
+      a.href = canvas.toDataURL('image/png');
+      a.download = `${slug}_${outputTab}.png`;
+      a.click();
+    } else if (analysisResult?.cscan_url && outputTab === 'condition') {
+      a.href = analysisResult.cscan_url;
+      a.download = `${slug}_condition.png`;
+      a.click();
+    }
     setShowExportMenu(false);
-  }, [analysisResult, outputTab, projectName]);
+  }, [outputTab, projectName, analysisResult]);
 
   useEffect(() => {
     if (!showProjects) return;
@@ -836,9 +855,9 @@ export default function GPRWorkspace() {
                       <div style={{ position: 'absolute', inset: 0, top: 40, overflow: 'hidden', background: RAISED, zIndex: 3 }}>
                         <OutputMaps
                           outputTab={outputTab} hasResult={hasResult} analysisResult={analysisResult}
-                          useCondCanvas={useCondCanvas} condCanvasRef={condCanvasRef}
-                          useRebarCanvas={useRebarCanvas} rebarCanvasRef={rebarCanvasRef}
-                          useAmpCanvas={useAmpCanvas} ampCanvasRef={ampCanvasRef}
+                          condCanvasRef={condCanvasRef}
+                          rebarCanvasRef={rebarCanvasRef}
+                          ampCanvasRef={ampCanvasRef}
                           onExport={exportPNG}
                           condBadge={condBadge} depthBadge={depthBadge} ampBadge={ampBadge}
                         />
@@ -912,6 +931,22 @@ export default function GPRWorkspace() {
                         )}
                         {selectedLayer !== 'gpr' && selectedLayer !== 'condition' && (
                           <div style={{ padding: '24px 14px', textAlign: 'center' }}><p style={{ fontSize: 12, color: TEXT2 }}>No configurable properties for this layer.</p></div>
+                        )}
+                        {hasResult && (
+                          <div style={{ margin: '16px 14px 0', padding: '12px', background: RAISED, border: `1px solid ${BORDER}` }}>
+                            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: TEXT2, marginBottom: 8 }}>Analysis</div>
+                            {[
+                              { label: 'Signals',      value: analysisResult!.signals_analyzed != null ? analysisResult!.signals_analyzed.toLocaleString() : '--' },
+                              { label: 'Delamination', value: analysisResult!.delamination_pct != null ? `${analysisResult!.delamination_pct.toFixed(1)}%` : '--', color: delamColor(analysisResult!.delamination_pct ?? 0) },
+                              { label: 'Sound',        value: analysisResult!.sound_pct != null ? `${analysisResult!.sound_pct.toFixed(1)}%` : '--' },
+                              { label: 'Time',         value: analysisResult!.analysis_time_sec != null ? `${analysisResult!.analysis_time_sec.toFixed(1)}s` : '--' },
+                            ].map(({ label, value, color }) => (
+                              <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 4 }}>
+                                <span style={{ color: TEXT2 }}>{label}</span>
+                                <span style={{ color: (color as string | undefined) || TEXT, fontWeight: 600 }}>{value}</span>
+                              </div>
+                            ))}
+                          </div>
                         )}
                         {setupDone && (
                           <div style={{ margin: '16px 14px 0', padding: '12px', background: RAISED, border: `1px solid ${BORDER}` }}>
