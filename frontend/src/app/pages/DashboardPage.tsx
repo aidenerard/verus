@@ -61,19 +61,18 @@ export default function DashboardPage() {
       const { error: jobErr } = await supabase
         .from('analysis_jobs')
         .delete()
-        .eq('id', target.id)
-        .eq('user_id', user.id);
-      console.log('[delete] job result:', jobErr);
+        .eq('id', target.id);
       if (jobErr) throw jobErr;
 
       if (target.project_id) {
         const { error: projErr } = await supabase
           .from('projects')
           .delete()
-          .eq('id', target.project_id)
-          .eq('user_id', user.id);
-        console.log('[delete] project result:', projErr);
+          .eq('id', target.project_id);
         if (projErr) throw projErr;
+        if (target.project_id === localStorage.getItem('verus_project_id')) {
+          localStorage.removeItem('verus_project_id');
+        }
       }
 
       setJobs(prev => prev.filter(j => j.id !== target.id));
