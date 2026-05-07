@@ -254,11 +254,21 @@ def run_analysis_job(
             except Exception:
                 pass
 
+            x_extent = rebar_dg.shape[1] * along_track_ft_per_col
+            rebar_picks: list[tuple[float, float]] = []
+            for fi, da in enumerate(rebar_depth_arrs):
+                n = len(da)
+                y_ft = fi * swath_spacing_ft
+                step = max(1, n // 300)
+                for si in range(0, n, step):
+                    rebar_picks.append((float(si) / max(n - 1, 1) * x_extent, y_ft))
+
             rebar_cscan_b64 = render_rebar_cscan_b64(
                 rebar_dg,
                 swath_spacing_ft=swath_spacing_ft,
                 along_track_ft_per_col=along_track_ft_per_col,
                 structure_name=structure_name,
+                rebar_picks=rebar_picks,
             )
             rebar_depth_grid_j = grid_to_list(rebar_dg)
             rebar_twt_grid_j   = grid_to_list(rebar_tg)
