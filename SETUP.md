@@ -19,8 +19,9 @@ Open **SQL Editor** in your Supabase dashboard and run each migration **in order
 | `supabase/migrations/002_projects.sql` | `projects` table with `manufacturer`, `frequency_mhz`, `name`, `structure_name`; links `analysis_jobs.project_id` |
 | `supabase/migrations/003_result_fields.sql` | Extra result columns on `analysis_jobs` (rebar, amplitude, grids, confidence metrics) |
 | `supabase/migrations/004_project_equipment.sql` | Safety net: `add column if not exists` for all equipment fields + `inspection_method` on `projects` |
+| `supabase/migrations/005_delete_policies.sql` | Adds DELETE RLS policy for `analysis_jobs` (was missing — caused deleted projects to reappear on reload) |
 
-All migrations are idempotent (`if not exists`) — safe to re-run.
+All migrations are idempotent (`if not exists` / `drop policy if exists`) — safe to re-run.
 
 ---
 

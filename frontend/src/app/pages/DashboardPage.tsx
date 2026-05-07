@@ -54,20 +54,31 @@ export default function DashboardPage() {
   }, [user]);
 
   const handleDeleteConfirm = async () => {
-    if (!deleteTarget) return;
+    if (!deleteTarget || !user) return;
     const target = deleteTarget;
     setDeleteTarget(null);
-    setJobs(prev => prev.filter(j => j.id !== target.id));
     try {
-      const { error } = await supabase.from('analysis_jobs').delete().eq('id', target.id);
-      if (error) throw error;
+      const { error: jobErr } = await supabase
+        .from('analysis_jobs')
+        .delete()
+        .eq('id', target.id)
+        .eq('user_id', user.id);
+      console.log('[delete] job result:', jobErr);
+      if (jobErr) throw jobErr;
+
       if (target.project_id) {
-        await supabase.from('projects').delete().eq('id', target.project_id);
+        const { error: projErr } = await supabase
+          .from('projects')
+          .delete()
+          .eq('id', target.project_id)
+          .eq('user_id', user.id);
+        console.log('[delete] project result:', projErr);
+        if (projErr) throw projErr;
       }
-    } catch {
-      setJobs(prev => [...prev, target].sort((a, b) =>
-        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-      ));
+
+      setJobs(prev => prev.filter(j => j.id !== target.id));
+    } catch (err) {
+      console.error('[delete] failed:', err);
       setDeleteError('Failed to delete project. Please try again.');
       setTimeout(() => setDeleteError(null), 4000);
     }
