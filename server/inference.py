@@ -104,20 +104,20 @@ def run_rebar_inference(
     model: Optional[nn.Module],
     signals: np.ndarray,
     frequency_mhz: int = 1600,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Input: z-score normalised signals (n_signals, 512).
-    Returns (depth_inches, twt_ns) both float32 (n_signals,).
+    Returns (depth_inches, twt_ns, peak_samples) all (n_signals,).
     Falls back to physics peak-time estimate when model is None or fails.
     """
     er       = _REBAR_DIELECTRIC.get(frequency_mhz, 6.0)
     velocity = 0.3 / np.sqrt(er)  # m/ns in concrete
 
-    def _physics(sigs: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        peak   = np.argmax(np.abs(sigs), axis=1).astype(np.float32)
-        twt    = peak * 0.023  # 0.023 ns/sample assumed
-        depth  = (velocity * twt / 2.0) * 39.3701
-        return depth.astype(np.float32), twt
+    def _physics(sigs: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        peak_samples = np.argmax(np.abs(sigs), axis=1).astype(np.int32)
+        twt          = peak_samples.astype(np.float32) * 0.023
+        depth        = (velocity * twt / 2.0) * 39.3701
+        return depth.astype(np.float32), twt, peak_samples
 
     if model is None:
         return _physics(signals)
@@ -142,9 +142,10 @@ def run_rebar_inference(
                 out   = model(batch.to(DEVICE)).cpu().numpy()
                 preds.append(out)
 
-        depth_in = np.clip(np.concatenate(preds), 0.5, 12.0).astype(np.float32)
-        twt      = (2.0 * (depth_in / 39.3701) / velocity).astype(np.float32)
-        return depth_in, twt
+        depth_in     = np.clip(np.concatenate(preds), 0.5, 12.0).astype(np.float32)
+        twt          = (2.0 * (depth_in / 39.3701) / velocity).astype(np.float32)
+        peak_samples = np.argmax(np.abs(signals), axis=1).astype(np.int32)
+        return depth_in, twt, peak_samples
 
     except Exception:
         return _physics(signals)

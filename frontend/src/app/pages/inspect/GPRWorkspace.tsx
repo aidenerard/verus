@@ -22,7 +22,7 @@ import {
 } from './constants';
 import type { ManufacturerKey, LayerId } from './constants';
 import type { AnalysisResult, OutputTab, UploadedFile } from './types';
-import { decodeF32, renderConditionToCanvas, renderDepthToCanvas, renderConditionGrid, renderRebarGrid, renderAmpGrid } from './colormaps';
+import { decodeF32, renderConditionToCanvas, renderDepthToCanvas, renderConditionGrid, renderAmpGrid, renderRebarDepthCanvas, renderDepthColorbar } from './colormaps';
 import { delamColor, badgeColor, estimateAnalysisSeconds } from './utils';
 import SetupWizard from './SetupWizard';
 import AdjustPanel from './AdjustPanel';
@@ -102,9 +102,10 @@ export default function GPRWorkspace() {
   const condCanvasRef   = useRef<HTMLCanvasElement>(null);
   const rebarCanvasRef  = useRef<HTMLCanvasElement>(null);
   const ampCanvasRef    = useRef<HTMLCanvasElement>(null);
-  const pollRef         = useRef<ReturnType<typeof setInterval> | null>(null);
-  const statusCycleRef  = useRef<ReturnType<typeof setInterval> | null>(null);
-  const bottomPanelRef  = useRef<ImperativePanelHandle>(null);
+  const pollRef            = useRef<ReturnType<typeof setInterval> | null>(null);
+  const statusCycleRef     = useRef<ReturnType<typeof setInterval> | null>(null);
+  const bottomPanelRef     = useRef<ImperativePanelHandle>(null);
+  const rebarColorbarRef   = useRef<HTMLCanvasElement>(null);
 
   // ── Restore setup from Supabase (keyed by project_id in localStorage) ────────
   useEffect(() => {
@@ -338,14 +339,25 @@ export default function GPRWorkspace() {
     const canvas = rebarCanvasRef.current;
     if (!canvas || !analysisResult) return;
     const rdg = analysisResult.rebar_depth_grid;
-    try {
-      if (rdg && rdg.length > 0) {
-        renderRebarGrid(canvas, rdg);
-      } else if (analysisResult.twt_grid) {
-        renderDepthToCanvas(canvas, decodeF32(analysisResult.twt_grid),
-          analysisResult.twt_grid_rows!, analysisResult.twt_grid_cols!, dielectricEr);
-      }
-    } catch (e) { console.error('[canvas:rebar] render failed:', e); }
+    const pkg = analysisResult.rebar_peak_grid ?? null;
+
+    const draw = () => {
+      try {
+        if (rdg && rdg.length > 0) {
+          renderRebarDepthCanvas(canvas, rdg, pkg);
+        } else if (analysisResult.twt_grid) {
+          renderDepthToCanvas(canvas, decodeF32(analysisResult.twt_grid),
+            analysisResult.twt_grid_rows!, analysisResult.twt_grid_cols!, dielectricEr);
+        }
+        const colorbar = rebarColorbarRef.current;
+        if (colorbar) renderDepthColorbar(colorbar);
+      } catch (e) { console.error('[canvas:rebar] render failed:', e); }
+    };
+
+    const rafId = requestAnimationFrame(draw);
+    const obs   = new ResizeObserver(() => requestAnimationFrame(draw));
+    obs.observe(canvas);
+    return () => { cancelAnimationFrame(rafId); obs.disconnect(); };
   }, [dielectricEr, analysisResult, outputTab]);
 
   useEffect(() => {
@@ -867,6 +879,7 @@ export default function GPRWorkspace() {
                           outputTab={outputTab} hasResult={hasResult} analysisResult={analysisResult}
                           condCanvasRef={condCanvasRef}
                           rebarCanvasRef={rebarCanvasRef}
+                          rebarColorbarRef={rebarColorbarRef}
                           ampCanvasRef={ampCanvasRef}
                           onExport={exportPNG}
                           condBadge={condBadge} depthBadge={depthBadge} ampBadge={ampBadge}

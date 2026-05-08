@@ -1,5 +1,127 @@
 export type RGB = [number, number, number];
 
+// ── Rebar depth: discrete 0.5-inch band color scale ─────────────────────────
+export const DEPTH_BANDS: { max: number; color: RGB }[] = [
+  { max: 3.0, color: [255, 255, 150] },
+  { max: 3.5, color: [255, 240,  50] },
+  { max: 4.0, color: [255, 210,   0] },
+  { max: 4.5, color: [255, 180,   0] },
+  { max: 5.0, color: [255, 140,   0] },
+  { max: 5.5, color: [240, 100,   0] },
+  { max: 6.0, color: [220,  60,   0] },
+  { max: 6.5, color: [200,  30,   0] },
+  { max: 7.0, color: [170,   0,   0] },
+  { max: 7.5, color: [130,   0,   0] },
+  { max: 999, color: [ 90,   0,   0] },
+];
+
+export function getDepthColor(depthInches: number): RGB {
+  for (const band of DEPTH_BANDS) {
+    if (depthInches <= band.max) return band.color;
+  }
+  return [90, 0, 0];
+}
+
+function drawRebarLines(
+  ctx: CanvasRenderingContext2D,
+  peakGrid: (number | null)[][],
+  W: number,
+  H: number,
+): void {
+  const rows = peakGrid.length;
+  const cols = peakGrid[0]?.length ?? 0;
+  if (!rows || !cols) return;
+
+  ctx.strokeStyle = '#1a1a1a';
+  ctx.lineWidth = 1.0;
+  ctx.globalAlpha = 0.65;
+
+  for (let row = 0; row < rows; row++) {
+    const stripMid = ((row + 0.5) / rows) * H;
+    const stripH   = H / rows;
+    ctx.beginPath();
+    let started = false;
+    for (let col = 0; col < cols; col++) {
+      const peak = peakGrid[row]?.[col];
+      if (peak == null || isNaN(peak)) continue;
+      const x = ((col + 0.5) / cols) * W;
+      const y = stripMid + (peak / 512 - 0.5) * stripH * 0.8;
+      if (!started) { ctx.moveTo(x, y); started = true; }
+      else ctx.lineTo(x, y);
+    }
+    if (started) ctx.stroke();
+  }
+  ctx.globalAlpha = 1.0;
+}
+
+export function renderRebarDepthCanvas(
+  canvas: HTMLCanvasElement,
+  depthGrid: (number | null)[][],
+  peakGrid: (number | null)[][] | null,
+): void {
+  const W = canvas.clientWidth;
+  const H = canvas.clientHeight;
+  if (W === 0 || H === 0) return;
+  canvas.width  = W;
+  canvas.height = H;
+
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  const rows = depthGrid.length;
+  const cols = depthGrid[0]?.length ?? 0;
+  if (!rows || !cols) return;
+
+  const imageData = ctx.createImageData(W, H);
+  for (let py = 0; py < H; py++) {
+    for (let px = 0; px < W; px++) {
+      const gridCol = Math.min(cols - 1, Math.floor((px / W) * cols));
+      const gridRow = Math.min(rows - 1, Math.floor((py / H) * rows));
+      const depth   = depthGrid[gridRow]?.[gridCol];
+      const [r, g, b] = depth != null && !isNaN(depth) ? getDepthColor(depth) : [200, 200, 200] as RGB;
+      const idx = (py * W + px) * 4;
+      imageData.data[idx]     = r;
+      imageData.data[idx + 1] = g;
+      imageData.data[idx + 2] = b;
+      imageData.data[idx + 3] = 255;
+    }
+  }
+  ctx.putImageData(imageData, 0, 0);
+
+  if (peakGrid && peakGrid.length > 0) drawRebarLines(ctx, peakGrid, W, H);
+}
+
+export function renderDepthColorbar(canvas: HTMLCanvasElement): void {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  canvas.width  = canvas.clientWidth;
+  canvas.height = canvas.clientHeight || 44;
+  if (canvas.width === 0) return;
+
+  const bands  = DEPTH_BANDS.slice(0, -1);
+  const blockW = canvas.width / bands.length;
+  const barH   = 20;
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  bands.forEach((band, i) => {
+    const [r, g, b] = band.color;
+    ctx.fillStyle = `rgb(${r},${g},${b})`;
+    ctx.fillRect(Math.floor(i * blockW), 0, Math.ceil(blockW) + 1, barH);
+
+    ctx.fillStyle  = '#222';
+    ctx.font       = '9px Inter, sans-serif';
+    ctx.textAlign  = 'center';
+    const prev     = i === 0 ? 0 : DEPTH_BANDS[i - 1].max;
+    const label    = i === 0 ? `≤${band.max}"` : `${prev}–${band.max}"`;
+    ctx.fillText(label, i * blockW + blockW / 2, barH + 11);
+  });
+
+  ctx.fillStyle = '#222';
+  ctx.font      = '9px Inter, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText(`>${DEPTH_BANDS[bands.length - 1].max}"`, bands.length * blockW - 28, barH + 11);
+}
+
 function lerp(a: number, b: number, t: number) { return a + (b - a) * t; }
 
 function lerpRGB(c1: RGB, c2: RGB, t: number): RGB {

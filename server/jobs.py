@@ -18,7 +18,7 @@ from data import load_csv
 from inference import run_inference, run_rebar_inference, extract_bscan_b64
 from grids import (
     extract_peak_info, build_prob_grid, build_extra_grids,
-    build_rebar_grids, grid_to_list,
+    build_rebar_grids, build_peak_grid, grid_to_list,
 )
 from render import (
     render_cscan_b64, render_rebar_depth_b64, render_amplitude_b64,
@@ -103,13 +103,14 @@ def run_analysis_job(
         _set_progress(job_id, 5, "Ingesting", supabase_client)
 
         # ── Inference ─────────────────────────────────────────────────────────
-        file_preds:      list[np.ndarray] = []
-        file_confs:      list[np.ndarray] = []
-        file_names:      list[str]        = []
-        file_peak_idxs:  list[np.ndarray] = []
-        file_peak_amps:  list[np.ndarray] = []
+        file_preds:       list[np.ndarray] = []
+        file_confs:       list[np.ndarray] = []
+        file_names:       list[str]        = []
+        file_peak_idxs:   list[np.ndarray] = []
+        file_peak_amps:   list[np.ndarray] = []
         rebar_depth_arrs: list[np.ndarray] = []
         rebar_twt_arrs:   list[np.ndarray] = []
+        rebar_peak_arrs:  list[np.ndarray] = []
         per_file_summary: list[dict]       = []
         total_sigs = 0
         n_data_files = sum(
@@ -158,9 +159,9 @@ def run_analysis_job(
                 _jobs[job_id]['progress'] = p
                 _jobs[job_id]['stage']    = "Running inference"
 
-            preds, confs       = run_inference(model, signals, model_config=model_config,
-                                               progress_callback=_infer_cb)
-            depth_arr, twt_arr = run_rebar_inference(rebar_model, signals, frequency_mhz)
+            preds, confs                   = run_inference(model, signals, model_config=model_config,
+                                                            progress_callback=_infer_cb)
+            depth_arr, twt_arr, peak_arr   = run_rebar_inference(rebar_model, signals, frequency_mhz)
             del signals
             if csv_path != dest:
                 csv_path.unlink(missing_ok=True)
@@ -180,17 +181,19 @@ def run_analysis_job(
             file_peak_amps.append(peak_amp)
             rebar_depth_arrs.append(depth_arr)
             rebar_twt_arrs.append(twt_arr)
+            rebar_peak_arrs.append(peak_arr)
             per_file_summary.append({
-                "filename":         fname,
-                "signals":          n,
-                "delam_pct":        delam_pct,
-                "gps":              gps,
-                "bscan":            bscan_info,
-                "rebar_depth_mean": rdm,
-                "rebar_depth_min":  rdmn,
-                "rebar_depth_max":  rdmx,
+                "filename":          fname,
+                "signals":           n,
+                "delam_pct":         delam_pct,
+                "gps":               gps,
+                "bscan":             bscan_info,
+                "rebar_depth_mean":  rdm,
+                "rebar_depth_min":   rdmn,
+                "rebar_depth_max":   rdmx,
                 "rebar_depth_array": depth_arr[:512].tolist(),
                 "twt_array":         twt_arr[:512].tolist(),
+                "peak_sample_array": peak_arr[:512].tolist(),
             })
             total_sigs += n
             files_done += 1
@@ -232,8 +235,12 @@ def run_analysis_job(
         rebar_cscan_b64    = ""
         rebar_depth_grid_j: list = []
         rebar_twt_grid_j:   list = []
+        rebar_peak_grid_j:  list = []
         try:
             rebar_dg, rebar_tg = build_rebar_grids(rebar_depth_arrs, rebar_twt_arrs)
+            peak_g             = build_peak_grid(rebar_peak_arrs)
+            rebar_peak_grid_j  = grid_to_list(peak_g)
+            del peak_g
 
             # Estimate along-track scale from GPS if available; fallback to 1.0 ft/col
             along_track_ft_per_col = 1.0
@@ -273,6 +280,7 @@ def run_analysis_job(
             rebar_depth_grid_j = grid_to_list(rebar_dg)
             rebar_twt_grid_j   = grid_to_list(rebar_tg)
             del rebar_dg, rebar_tg
+
         except Exception as exc:
             print(f"[job:{job_id}] Rebar grid render failed: {exc}", flush=True)
 
@@ -314,6 +322,7 @@ def run_analysis_job(
             "amplitude_grid_data": amplitude_grid_data_j,
             "rebar_depth_grid":    rebar_depth_grid_j,
             "rebar_twt_grid":      rebar_twt_grid_j,
+            "rebar_peak_grid":     rebar_peak_grid_j,
             "rebar_depth_image":   rebar_b64,
             "amplitude_image":     amp_b64,
             "prob_grid":           prob_b64,

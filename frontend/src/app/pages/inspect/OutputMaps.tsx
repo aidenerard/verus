@@ -12,6 +12,7 @@ interface Props {
   analysisResult: AnalysisResult | null;
   condCanvasRef: RefObject<HTMLCanvasElement>;
   rebarCanvasRef: RefObject<HTMLCanvasElement>;
+  rebarColorbarRef: RefObject<HTMLCanvasElement>;
   ampCanvasRef: RefObject<HTMLCanvasElement>;
   onExport: () => void;
   condBadge: () => Badge | null;
@@ -21,12 +22,11 @@ interface Props {
 
 export default function OutputMaps({
   outputTab, hasResult, analysisResult,
-  condCanvasRef, rebarCanvasRef, ampCanvasRef,
+  condCanvasRef, rebarCanvasRef, rebarColorbarRef, ampCanvasRef,
   onExport, condBadge, depthBadge, ampBadge,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // ResizeObserver: log when container gains a real size (helps diagnose layout issues)
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -55,7 +55,6 @@ export default function OutputMaps({
 
   const r = analysisResult!;
 
-  // Diagnostic: log grid data on each render so we can confirm it arrived
   const pd = r.prob_grid_data;
   console.log(
     '[OutputMaps] prob_grid_data:',
@@ -82,19 +81,19 @@ export default function OutputMaps({
   };
   const badge = getBadge();
 
-  const rebarFiles = r.per_file_summary.filter(
-    f => f.rebar_depth_min != null && f.rebar_depth_max != null,
+  const hasCondCanvas  = !!(
+    (r.prob_grid_data  && r.prob_grid_data.length  > 0) || r.prob_grid
   );
-  const rebarMin = rebarFiles.length ? Math.min(...rebarFiles.map(f => f.rebar_depth_min!)) : undefined;
-  const rebarMax = rebarFiles.length ? Math.max(...rebarFiles.map(f => f.rebar_depth_max!)) : undefined;
-  const fmtIn = (v: number) => `${v % 1 === 0 ? v : v.toFixed(1)}"`;
+  const hasRebarCanvas = !!(r.rebar_depth_grid && r.rebar_depth_grid.length > 0);
+  const hasAmpCanvas   = !!(r.amplitude_grid_data && r.amplitude_grid_data.length > 0);
+
+  // Rebar tab shows colorbar: main canvas occupies top, colorbar occupies bottom 44px
+  const COLORBAR_H = 44;
+  const showRebarColorbar = outputTab === 'rebar_depth' && hasRebarCanvas;
 
   const colorBar = (() => {
     if (outputTab === 'condition') {
       return <MapColorBar gradient="spectral" min={0} max={100} label="Delamination probability (%)" formatValue={v => `${v}%`} />;
-    }
-    if (outputTab === 'rebar_depth') {
-      return <MapColorBar gradient="yellow-red" min={rebarMin} max={rebarMax} label="Cover depth (in)" formatValue={fmtIn} />;
     }
     if (outputTab === 'amplitude') {
       return <MapColorBar gradient="yellow-red" label="Amplitude" />;
@@ -102,27 +101,19 @@ export default function OutputMaps({
     return null;
   })();
 
-  // Canvas is used when we have valid JSON grid data (length > 0) or base64 grid data
-  const hasCondCanvas  = !!(
-    (r.prob_grid_data  && r.prob_grid_data.length  > 0) || r.prob_grid
-  );
-  const hasRebarCanvas = !!(r.rebar_depth_grid && r.rebar_depth_grid.length > 0);
-  const hasAmpCanvas   = !!(r.amplitude_grid_data && r.amplitude_grid_data.length > 0);
-
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      {/* Main display area — canvases always mounted for stable refs */}
       <div ref={containerRef} style={{ flex: 1, position: 'relative', overflow: 'hidden', background: RAISED, minHeight: 0 }}>
         {badge && (
           <div style={{ position: 'absolute', top: 10, right: 10, zIndex: 5, fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: badge.color + '20', color: badge.color, backdropFilter: 'blur(4px)' }}>
             {badge.text}
           </div>
         )}
-        <button onClick={onExport} style={{ position: 'absolute', bottom: 12, right: 12, zIndex: 5, display: 'flex', alignItems: 'center', gap: 5, padding: '6px 14px', background: 'rgba(255,255,255,0.92)', color: TEXT, border: `1px solid ${BORDER}`, cursor: 'pointer', fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', fontFamily: 'Inter, sans-serif', backdropFilter: 'blur(4px)' }}>
+        <button onClick={onExport} style={{ position: 'absolute', bottom: showRebarColorbar ? COLORBAR_H + 8 : 12, right: 12, zIndex: 5, display: 'flex', alignItems: 'center', gap: 5, padding: '6px 14px', background: 'rgba(255,255,255,0.92)', color: TEXT, border: `1px solid ${BORDER}`, cursor: 'pointer', fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', fontFamily: 'Inter, sans-serif', backdropFilter: 'blur(4px)' }}>
           <Download size={11} /> Export
         </button>
 
-        {/* ── Condition canvas — always mounted so ref is valid when effect fires ── */}
+        {/* ── Condition canvas ── */}
         <canvas
           ref={condCanvasRef}
           style={{ ...canvasStyle, display: outputTab === 'condition' && hasCondCanvas ? 'block' : 'none' }}
@@ -133,7 +124,7 @@ export default function OutputMaps({
             : <div style={naStyle}>C-scan not available — re-run analysis.</div>
         )}
 
-        {/* ── Rebar depth canvas — always mounted ── */}
+        {/* ── Rebar depth canvas + colorbar ── */}
         {outputTab === 'rebar_depth' && r.rebar_model_used !== undefined && (
           <div style={{ position: 'absolute', top: 10, left: 10, zIndex: 5 }}>
             <span style={{ fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: r.rebar_model_used ? '#22c55e20' : '#f59e0b20', color: r.rebar_model_used ? '#16a34a' : '#d97706' }}>
@@ -143,15 +134,33 @@ export default function OutputMaps({
         )}
         <canvas
           ref={rebarCanvasRef}
-          style={{ ...canvasStyle, display: outputTab === 'rebar_depth' && hasRebarCanvas ? 'block' : 'none' }}
+          style={{
+            position: 'absolute',
+            top: 0, left: 0, right: 0,
+            bottom: showRebarColorbar ? COLORBAR_H : 0,
+            width: '100%',
+            display: outputTab === 'rebar_depth' && hasRebarCanvas ? 'block' : 'none',
+            imageRendering: 'pixelated',
+          }}
         />
+        {showRebarColorbar && (
+          <canvas
+            ref={rebarColorbarRef}
+            style={{
+              position: 'absolute', bottom: 0, left: 0, right: 0,
+              width: '100%', height: COLORBAR_H,
+              display: 'block', background: '#fff',
+              borderTop: `1px solid ${BORDER}`,
+            }}
+          />
+        )}
         {outputTab === 'rebar_depth' && !hasRebarCanvas && (
           r.rebar_cscan_image_url
             ? <img src={r.rebar_cscan_image_url} alt="Rebar depth map" style={imgStyle} />
             : <div style={naStyle}>Rebar depth map not available — re-run analysis.</div>
         )}
 
-        {/* ── Amplitude canvas — always mounted ── */}
+        {/* ── Amplitude canvas ── */}
         <canvas
           ref={ampCanvasRef}
           style={{ ...canvasStyle, display: outputTab === 'amplitude' && hasAmpCanvas ? 'block' : 'none' }}

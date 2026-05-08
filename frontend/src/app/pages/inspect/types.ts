@@ -15,8 +15,9 @@ export interface FileResult {
   rebar_depth_mean?: number;
   rebar_depth_min?:  number;
   rebar_depth_max?:  number;
-  rebar_depth_array?: number[];
-  twt_array?:        number[];
+  rebar_depth_array?:  number[];
+  twt_array?:          number[];
+  peak_sample_array?:  number[];
 }
 
 export interface AnalysisResult {
@@ -49,6 +50,7 @@ export interface AnalysisResult {
   amplitude_image_url?:     string;
   rebar_depth_grid?:        (number | null)[][];
   rebar_twt_grid?:          (number | null)[][];
+  rebar_peak_grid?:         (number | null)[][];
   // v4+ canvas grid data (JSON arrays, pre-downsampled)
   prob_grid_data?:          (number | null)[][];
   amplitude_grid_data?:     (number | null)[][];

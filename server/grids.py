@@ -208,6 +208,35 @@ def build_rebar_grids(
     return depth_g, twt_g
 
 
+def build_peak_grid(
+    file_peak_arrs: list[np.ndarray],
+    max_rows: int = 100,
+    max_cols: int = 300,
+) -> np.ndarray:
+    """
+    Stack per-file rebar peak sample indices into a 2D grid (n_files, max_signals).
+    Downsampled to ≤ max_rows × max_cols, NaN for padding.
+    """
+    n_files  = len(file_peak_arrs)
+    max_sigs = max(len(a) for a in file_peak_arrs)
+
+    grid = np.full((n_files, max_sigs), np.nan, dtype=np.float32)
+    for row, arr in enumerate(file_peak_arrs):
+        n = len(arr)
+        grid[row, :n] = arr.astype(np.float32)
+
+    r, c = grid.shape
+    if r > max_rows:
+        idx  = np.linspace(0, r - 1, max_rows, dtype=int)
+        grid = grid[idx, :]
+    if c > max_cols:
+        idx  = np.linspace(0, c - 1, max_cols, dtype=int)
+        grid = grid[:, idx]
+
+    _fill_trailing_nan(grid)
+    return grid
+
+
 def grid_to_list(arr: np.ndarray) -> list:
     """Convert float32 grid (possibly with NaN) to nested Python list; NaN → None."""
     return [[None if np.isnan(v) else round(float(v), 3) for v in row] for row in arr]
