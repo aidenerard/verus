@@ -2,6 +2,7 @@ import { X } from 'lucide-react';
 import { PANEL, RAISED, BORDER, BORDER2, TEXT, TEXT2, ACCENT, MANUFACTURERS } from './constants';
 import type { ManufacturerKey } from './constants';
 import type { UploadedFile } from './types';
+import { estimateAnalysisSeconds } from './utils';
 
 interface Props {
   files: UploadedFile[];
@@ -17,9 +18,19 @@ function formatSize(bytes: number): string {
   return `${Math.ceil(bytes / 1e3)} KB`;
 }
 
+function formatEstimate(secs: number): string {
+  if (secs >= 60) {
+    const mins = Math.ceil(secs / 60);
+    return `~${mins} minute${mins !== 1 ? 's' : ''}`;
+  }
+  return `~${secs} seconds`;
+}
+
 export default function ConfirmAnalysisModal({ files, manufacturer, frequencyMhz, onConfirm, onCancel }: Props) {
   const totalBytes = files.reduce((s, f) => s + f.file.size, 0);
   const mfrName = MANUFACTURERS.find(m => m.key === manufacturer)?.name ?? (manufacturer || '—');
+  const estimatedSecs = estimateAnalysisSeconds(files.map(f => f.file), manufacturer);
+  const showServerNote = estimatedSecs > 300;
 
   const rows = [
     { label: 'Files',     value: `${files.length} file${files.length !== 1 ? 's' : ''} · ${formatSize(totalBytes)}` },
@@ -48,13 +59,24 @@ export default function ConfirmAnalysisModal({ files, manufacturer, frequencyMhz
         </div>
 
         <div style={{ padding: '20px 24px' }}>
-          <div style={{ background: RAISED, border: `1px solid ${BORDER}`, padding: '14px 16px', marginBottom: 20 }}>
+          <div style={{ background: RAISED, border: `1px solid ${BORDER}`, padding: '14px 16px', marginBottom: 12 }}>
             {rows.map(({ label, value }) => (
               <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
                 <span style={{ color: TEXT2 }}>{label}</span>
                 <span style={{ color: TEXT, fontWeight: 600 }}>{value}</span>
               </div>
             ))}
+          </div>
+
+          <div style={{ marginBottom: 20, paddingLeft: 2 }}>
+            <span style={{ fontSize: 11, color: TEXT2 }}>
+              Estimated analysis time: <strong style={{ color: TEXT, fontWeight: 600 }}>{formatEstimate(estimatedSecs)}</strong>
+            </span>
+            {showServerNote && (
+              <div style={{ marginTop: 4, fontSize: 10, color: TEXT2, opacity: 0.75 }}>
+                Large uploads may take longer on the free server tier.
+              </div>
+            )}
           </div>
 
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>

@@ -17,24 +17,19 @@ import { supabase } from '../../../lib/supabase';
 import {
   SERVER, MAPBOX_TOKEN, DEFAULT_CENTER, GPR_EXTS,
   BG, PANEL, RAISED, BORDER, BORDER2, TEXT, TEXT2, ACCENT,
-  STATUS_MSGS, WAKE_TIMEOUT_MS, WAKE_INTERVAL_MS, POLL_TIMEOUT_MS,
+  WAKE_TIMEOUT_MS, WAKE_INTERVAL_MS, POLL_TIMEOUT_MS,
   MANUFACTURERS, MANUFACTURER_EXTS, DEFAULT_ER, LAYER_DEFS,
 } from './constants';
 import type { ManufacturerKey, LayerId } from './constants';
 import type { AnalysisResult, OutputTab, UploadedFile } from './types';
 import { decodeF32, renderConditionToCanvas, renderDepthToCanvas, renderConditionGrid, renderRebarGrid, renderAmpGrid } from './colormaps';
-import { delamColor, badgeColor } from './utils';
+import { delamColor, badgeColor, estimateAnalysisSeconds } from './utils';
 import SetupWizard from './SetupWizard';
 import AdjustPanel from './AdjustPanel';
 import OutputMaps from './OutputMaps';
 import ConfirmAnalysisModal from './ConfirmAnalysisModal';
 import AnalysisProgressOverlay from './AnalysisProgressOverlay';
 
-// TODO: refine after 20+ real jobs by comparing analysis_jobs.signals_analyzed
-// vs analysis_jobs.analysis_time_sec in Supabase.
-const SIGNALS_PER_SEC = 65;
-const FIXED_OVERHEAD  = 8;   // seconds: ingest + convert + render + Supabase write
-const BYTES_PER_SIG   = 1000; // rough: ~1 KB per GPR trace in a DZT file
 
 export default function GPRWorkspace() {
   const navigate    = useNavigate();
@@ -489,19 +484,18 @@ export default function GPRWorkspace() {
   }, []);
 
   const onConfirmAnalysis = useCallback(() => {
-    const totalBytes = files.reduce((s, f) => s + f.file.size, 0);
-    const estSecs    = Math.ceil(totalBytes / (BYTES_PER_SIG * SIGNALS_PER_SEC)) + FIXED_OVERHEAD;
+    const estSecs = estimateAnalysisSeconds(files.map(f => f.file), manufacturer);
     setEstimatedSecs(estSecs);
     setJobProgress(0);
     setJobStage('');
     setShowConfirm(false);
     setShowProgressOverlay(true);
     startAnalysis();
-  }, [files, startAnalysis]);
+  }, [files, manufacturer, startAnalysis]);
 
   useEffect(() => {
     if (jobStatus === 'complete' || jobStatus === 'failed') {
-      const t = setTimeout(() => setShowProgressOverlay(false), 700);
+      const t = setTimeout(() => setShowProgressOverlay(false), 800);
       return () => clearTimeout(t);
     }
   }, [jobStatus]);
@@ -1160,8 +1154,8 @@ export default function GPRWorkspace() {
         <AnalysisProgressOverlay
           structureName={structureName}
           estimatedSecs={estimatedSecs}
-          jobProgress={jobProgress}
-          jobStage={jobStage}
+          fileCount={files.length}
+          fileFormat={files.length > 0 ? (files[0].file.name.split('.').pop()?.toUpperCase() ?? 'GPR') : 'GPR'}
           jobStatus={jobStatus as 'pending' | 'processing' | 'complete' | 'failed'}
           errorMsg={errorMsg}
         />

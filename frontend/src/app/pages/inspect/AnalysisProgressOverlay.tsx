@@ -4,86 +4,68 @@ import { ACCENT, BORDER, TEXT, TEXT2 } from './constants';
 interface Props {
   structureName: string;
   estimatedSecs: number;
-  jobProgress:   number;
-  jobStage:      string;
+  fileCount:     number;
+  fileFormat:    string;
   jobStatus: 'pending' | 'processing' | 'complete' | 'failed';
   errorMsg: string | null;
 }
 
-function fmtCountdown(secs: number): string {
-  const m = Math.floor(secs / 60);
-  const s = Math.floor(secs % 60);
-  return `${m}:${s.toString().padStart(2, '0')}`;
+function formatTimeRemaining(seconds: number): string {
+  if (seconds > 60) {
+    const minutes = Math.ceil(seconds / 60);
+    return `~${minutes} minute${minutes !== 1 ? 's' : ''} remaining`;
+  } else if (seconds > 10) {
+    return `${seconds} seconds remaining`;
+  } else if (seconds > 0) {
+    return 'Almost done...';
+  } else {
+    return 'Finalizing...';
+  }
+}
+
+function getStatusMessage(elapsed: number, total: number, fileCount: number, fileFormat: string): string {
+  const pct = elapsed / Math.max(total, 1);
+  if (pct < 0.1) return `Uploading ${fileCount} ${fileFormat} file${fileCount !== 1 ? 's' : ''}...`;
+  if (pct < 0.25) return 'Converting data format...';
+  if (pct < 0.5) return 'Running AI delamination analysis...';
+  if (pct < 0.7) return 'Computing rebar depth estimates...';
+  if (pct < 0.85) return 'Generating condition maps...';
+  return 'Almost done — finalizing report...';
 }
 
 export default function AnalysisProgressOverlay({
-  structureName, estimatedSecs, jobProgress, jobStage, jobStatus, errorMsg,
+  structureName, estimatedSecs, fileCount, fileFormat, jobStatus, errorMsg,
 }: Props) {
-  const startRef = useRef(Date.now());
   const [elapsed, setElapsed] = useState(0);
-  const [displayedProgress, setDisplayedProgress] = useState(0);
-  const displayedRef = useRef(0);
-  const rafRef = useRef<number | null>(null);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const isDone    = jobStatus === 'complete' || jobStatus === 'failed';
   const isSuccess = jobStatus === 'complete';
 
   useEffect(() => {
-    if (isDone) return;
-    const iv = setInterval(
-      () => setElapsed(Math.floor((Date.now() - startRef.current) / 1000)),
-      1000,
-    );
-    return () => clearInterval(iv);
-  }, [isDone]);
-
-  // Smooth rAF interpolation: ease displayedProgress toward jobProgress
-  useEffect(() => {
-    if (rafRef.current) cancelAnimationFrame(rafRef.current);
-
     if (isDone) {
-      displayedRef.current = 100;
-      setDisplayedProgress(100);
+      if (intervalRef.current) clearInterval(intervalRef.current);
       return;
     }
+    intervalRef.current = setInterval(() => setElapsed(prev => prev + 1), 1000);
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+  }, [isDone]);
 
-    const animate = () => {
-      const curr   = displayedRef.current;
-      const target = jobProgress;
-      const next   = curr + (target - curr) * 0.08;
-      if (Math.abs(next - target) > 0.05) {
-        displayedRef.current = next;
-        setDisplayedProgress(next);
-        rafRef.current = requestAnimationFrame(animate);
-      } else {
-        displayedRef.current = target;
-        setDisplayedProgress(target);
-      }
-    };
-    rafRef.current = requestAnimationFrame(animate);
-    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
-  }, [jobProgress, isDone]);
+  const timeRemaining = Math.max(0, estimatedSecs - elapsed);
 
-  // Honest remaining time: rate-based when we have real progress, else use estimate
-  const remaining = (() => {
-    if (isDone) return 0;
-    if (jobProgress > 5 && elapsed > 0) {
-      return Math.max(0, Math.round(elapsed * (100 - jobProgress) / jobProgress));
-    }
-    return Math.max(0, estimatedSecs - elapsed);
-  })();
+  const progress = isSuccess
+    ? 100
+    : Math.min(90, ((estimatedSecs - timeRemaining) / Math.max(estimatedSecs, 1)) * 90);
 
-  const barPct    = displayedProgress;
-  const barColor  = isDone && !isSuccess ? '#ef4444' : ACCENT;
-  const stageText = isDone
-    ? (isSuccess ? 'Analysis complete!' : (errorMsg ?? 'Analysis failed'))
-    : (jobStage || 'Connecting…');
+  const barColor = isSuccess ? '#22c55e' : isDone ? '#ef4444' : ACCENT;
 
   const timeLabel = isDone
     ? (isSuccess ? `Completed in ${elapsed}s` : 'See error below')
-    : remaining > 0
-      ? <>Time remaining: <strong style={{ color: TEXT }}>{fmtCountdown(remaining)}</strong></>
-      : 'Finishing up…';
+    : formatTimeRemaining(timeRemaining);
+
+  const statusText = isDone
+    ? (isSuccess ? 'Analysis complete!' : (errorMsg ?? 'Analysis failed'))
+    : getStatusMessage(elapsed, estimatedSecs, fileCount, fileFormat);
 
   return (
     <div style={{
@@ -105,17 +87,19 @@ export default function AnalysisProgressOverlay({
 
         <div style={{ height: 6, background: BORDER, borderRadius: 3, overflow: 'hidden', marginBottom: 8 }}>
           <div style={{
-            height: '100%', borderRadius: 3, background: barColor,
-            width: `${barPct}%`,
+            height: '100%', borderRadius: 3,
+            background: barColor,
+            width: `${progress}%`,
+            transition: 'width 1s linear, background 0.3s ease',
           }} />
         </div>
 
         <div style={{ fontSize: 10, color: TEXT2, marginBottom: 24, textAlign: 'right' }}>
-          {Math.round(barPct)}%
+          {Math.round(progress)}%
         </div>
 
         <div style={{ fontSize: 12, color: isDone && !isSuccess ? '#ef4444' : TEXT2, minHeight: 18 }}>
-          {stageText}
+          {statusText}
         </div>
       </div>
     </div>
