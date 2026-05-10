@@ -1,30 +1,17 @@
+/**
+ * ThreeDView.tsx
+ * Three.js 3D bridge-deck visualisation with orbit controls and hover tooltips.
+ *
+ * Does NOT: define its own types or layout constants — see ThreeDTypes.ts.
+ */
+
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-
-interface FileResult {
-  filename: string;
-  signals: number;
-  delam_pct: number;
-}
-
-interface ThreeDViewProps {
-  perFileSummary: FileResult[];
-}
-
-interface TooltipState {
-  x: number;
-  y: number;
-  lines: string[];
-}
-
-const BG_COLOR   = '#0a1628';
-const CELL_W     = 1.0;
-const CELL_H     = 0.18;
-const CELL_D     = 1.0;
-const GAP        = 0.08;
-const GRID_ROWS  = 24;  // visual rows per scan line (depth axis)
-const HEIGHT_PX  = 500;
+import {
+  BG_COLOR, CELL_W, CELL_H, CELL_D, GAP, GRID_ROWS, HEIGHT_PX,
+} from './ThreeDTypes';
+import type { ThreeDViewProps, TooltipState } from './ThreeDTypes';
 
 function delamToThreeColor(pct: number): THREE.Color {
   const t = Math.min(1, Math.max(0, pct / 100));
