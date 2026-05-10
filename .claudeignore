@@ -1,0 +1,53 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build output
+frontend/dist/
+frontend/build/
+build/
+dist/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+venv/
+.venv/
+env/
+
+# ML model weights
+*.pth
+*.pt
+*.ckpt
+*.pkl
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+*.local
+
+# Large data directories
+data/
+gpr_data/
+all_bridges_csv/
+synthetic_data/
+bscan_parts/
+media/
+models/
+
+# Vite internals
+frontend/.vite/
+frontend/src/imports/
+
+# Misc
+.DS_Store
+*.log
+cnn_out.txt
+kaggle_push/
+verus-server/
+scripts/

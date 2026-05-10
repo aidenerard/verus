@@ -15,6 +15,4 @@ __pycache__/
 *.pyo
 .env
 *_out.txt
-CLAUDE.md
-.claudeignore
 .claude/
