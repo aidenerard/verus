@@ -1,8 +1,9 @@
-import { useRef } from 'react';
-import { UploadCloud, X, Play } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { UploadCloud, X, Play, ChevronDown, ChevronRight, SlidersHorizontal } from 'lucide-react';
 import type { UploadedFile } from '../inspect/types';
 import { MANUFACTURERS, FREQ_OPTIONS, GPR_EXTS, type ManufacturerKey } from '../inspect/constants';
 import { ACCENT, BORDER, BORDER2, PANEL, RAISED, TEXT, TEXT2, TEXT3 } from './tokens';
+import ProcessingOptionsPanel from './ProcessingOptionsPanel';
 
 interface Props {
   files:          UploadedFile[];
@@ -19,6 +20,7 @@ export default function GPRUploadCard({
   files, setFiles, manufacturer, setManufacturer, frequencyMhz, setFrequencyMhz, onStart, busy,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const addFiles = (incoming: FileList | null) => {
     if (!incoming) return;
@@ -100,6 +102,30 @@ export default function GPRUploadCard({
           onChange={v => setFrequencyMhz(parseInt(v))}
           options={FREQ_OPTIONS.map(f => ({ value: String(f.mhz), label: f.label }))}
         />
+      </div>
+
+      <div style={{ borderTop: `1px solid ${BORDER}`, margin: '0 -28px 18px', padding: '14px 28px 0' }}>
+        <button
+          type="button"
+          onClick={() => setAdvancedOpen(v => !v)}
+          aria-expanded={advancedOpen}
+          style={{
+            width: '100%', background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+            display: 'flex', alignItems: 'center', gap: 8,
+            fontSize: 11, fontWeight: 800, letterSpacing: '0.10em', textTransform: 'uppercase',
+            color: TEXT2, fontFamily: 'inherit',
+          }}
+        >
+          {advancedOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          <SlidersHorizontal size={12} />
+          Advanced Options
+        </button>
+
+        {advancedOpen && (
+          <div style={{ marginTop: 16, padding: '16px 18px', background: RAISED, border: `1px solid ${BORDER}` }}>
+            <ProcessingOptionsPanel />
+          </div>
+        )}
       </div>
 
       <button

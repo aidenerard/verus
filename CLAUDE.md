@@ -18,7 +18,8 @@ The precedent is already set: GPRWorkspace (1659→940→493→277), HomePage (8
 | Page sub-components | `app/pages/[page]/ComponentName.tsx` (co-located) |
 | Page design tokens | `app/pages/[page]/tokens.ts` or inline in `constants.ts` |
 | Inspection workspaces | `app/pages/workspace/[Method]Workspace.tsx` |
-| Workspace shell & sidebar | `app/pages/workspace/WorkspaceLayout.tsx`, `WorkspaceSidebar.tsx` |
+| Workspace shell | `app/pages/workspace/WorkspaceLayout.tsx` (analysis view) |
+| Pre-workspace flow | `app/pages/workspace/ModuleSelectPage.tsx`, `MethodSelectPage.tsx`, `SelectPageShell.tsx` |
 | Processing options context | `app/pages/workspace/ProcessingOptionsContext.tsx` |
 | Shared analysis primitives | `app/pages/inspect/` (polling hook, Mapbox hook, types, constants) |
 | Shared components | `app/components/ComponentName.tsx` |
@@ -160,12 +161,12 @@ export const SERVER = import.meta.env.VITE_API_URL !== undefined
 | `/signup` | `SignupPage` | public |
 | `/team` | `TeamPage` | public |
 | `/dashboard` | `DashboardPage` | protected |
-| `/workspace` | → redirects to `/workspace/em/gpr` | — |
-| `/workspace/em` | → redirects to `/workspace/em/gpr` | — |
+| `/workspace` | `ModuleSelectPage` (Electromagnetic vs Seismic) | protected |
+| `/workspace/em` | `MethodSelectPage` (GPR · FDEM · Magnetometer) | protected |
+| `/workspace/seismic` | `MethodSelectPage` (MASW · Impact Echo) | protected |
 | `/workspace/em/gpr` | `GPRWorkspace` (inside `WorkspaceLayout`) | protected |
 | `/workspace/em/fdem` | `FDEMWorkspace` (placeholder) | protected |
 | `/workspace/em/magnetometer` | `MagWorkspace` (placeholder) | protected |
-| `/workspace/seismic` | → redirects to `/workspace/seismic/masw` | — |
 | `/workspace/seismic/masw` | `MASWWorkspace` (placeholder) | protected |
 | `/workspace/seismic/impact-echo` | `ImpactEchoWorkspace` (placeholder) | protected |
 | `/analyze` | → redirects to `/workspace/em/gpr` (preserves query) | — |
@@ -173,7 +174,7 @@ export const SERVER = import.meta.env.VITE_API_URL !== undefined
 | `/inspect/masw` | → redirects to `/workspace/seismic/masw` | — |
 | `/inspect/ir` | → redirects to `/workspace/seismic/impact-echo` | — |
 
-`WorkspaceLayout` wraps all `/workspace/*` routes with a left sidebar (Electromagnetic + Seismic sections, plus collapsible Processing Options) and a top toolbar. Method components render inside the layout's `<Outlet />`. Legacy `/inspect/*` redirects use `RedirectKeepQuery` so `?project_id=…` deep links from the dashboard survive.
+Inspection is a guided two-step flow: `/workspace` (module) → `/workspace/<module>` (method) → `/workspace/<module>/<method>` (analysis). The two select pages share `SelectPageShell` (logo + back button, no sidebar). Once the user picks a method, `WorkspaceLayout` wraps the analysis view with a minimal top bar (back, Verus logo, breadcrumb `Workspace › Module › Method`, user avatar) — no sidebar. `ProcessingOptionsProvider` lives on `WorkspaceLayout` and is consumed by the GPR upload card's collapsible "Advanced Options" section. Legacy `/inspect/*` redirects use `RedirectKeepQuery` so `?project_id=…` deep links from the dashboard survive.
 
 ---
 
@@ -276,13 +277,13 @@ git push origin main              # triggers both Vercel + Render auto-deploy
 | `app/pages/DashboardPage.tsx` | Project list + job history (protected) |
 | `app/pages/home/` | Sub-components: Hero, Navbar, HowItWorks, MethodSlider, OurPlatform, WhyVerus, TickerStripe, Footer, tokens, useReveal |
 | `app/pages/dashboard/` | Sub-components: JobTable, ComingSoonModal, types |
-| `app/pages/workspace/WorkspaceLayout.tsx` | Shell: sidebar host + top toolbar + `<Outlet />`; wraps all `/workspace/*` in `ProcessingOptionsProvider` |
-| `app/pages/workspace/WorkspaceSidebar.tsx` | Two-section nav (Electromagnetic / Seismic) with "Soon" badges; mobile drawer |
-| `app/pages/workspace/ProcessingOptionsPanel.tsx` | Collapsible sidebar section: gridding algorithm, search radius, edge clipping, filters |
+| `app/pages/workspace/ModuleSelectPage.tsx` | Step 1: full-screen card picker for Electromagnetic vs Seismic |
+| `app/pages/workspace/MethodSelectPage.tsx` | Step 2: card picker for methods within a module; coming-soon methods rendered as disabled |
+| `app/pages/workspace/SelectPageShell.tsx` | Shared shell for the two select pages (back button, Verus logo, eyebrow + heading) |
+| `app/pages/workspace/WorkspaceLayout.tsx` | Analysis-view shell: minimal top bar + breadcrumb + `<Outlet />`; provides `ProcessingOptionsProvider` |
+| `app/pages/workspace/ProcessingOptionsPanel.tsx` | Pure-content form (gridding, search radius, edge clipping, filters) — embedded into GPR upload card |
 | `app/pages/workspace/ProcessingOptionsContext.tsx` | `ProcessingOptionsProvider` + `useProcessingOptions` hook + `toFormData` serializer |
 | `app/pages/workspace/PlaceholderWorkspace.tsx` | Reusable Coming Soon screen (description, use cases, email capture) |
-| `app/pages/workspace/EMModule.tsx` | `/workspace/em` → `/workspace/em/gpr` redirect |
-| `app/pages/workspace/SeismicModule.tsx` | `/workspace/seismic` → `/workspace/seismic/masw` redirect |
 | `app/pages/workspace/GPRWorkspace.tsx` | GPR shell: upload + polling + result; loads saved job via `?project_id=` |
 | `app/pages/workspace/GPRUploadCard.tsx` | Drag-drop file list + equipment/frequency selects + Start button |
 | `app/pages/workspace/GPRResults.tsx` | Three-panel result view (Horizon Picks / Rebar Depth / Corrosion Risk) + stats bar + Mapbox GPS panel |

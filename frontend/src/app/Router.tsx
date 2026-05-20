@@ -6,9 +6,9 @@ import LoginPage from './pages/LoginPage';
 import SignupPage from './pages/SignupPage';
 import DashboardPage from './pages/DashboardPage';
 import TeamPage from './pages/TeamPage';
+import ModuleSelectPage from './pages/workspace/ModuleSelectPage';
+import MethodSelectPage from './pages/workspace/MethodSelectPage';
 import WorkspaceLayout from './pages/workspace/WorkspaceLayout';
-import EMModule from './pages/workspace/EMModule';
-import SeismicModule from './pages/workspace/SeismicModule';
 import GPRWorkspace from './pages/workspace/GPRWorkspace';
 import FDEMWorkspace from './pages/workspace/FDEMWorkspace';
 import MagWorkspace from './pages/workspace/MagWorkspace';
@@ -40,17 +40,26 @@ export default function Router() {
           <ProtectedRoute><DashboardPage /></ProtectedRoute>
         } />
 
+        {/* Pre-workspace selection flow (no sidebar) */}
         <Route path="/workspace" element={
+          <ProtectedRoute><ModuleSelectPage /></ProtectedRoute>
+        } />
+        <Route path="/workspace/em" element={
+          <ProtectedRoute><MethodSelectPage moduleId="em" /></ProtectedRoute>
+        } />
+        <Route path="/workspace/seismic" element={
+          <ProtectedRoute><MethodSelectPage moduleId="seismic" /></ProtectedRoute>
+        } />
+
+        {/* Analysis workspaces — wrapped in WorkspaceLayout (top bar + breadcrumb only) */}
+        <Route element={
           <ProtectedRoute><WorkspaceLayout /></ProtectedRoute>
         }>
-          <Route index                  element={<Navigate to="em/gpr" replace />} />
-          <Route path="em"              element={<EMModule />} />
-          <Route path="em/gpr"          element={<GPRWorkspace />} />
-          <Route path="em/fdem"         element={<FDEMWorkspace />} />
-          <Route path="em/magnetometer" element={<MagWorkspace />} />
-          <Route path="seismic"         element={<SeismicModule />} />
-          <Route path="seismic/masw"    element={<MASWWorkspace />} />
-          <Route path="seismic/impact-echo" element={<ImpactEchoWorkspace />} />
+          <Route path="/workspace/em/gpr"              element={<GPRWorkspace />} />
+          <Route path="/workspace/em/fdem"             element={<FDEMWorkspace />} />
+          <Route path="/workspace/em/magnetometer"     element={<MagWorkspace />} />
+          <Route path="/workspace/seismic/masw"        element={<MASWWorkspace />} />
+          <Route path="/workspace/seismic/impact-echo" element={<ImpactEchoWorkspace />} />
         </Route>
 
         {/* Legacy redirects — preserve query string for ?project_id=... links */}
