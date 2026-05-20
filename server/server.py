@@ -52,10 +52,11 @@ def _init_supabase() -> None:
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
-MODEL_PATH              = Path(os.environ.get("MODEL_PATH",             Path(__file__).parent / "model.pth"))
-REBAR_MODEL_PATH        = Path(os.environ.get("REBAR_MODEL_PATH",       Path(__file__).parent / "rebar_model.pth"))
-MODEL_CONFIG_PATH       = Path(os.environ.get("MODEL_CONFIG_PATH",      Path(__file__).parent / "model_config.json"))
-REBAR_MODEL_CONFIG_PATH = Path(os.environ.get("REBAR_MODEL_CONFIG_PATH", Path(__file__).parent / "rebar_model_config.json"))
+_HERE = Path(__file__).parent
+MODEL_PATH              = Path(os.environ.get("MODEL_PATH",             _HERE / "model.pth"))
+REBAR_MODEL_PATH        = Path(os.environ.get("REBAR_MODEL_PATH",       _HERE / "models" / "rebar_model.pth"))
+MODEL_CONFIG_PATH       = Path(os.environ.get("MODEL_CONFIG_PATH",      _HERE / "configs" / "model_config.json"))
+REBAR_MODEL_CONFIG_PATH = Path(os.environ.get("REBAR_MODEL_CONFIG_PATH", _HERE / "configs" / "rebar_model_config.json"))
 MAX_FILE_MB   = 50
 MAX_TOTAL_MB  = 2000
 

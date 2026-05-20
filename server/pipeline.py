@@ -241,7 +241,7 @@ def build_result_payload(
     except Exception as exc:
         print(f"[job:{job_id}] Rebar grid render failed: {exc}", flush=True)
 
-    amp_b64 = twt_b64 = ""
+    rebar_b64 = amp_b64 = twt_b64 = ""
     amplitude_grid_data_j: list = []; twt_rows = twt_cols = 0
     conf_pct = depth_acc_in = 0.0; sig_quality = "Fair"
     try:

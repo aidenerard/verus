@@ -15,17 +15,22 @@ from typing import Optional
 
 from ingest_converters import (
     convert_dzt, convert_dt1, convert_mala, convert_segy,
-    convert_ids, convert_impulseradar, passthrough_csv,
+    convert_impulseradar, passthrough_csv,
 )
+from ingest_converters_ids import convert_ids
 
 # ── Format metadata ───────────────────────────────────────────────────────────
 
 SUPPORTED_EXTENSIONS: set[str] = {
     ".csv", ".dzt", ".dt1", ".rd3", ".rd7", ".segy", ".sgy",
-    ".dt", ".gec",           # IDS GeoRadar
+    ".dt", ".gec",           # IDS GeoRadar legacy
+    ".scan",                 # IDS GeoRadar OneVision binary
     ".iprb", ".iprh",        # ImpulseRadar
 }
-COMPANION_EXTENSIONS: set[str] = {".dzg", ".hd", ".rad"}
+COMPANION_EXTENSIONS: set[str] = {
+    ".dzg", ".hd", ".rad",
+    ".pos", ".prcs", ".svy", ".nmea",  # IDS GeoRadar companions
+}
 
 FORMAT_INFO: list[dict] = [
     {"ext": ".csv",  "label": "CSV",       "description": "Pass-through CSV"},
@@ -59,6 +64,7 @@ _EXT_MAP: dict[str, any] = {
     ".sgy":  convert_segy,
     ".dt":   convert_ids,
     ".gec":  convert_ids,
+    ".scan": convert_ids,
     ".iprb": convert_impulseradar,
     ".iprh": convert_impulseradar,
 }
