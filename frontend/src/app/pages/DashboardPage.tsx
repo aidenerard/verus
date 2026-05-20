@@ -1,32 +1,18 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router';
-import { Radio, Waves, Thermometer } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import VerusLogo from '../components/VerusLogo';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabase';
-import type { AnalysisJob, InspectionModule } from './dashboard/types';
-import ComingSoonModal from './dashboard/ComingSoonModal';
-import JobTable from './dashboard/JobTable';
-
-const MODULES: InspectionModule[] = [
-  { id: 'gpr',      name: 'GPR',      fullName: 'Ground-Penetrating Radar',               status: 'available',      icon: Radio,       standard: 'ASTM D6087', description: 'Detects subsurface delamination from electromagnetic reflection patterns in GPR A-scan waveforms.' },
-  { id: 'masw',     name: 'MASW',     fullName: 'Multichannel Analysis of Surface Waves', status: 'in-development', icon: Waves,       standard: 'ASTM D7400', description: 'Detects subsurface anomalies and layer stiffness from Rayleigh wave dispersion curves.' },
-  { id: 'infrared', name: 'Infrared', fullName: 'Infrared Thermography',                  status: 'in-development', icon: Thermometer, standard: 'ASTM D4788', description: 'Detects subsurface delamination and moisture intrusion from thermal gradient patterns.' },
-];
-
-const INSPECT_ROUTES: Record<string, string> = {
-  gpr:      '/workspace/em/gpr',
-  masw:     '/workspace/seismic/masw',
-  infrared: '/workspace/seismic/impact-echo',
-};
+import type { AnalysisJob } from './dashboard/types';
+import JobCards from './dashboard/JobCards';
 
 export default function DashboardPage() {
   const { auth, logout, user } = useAuth();
   const navigate = useNavigate();
-  const [modalModule,   setModalModule]   = useState<InspectionModule | null>(null);
-  const [jobs,          setJobs]          = useState<AnalysisJob[]>([]);
-  const [jobsLoading,   setJobsLoading]   = useState(true);
-  const [deleteError,   setDeleteError]   = useState<string | null>(null);
+  const [jobs,        setJobs]        = useState<AnalysisJob[]>([]);
+  const [jobsLoading, setJobsLoading] = useState(true);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user) return;
@@ -63,7 +49,6 @@ export default function DashboardPage() {
       if (count === 0) throw new Error('Delete was blocked by the database. Run migration 007 in your Supabase SQL Editor, then try again.');
 
       if (job.project_id) {
-        // Only delete the project if no other jobs reference it
         const { count: remaining } = await supabase
           .from('analysis_jobs')
           .select('*', { count: 'exact', head: true })
@@ -88,24 +73,13 @@ export default function DashboardPage() {
     }
   };
 
-  const handleModuleClick = (module: InspectionModule) => {
-    const route = INSPECT_ROUTES[module.id];
-    if (route) {
-      if (module.id === 'gpr') localStorage.removeItem('verus_project_id');
-      navigate(route);
-    } else {
-      setModalModule(module);
-    }
-  };
-
+  const startNew = () => navigate('/workspace');
   const initials = auth.user?.name
     ? auth.user.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
     : 'U';
 
   return (
     <div style={{ minHeight: '100vh', background: '#F5F3EF', fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, sans-serif' }}>
-
-      {/* Header */}
       <header style={{ background: '#FFFFFF', borderBottom: '2px solid #E2DED9', padding: '0 40px', height: 64, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <Link to="/" style={{ textDecoration: 'none' }}>
           <VerusLogo size={36} wordmarkColor="#0A0A0A" />
@@ -128,63 +102,38 @@ export default function DashboardPage() {
         </div>
       </header>
 
-      <main style={{ maxWidth: 1100, margin: '0 auto', padding: '48px 40px' }}>
-
-        {/* Welcome */}
-        <div style={{ marginBottom: 48 }}>
-          <h1 style={{ fontSize: 26, fontWeight: 800, color: '#0A0A0A', margin: '0 0 6px', letterSpacing: '-0.02em' }}>
-            Welcome back{auth.user?.name ? `, ${auth.user.name.split(' ')[0]}` : ''}.
-          </h1>
-          <p style={{ fontSize: 14, color: '#7A7470', margin: 0 }}>Select an inspection method below to start a new analysis.</p>
+      <main style={{ maxWidth: 1280, margin: '0 auto', padding: '40px 40px 64px' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 24, marginBottom: 32, flexWrap: 'wrap' }}>
+          <div>
+            <h1 style={{ fontSize: 28, fontWeight: 800, color: '#0A0A0A', margin: '0 0 6px', letterSpacing: '-0.02em' }}>
+              Your Inspections
+            </h1>
+            <p style={{ fontSize: 14, color: '#7A7470', margin: 0 }}>
+              {jobs.length === 0 ? 'Start a new inspection to populate this page.' : `${jobs.length} project${jobs.length !== 1 ? 's' : ''} on file.`}
+            </p>
+          </div>
+          <button onClick={startNew}
+            style={{
+              padding: '11px 22px', background: '#E8601C', color: '#FFFFFF', border: 'none',
+              fontWeight: 700, fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase',
+              cursor: 'pointer', fontFamily: 'Inter, sans-serif',
+              display: 'inline-flex', alignItems: 'center', gap: 8,
+              boxShadow: '0 4px 12px rgba(232,96,28,0.25)',
+            }}>
+            <Plus size={14} /> New Inspection
+          </button>
         </div>
 
-        {/* Module selector */}
-        <section style={{ marginBottom: 56 }}>
-          <div style={{ background: '#FFFFFF', border: '2px solid #E2DED9' }}>
-            <div style={{ padding: '14px 24px', borderBottom: '2px solid #E2DED9', background: '#F5F3EF' }}>
-              <h2 style={{ margin: 0, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#7A7470' }}>Start a New Inspection</h2>
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 0 }}>
-              {MODULES.map((module, i) => {
-                const Icon = module.icon;
-                const isAvailable = module.status === 'available';
-                const isLast = i === MODULES.length - 1;
-                return (
-                  <button key={module.id} onClick={() => handleModuleClick(module)}
-                    style={{ width: '100%', textAlign: 'left', padding: '24px', background: '#FFFFFF', border: 'none', borderRight: isLast ? 'none' : '1px solid #E2DED9', borderLeft: '3px solid transparent', cursor: 'pointer', transition: 'border-color 0.15s, background 0.15s', fontFamily: 'Inter, sans-serif' }}
-                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderLeftColor = '#E8601C'; (e.currentTarget as HTMLElement).style.background = '#F5F3EF'; }}
-                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderLeftColor = 'transparent'; (e.currentTarget as HTMLElement).style.background = '#FFFFFF'; }}
-                  >
-                    <Icon style={{ color: '#0A0A0A', marginBottom: 14 }} className="w-6 h-6" />
-                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
-                      <span style={{ fontSize: 14, fontWeight: 700, color: '#0A0A0A' }}>{module.name}</span>
-                      <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', padding: '3px 7px', flexShrink: 0, background: isAvailable ? '#2E7D32' : '#F5F3EF', color: isAvailable ? '#FFFFFF' : '#0A0A0A' }}>
-                        {isAvailable ? 'Available' : 'In Development'}
-                      </span>
-                    </div>
-                    <p style={{ fontSize: 11, color: '#7A7470', margin: '0 0 8px', lineHeight: 1.5 }}>{module.fullName}</p>
-                    <p style={{ fontSize: 10, color: '#B0A9A4', margin: 0, fontWeight: 600, letterSpacing: '0.03em' }}>{module.standard}</p>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+        <section style={{ background: '#FFFFFF', border: '2px solid #E2DED9' }}>
+          <JobCards
+            jobs={jobs}
+            loading={jobsLoading}
+            onView={job => navigate(`/workspace/em/gpr?project_id=${job.id}`)}
+            onDelete={handleDelete}
+            onStartFirst={startNew}
+          />
         </section>
-
-        {/* Recent projects */}
-        <section>
-          <div style={{ background: '#FFFFFF', border: '2px solid #E2DED9' }}>
-            <div style={{ padding: '14px 24px', borderBottom: '2px solid #E2DED9', background: '#F5F3EF', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <h2 style={{ margin: 0, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#7A7470' }}>Recent Projects</h2>
-              {jobs.length > 0 && <span style={{ fontSize: 11, color: '#B0A9A4' }}>{jobs.length} job{jobs.length !== 1 ? 's' : ''}</span>}
-            </div>
-            <JobTable jobs={jobs} loading={jobsLoading} onView={job => navigate(`/workspace/em/gpr?project_id=${job.id}`)} onDelete={handleDelete} onStartFirst={() => navigate('/workspace/em/gpr')} />
-          </div>
-        </section>
-
       </main>
-
-      {modalModule && <ComingSoonModal module={modalModule} onClose={() => setModalModule(null)} />}
 
       {deleteError && (
         <div style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', background: '#1a1a1a', color: '#fff', padding: '12px 20px', fontSize: 12, fontWeight: 600, borderRadius: 6, boxShadow: '0 8px 24px rgba(0,0,0,0.2)', zIndex: 400, whiteSpace: 'nowrap' }}>

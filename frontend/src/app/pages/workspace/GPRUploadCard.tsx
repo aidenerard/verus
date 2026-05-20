@@ -1,9 +1,10 @@
 import { useRef, useState } from 'react';
-import { UploadCloud, X, Play, ChevronDown, ChevronRight, SlidersHorizontal } from 'lucide-react';
+import { UploadCloud, X, ChevronDown, ChevronRight, SlidersHorizontal } from 'lucide-react';
 import type { UploadedFile } from '../inspect/types';
 import { MANUFACTURERS, FREQ_OPTIONS, GPR_EXTS, type ManufacturerKey } from '../inspect/constants';
-import { ACCENT, BORDER, BORDER2, PANEL, RAISED, TEXT, TEXT2, TEXT3 } from './tokens';
+import { BORDER, BORDER2, PANEL, RAISED, TEXT, TEXT2, TEXT3 } from './tokens';
 import ProcessingOptionsPanel from './ProcessingOptionsPanel';
+import SwipeToConfirm from './SwipeToConfirm';
 
 interface Props {
   files:          UploadedFile[];
@@ -128,18 +129,7 @@ export default function GPRUploadCard({
         )}
       </div>
 
-      <button
-        onClick={onStart}
-        disabled={!files.length || busy}
-        style={{
-          width: '100%', padding: '12px 16px', background: !files.length || busy ? BORDER2 : ACCENT,
-          color: '#fff', border: 'none', cursor: !files.length || busy ? 'not-allowed' : 'pointer',
-          fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase',
-          fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-        }}
-      >
-        <Play size={14} /> Start Analysis
-      </button>
+      <SwipeToConfirm onConfirm={onStart} disabled={!files.length || busy} />
     </div>
   );
 }
