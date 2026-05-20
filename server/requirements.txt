@@ -21,6 +21,9 @@ requests>=2.31.0
 readgssi>=0.0.18
 segyio>=1.9.12
 
+# UTM → WGS84 coordinate conversion for IDS GeoRadar .pos files
+pyproj>=3.6.0
+
 # Supabase Python client — auth verification + DB writes
 supabase>=2.0.0
 

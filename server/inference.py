@@ -114,6 +114,10 @@ def run_rebar_inference(
     velocity = 0.3 / np.sqrt(er)  # m/ns in concrete
 
     def _physics(sigs: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        # Placeholder: argmax on Kirchhoff-migrated data (IDS PRC files) gives
+        # unreliable depths because migration spreads energy across the window.
+        # Values will be correct once rebar_model.pth is loaded and the model
+        # path above is taken instead.
         peak_samples = np.argmax(np.abs(sigs), axis=1).astype(np.int32)
         twt          = peak_samples.astype(np.float32) * 0.023
         depth        = (velocity * twt / 2.0) * 39.3701
@@ -125,7 +129,8 @@ def run_rebar_inference(
     try:
         # Downsample 512 → 256 (every other sample matches training data)
         raw = signals[:, ::2].astype(np.float32)
-        # Re-normalise to max-abs (training convention, not z-score)
+        # DC-remove then max-abs — matches training convention exactly
+        raw = raw - raw.mean(axis=1, keepdims=True)
         mx  = np.abs(raw).max(axis=1, keepdims=True)
         mx  = np.where(mx == 0, 1.0, mx)
         raw = raw / mx
