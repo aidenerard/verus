@@ -1,0 +1,26 @@
+{
+  "job_id": "demo-job-001",
+  "project_name": "Sample Bridge Deck",
+  "deck_thickness_in": 8.32,
+  "bbox": { "min": [0, 0], "max": [60, 30] },
+  "surface": {
+    "texture_url": "/jobs/demo-job-001/surface_texture.png",
+    "depth_range_in": [1.5, 5.5],
+    "subdivisions": { "nx": 24, "ny": 12 }
+  },
+  "scan_lines": [
+    { "id": "sl-1", "label": "Line 1", "y_ft":  2.5, "points": [[0,  2.5], [60,  2.5]] },
+    { "id": "sl-2", "label": "Line 2", "y_ft":  5.0, "points": [[0,  5.0], [60,  5.0]] },
+    { "id": "sl-3", "label": "Line 3", "y_ft":  7.5, "points": [[0,  7.5], [60,  7.5]] },
+    { "id": "sl-4", "label": "Line 4", "y_ft": 10.0, "points": [[0, 10.0], [60, 10.0]] },
+    { "id": "sl-5", "label": "Line 5", "y_ft": 12.5, "points": [[0, 12.5], [60, 12.5]] },
+    { "id": "sl-6", "label": "Line 6", "y_ft": 15.0, "points": [[0, 15.0], [60, 15.0]] },
+    { "id": "sl-7", "label": "Line 7", "y_ft": 17.5, "points": [[0, 17.5], [60, 17.5]] },
+    { "id": "sl-8", "label": "Line 8", "y_ft": 20.0, "points": [[0, 20.0], [60, 20.0]] },
+    { "id": "sl-9", "label": "Line 9", "y_ft": 22.5, "points": [[0, 22.5], [60, 22.5]] },
+    { "id": "sl-10","label": "Line 10","y_ft": 25.0, "points": [[0, 25.0], [60, 25.0]] },
+    { "id": "sl-11","label": "Line 11","y_ft": 27.5, "points": [[0, 27.5], [60, 27.5]] }
+  ],
+  "samples_per_ns": 25.6,
+  "epsilon_r": 6.0
+}

@@ -52,14 +52,14 @@ export default function Hero() {
               </div>
 
               {/* C-scan placeholder grid */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, 1fr)', gap: 2, padding: 16, aspectRatio: '4/3', background: 'rgba(10,10,10,0.6)' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, minmax(0, 1fr))', gridTemplateRows: 'repeat(8, minmax(0, 1fr))', gap: 2, padding: 16, aspectRatio: '4/3', background: 'rgba(10,10,10,0.6)', overflow: 'hidden' }}>
                 {Array.from({ length: 96 }).map((_, i) => {
                   const row = Math.floor(i / 12);
                   const col = i % 12;
                   const isHot = (row >= 2 && row <= 4 && col >= 3 && col <= 6) || (row >= 5 && row <= 6 && col >= 7 && col <= 10);
                   const isMid = (row >= 1 && row <= 5 && col >= 2 && col <= 7 && !isHot);
                   return (
-                    <div key={i} style={{ aspectRatio: '1', background: isHot ? `rgba(232,96,28,${0.55 + Math.random() * 0.35})` : isMid ? `rgba(232,96,28,${0.12 + Math.random() * 0.18})` : `rgba(46,204,113,${0.18 + Math.random() * 0.22})`, borderRadius: 1 }} />
+                    <div key={i} style={{ background: isHot ? `rgba(232,96,28,${0.55 + Math.random() * 0.35})` : isMid ? `rgba(232,96,28,${0.12 + Math.random() * 0.18})` : `rgba(46,204,113,${0.18 + Math.random() * 0.22})`, borderRadius: 1 }} />
                   );
                 })}
               </div>

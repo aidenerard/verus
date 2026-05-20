@@ -1,0 +1,15 @@
+{
+  "time_zero_shifts": {
+    "sl-1":  0.00, "sl-2":  0.05, "sl-3": -0.10, "sl-4":  0.00, "sl-5":  0.15,
+    "sl-6": -0.05, "sl-7":  0.00, "sl-8":  0.10, "sl-9": -0.05, "sl-10": 0.00, "sl-11": 0.05
+  },
+  "filters": [
+    { "id": "f-1", "type": "bandpass",          "enabled": true,  "params": { "low_mhz": 800, "high_mhz": 2400, "order": 4 } },
+    { "id": "f-2", "type": "background_removal","enabled": true,  "params": { "window": 50 } },
+    { "id": "f-3", "type": "gain",              "enabled": true,  "params": { "gain_db": 6 } },
+    { "id": "f-4", "type": "agc",               "enabled": false, "params": { "window_ns": 8 } },
+    { "id": "f-5", "type": "hilbert",           "enabled": false, "params": {} }
+  ],
+  "gps_latency_ms": 120,
+  "velocity_m_per_ns": 0.10
+}
