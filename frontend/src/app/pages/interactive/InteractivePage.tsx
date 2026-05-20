@@ -5,6 +5,7 @@ import InteractiveTopBar from './InteractiveTopBar';
 import SceneCanvas from './scene/SceneCanvas';
 import ColorLegend from './scene/ColorLegend';
 import SidebarTabs from './sidebar/SidebarTabs';
+import BScanPanel from './bscan/BScanPanel';
 import {
   BG, BORDER, PANEL, PANEL_LIGHT, TEXT, TEXT2, TEXT3,
   FONT_FAMILY, SIDEBAR_WIDTH, BSCAN_HEIGHT_PCT, ACCENT,
@@ -52,7 +53,7 @@ export default function InteractivePage() {
         </aside>
 
         <section style={{ background: PANEL, gridColumn: '1', borderRight: `1px solid ${BORDER}`, position: 'relative' }}>
-          <BScanPlaceholder />
+          {scene && <BScanPanel projectId={projectId} scene={scene} />}
         </section>
       </div>
     </div>
@@ -84,12 +85,3 @@ function ScenePlaceholder({ loading, error }: { loading: boolean; error?: string
   );
 }
 
-function BScanPlaceholder() {
-  return (
-    <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', textAlign: 'center' }}>
-      <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', color: TEXT3 }}>
-        B-Scan Panel
-      </div>
-    </div>
-  );
-}
