@@ -1,10 +1,10 @@
 import { useRef, useState } from 'react';
-import { UploadCloud, X, ChevronDown, ChevronRight, SlidersHorizontal } from 'lucide-react';
+import { UploadCloud, X, ChevronDown, ChevronRight, SlidersHorizontal, Play } from 'lucide-react';
 import type { UploadedFile } from '../inspect/types';
 import { MANUFACTURERS, FREQ_OPTIONS, GPR_EXTS, type ManufacturerKey } from '../inspect/constants';
-import { BORDER, BORDER2, PANEL, RAISED, TEXT, TEXT2, TEXT3 } from './tokens';
+import { ACCENT, BORDER, BORDER2, PANEL, RAISED, TEXT, TEXT2, TEXT3 } from './tokens';
 import ProcessingOptionsPanel from './ProcessingOptionsPanel';
-import SwipeToConfirm from './SwipeToConfirm';
+import ConfirmSwipeModal from './ConfirmSwipeModal';
 
 interface Props {
   files:          UploadedFile[];
@@ -22,6 +22,9 @@ export default function GPRUploadCard({
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [confirmOpen,  setConfirmOpen]  = useState(false);
+
+  const disabled = !files.length || busy;
 
   const addFiles = (incoming: FileList | null) => {
     if (!incoming) return;
@@ -129,7 +132,27 @@ export default function GPRUploadCard({
         )}
       </div>
 
-      <SwipeToConfirm onConfirm={onStart} disabled={!files.length || busy} />
+      <button
+        type="button"
+        onClick={() => setConfirmOpen(true)}
+        disabled={disabled}
+        style={{
+          width: '100%', padding: '12px 16px',
+          background: disabled ? BORDER2 : ACCENT, color: '#fff', border: 'none',
+          cursor: disabled ? 'not-allowed' : 'pointer',
+          fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase',
+          fontFamily: 'inherit',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+        }}
+      >
+        <Play size={14} /> Start Analysis
+      </button>
+
+      <ConfirmSwipeModal
+        open={confirmOpen}
+        onCancel={() => setConfirmOpen(false)}
+        onConfirm={() => { setConfirmOpen(false); onStart(); }}
+      />
     </div>
   );
 }
