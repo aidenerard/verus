@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Optional
 
 from pipeline import process_files, build_result_payload
+from picks_writer import persist_picks_for_job, estimate_along_track_ft_per_col
+from processing_state import DEFAULT_PROCESSING_STATE
 
 # ── Job state ─────────────────────────────────────────────────────────────────
 
@@ -128,6 +130,22 @@ def run_analysis_job(
         elapsed = round(time.perf_counter() - t0, 3)
         result["analysis_time_sec"] = elapsed
 
+        # Persist per-trace rebar picks for the Interactive view. Best-effort —
+        # a write failure here must not fail the whole job.
+        try:
+            along_track_ft_per_col = estimate_along_track_ft_per_col(
+                per_file_summary,
+                grid_cols=result.get("twt_grid_cols") or len(file_names) or 1,
+            )
+            n_picks = persist_picks_for_job(
+                supabase_client, job_id,
+                file_names, rebar_depth_arrs, file_peak_amps, file_confs,
+                per_file_summary, swath_spacing_ft, along_track_ft_per_col,
+            )
+            print(f"[job:{job_id}] persisted {n_picks} picks", flush=True)
+        except Exception as exc:
+            print(f"[job:{job_id}] picks persistence failed: {exc}", flush=True)
+
         _set_progress(job_id, 95, "Finalizing", supabase_client)
         uid             = user_id or "anonymous"
         cscan_url       = _upload_png(supabase_client, cscan_b64,       uid, job_id, "")
@@ -158,6 +176,7 @@ def run_analysis_job(
                     "depth_accuracy_in": result["depth_accuracy_in"],
                     "signal_quality": result["signal_quality"],
                     "project_id": project_id,
+                    "processing_state": DEFAULT_PROCESSING_STATE,
                 }).execute()
                 print(f"[job:{job_id}] DB row written", flush=True)
             except Exception as exc:
@@ -198,6 +217,77 @@ def run_analysis_job(
         _jobs[job_id].update({
             "status":    "failed",
             "error":     err_msg,
+            "completed_at": time.time(),
+        })
+
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def run_proceq_job(
+    job_id: str,
+    file_data: list[tuple[str, bytes]],
+    tmpdir: Path,
+    epsr: float,
+) -> None:
+    import base64
+    from analysis import process_proceq_dataset
+    from models import get_ensemble
+
+    _jobs[job_id]["status"] = "processing"
+    _jobs[job_id]["stage"]  = "Running Proceq analysis"
+    t0 = time.perf_counter()
+
+    try:
+        for fname, content in file_data:
+            dest = tmpdir / fname
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(content)
+
+        stats = process_proceq_dataset(data_dir=str(tmpdir), output_dir=str(tmpdir), epsr=epsr)
+
+        # Optional model ensemble stats — best-effort, never fails the job.
+        model_stats: dict = {"model_version": "signal_processing_only", "mean_depth_inches": None}
+        try:
+            ensemble = get_ensemble()
+            if ensemble is not None:
+                from ensemble_inference import run_ensemble_stats
+                ms = run_ensemble_stats(str(tmpdir), ensemble)
+                if ms:
+                    model_stats = ms
+                    print(f"[job:{job_id}] ensemble stats: {ms}", flush=True)
+            else:
+                print(f"[job:{job_id}] no model weights — skipping ensemble", flush=True)
+        except Exception as exc:
+            print(f"[job:{job_id}] ensemble step failed (continuing): {exc}", flush=True)
+
+        def _enc(name: str) -> str | None:
+            p = tmpdir / name
+            return base64.b64encode(p.read_bytes()).decode() if p.exists() else None
+
+        elapsed = round(time.perf_counter() - t0, 3)
+        _jobs[job_id].update({
+            "status":       "complete",
+            "completed_at": time.time(),
+            "result": {
+                "horizon_picks":         _enc("horizon_picks.png"),
+                "rebar_depth_map":       _enc("rebar_depth_map.png"),
+                "corrosion_map":         _enc("corrosion_map.png"),
+                "stats":                 stats or {},
+                "analysis_time_sec":     elapsed,
+                "mean_depth_inches":     model_stats.get("mean_depth_inches"),
+                "mean_thickness_inches": model_stats.get("mean_thickness_inches"),
+                "high_risk_pct":         model_stats.get("high_risk_pct"),
+                "model_version":         model_stats.get("model_version"),
+            },
+        })
+        print(f"[job:{job_id}] Proceq done in {elapsed}s", flush=True)
+
+    except Exception as exc:
+        print(f"[job:{job_id}] Proceq FAILED: {exc}", flush=True)
+        _jobs[job_id].update({
+            "status":       "failed",
+            "error":        str(exc),
             "completed_at": time.time(),
         })
 

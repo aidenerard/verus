@@ -115,55 +115,76 @@ class CorrosionCNN(nn.Module):
 
 class GPRModelEnsemble:
     """
-    Loads and runs all three GPR models.
-    Input traces are format-agnostic — resampled to 512 samples before inference.
-    Defaults resolve checkpoints from the package directory.
+    Loads and runs the GPR model ensemble. Horizon is required; thickness and
+    corrosion are optional — pass None to skip loading either of those and the
+    corresponding predict() outputs come back as None.
+
+    Input traces are format-agnostic — resampled to 512 samples before
+    inference. predict() processes traces in batches to bound peak memory on
+    constrained hosts (Render free tier).
     """
 
     def __init__(
         self,
-        horizon_path:   str = HORIZON_PATH,
-        thickness_path: str = THICKNESS_PATH,
-        corrosion_path: str = CORROSION_PATH,
+        horizon_path:   str         = HORIZON_PATH,
+        thickness_path: str | None = THICKNESS_PATH,
+        corrosion_path: str | None = CORROSION_PATH,
         device: str = "cpu",
     ) -> None:
         self.device = torch.device(device)
-        self._horizon   = self._load(HorizonCNN(),   horizon_path)
-        self._thickness = self._load(ThicknessCNN(), thickness_path)
-        self._corrosion = self._load(CorrosionCNN(), corrosion_path)
+        self._horizon   = self._load(HorizonCNN(), horizon_path)
+        self._thickness = self._load(ThicknessCNN(), thickness_path) if thickness_path else None
+        self._corrosion = self._load(CorrosionCNN(), corrosion_path) if corrosion_path else None
 
     def _load(self, model: nn.Module, path: str) -> nn.Module:
         model.load_state_dict(torch.load(path, map_location=self.device))
         model.to(self.device).eval()
         return model
 
-    def predict(self, traces: np.ndarray) -> dict:
+    def predict(self, traces: np.ndarray, batch_size: int = 256) -> dict:
         """
         traces: np.ndarray shape (N, any_length) — raw traces, any format.
 
         Returns dict:
             rebar_depth_cm    — np.ndarray (N,)
             rebar_depth_in    — np.ndarray (N,)
-            deck_thickness_cm — np.ndarray (N,)
-            deck_thickness_in — np.ndarray (N,)
-            corrosion_risk    — np.ndarray (N,), values 0-1 probability
+            deck_thickness_cm — np.ndarray (N,) or None if thickness model absent
+            deck_thickness_in — np.ndarray (N,) or None
+            corrosion_risk    — np.ndarray (N,) prob 0-1, or None if absent
         """
-        processed = _preprocess_batch(traces, target_samples=512)
-        x = torch.from_numpy(processed).unsqueeze(1).to(self.device)
+        horizon_chunks, thick_chunks, corr_chunks = [], [], []
+        n = len(traces)
 
-        with torch.no_grad():
-            depth_norm = self._horizon(x).cpu().numpy()
-            thick_norm = self._thickness(x).cpu().numpy()
-            corr_logit = self._corrosion(x).cpu().numpy()
+        for start in range(0, n, batch_size):
+            batch = _preprocess_batch(traces[start:start + batch_size], target_samples=512)
+            x = torch.from_numpy(batch).unsqueeze(1).to(self.device)
+            with torch.no_grad():
+                horizon_chunks.append(self._horizon(x).cpu().numpy())
+                if self._thickness is not None:
+                    thick_chunks.append(self._thickness(x).cpu().numpy())
+                if self._corrosion is not None:
+                    corr_chunks.append(self._corrosion(x).cpu().numpy())
 
-        depth_cm  = depth_norm * MAX_REBAR_DEPTH_CM
-        thick_cm  = thick_norm * MAX_THICKNESS_CM
-        corr_prob = 1.0 / (1.0 + np.exp(-corr_logit))
+        depth_norm = np.concatenate(horizon_chunks)
+        depth_cm   = depth_norm * MAX_REBAR_DEPTH_CM
 
-        return {
-            "rebar_depth_cm":    depth_cm,
-            "rebar_depth_in":    depth_cm / 2.54,
-            "deck_thickness_cm": thick_cm,
-            "deck_thickness_in": thick_cm / 2.54,
-            "corrosion_risk":    corr_prob,
+        out: dict = {
+            "rebar_depth_cm": depth_cm,
+            "rebar_depth_in": depth_cm / 2.54,
         }
+
+        if thick_chunks:
+            thick_cm = np.concatenate(thick_chunks) * MAX_THICKNESS_CM
+            out["deck_thickness_cm"] = thick_cm
+            out["deck_thickness_in"] = thick_cm / 2.54
+        else:
+            out["deck_thickness_cm"] = None
+            out["deck_thickness_in"] = None
+
+        if corr_chunks:
+            corr_logit = np.concatenate(corr_chunks)
+            out["corrosion_risk"] = 1.0 / (1.0 + np.exp(-corr_logit))
+        else:
+            out["corrosion_risk"] = None
+
+        return out

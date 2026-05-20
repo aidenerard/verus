@@ -21,10 +21,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from auth import verify_token
-from jobs import _jobs, _executor, run_analysis_job
+from jobs import _jobs, _executor, run_analysis_job, run_proceq_job
 from run import CNN1D, RebarDepthCNN, DEVICE  # noqa: F401 — re-exported for type hints
 from ingest import SUPPORTED_EXTENSIONS, COMPANION_EXTENSIONS, FORMAT_INFO
 from model_loader import load_models_background
+import interactive
 
 # ── Supabase client (optional) ────────────────────────────────────────────────
 
@@ -89,8 +90,12 @@ def _do_load() -> None:
 @app.on_event("startup")
 def startup_event() -> None:
     _init_supabase()
+    interactive.init(lambda: _supabase)
     threading.Thread(target=_do_load, daemon=True).start()
     print("[startup] Server ready — model loading in background.", flush=True)
+
+
+app.include_router(interactive.router)
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -124,6 +129,17 @@ def formats() -> dict:
         "supported_extensions": sorted(SUPPORTED_EXTENSIONS),
         "companion_extensions":  sorted(COMPANION_EXTENSIONS),
         "formats":               FORMAT_INFO,
+    }
+
+
+@app.get("/models/status")
+def models_status() -> dict:
+    """Reports which optional GPR model weights are available on disk."""
+    models_dir = os.path.join(os.path.dirname(__file__), "models")
+    return {
+        "horizon":   os.path.exists(os.path.join(models_dir, "horizon_model.pth")),
+        "thickness": os.path.exists(os.path.join(models_dir, "thickness_model.pth")),
+        "corrosion": os.path.exists(os.path.join(models_dir, "corrosion_model.pth")),
     }
 
 
@@ -237,6 +253,37 @@ def get_job(
                 pass
         raise HTTPException(status_code=404, detail="Job not found.")
     return JSONResponse(job)
+
+
+@app.post("/analyze-proceq")
+async def analyze_proceq(
+    files:   list[UploadFile] = File(...),
+    epsr:    float            = Form(9.0),
+    user_id: Optional[str]   = Depends(verify_token),
+) -> JSONResponse:
+    """Accept Proceq .scan/.pos/.CScan uploads, queue background job, return {job_id}."""
+    if not files:
+        raise HTTPException(status_code=400, detail="No files uploaded.")
+
+    file_data: list[tuple[str, bytes]] = []
+    total_bytes = 0
+    for i, upload in enumerate(files):
+        fname   = upload.filename or f"upload_{i}.bin"
+        content = await upload.read()
+        total_bytes += len(content)
+        if total_bytes / 1024 ** 2 > MAX_TOTAL_MB:
+            raise HTTPException(status_code=413, detail=f"Total upload exceeds {MAX_TOTAL_MB} MB.")
+        file_data.append((fname, content))
+        del content
+
+    job_id = str(uuid.uuid4())
+    tmpdir = Path(tempfile.mkdtemp(prefix=f"verus_proceq_{job_id}_"))
+    _jobs[job_id] = {"status": "pending", "user_id": user_id, "created_at": time.time()}
+
+    _executor.submit(run_proceq_job, job_id, file_data, tmpdir, epsr)
+    print(f"[analyze-proceq] Queued job {job_id} ({len(file_data)} files)", flush=True)
+
+    return JSONResponse({"job_id": job_id, "status": "pending"})
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
