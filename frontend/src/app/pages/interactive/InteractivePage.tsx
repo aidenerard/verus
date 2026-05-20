@@ -4,6 +4,7 @@ import { useScene } from './state/hooks';
 import InteractiveTopBar from './InteractiveTopBar';
 import SceneCanvas from './scene/SceneCanvas';
 import ColorLegend from './scene/ColorLegend';
+import SidebarTabs from './sidebar/SidebarTabs';
 import {
   BG, BORDER, PANEL, PANEL_LIGHT, TEXT, TEXT2, TEXT3,
   FONT_FAMILY, SIDEBAR_WIDTH, BSCAN_HEIGHT_PCT, ACCENT,
@@ -47,7 +48,7 @@ export default function InteractivePage() {
         </section>
 
         <aside style={{ background: PANEL_LIGHT, borderBottom: `1px solid ${BORDER}`, gridRow: '1 / span 2', overflow: 'hidden' }}>
-          <SidebarPlaceholder />
+          <SidebarTabs projectId={projectId} scene={scene} />
         </aside>
 
         <section style={{ background: PANEL, gridColumn: '1', borderRight: `1px solid ${BORDER}`, position: 'relative' }}>
@@ -79,19 +80,6 @@ function ScenePlaceholder({ loading, error }: { loading: boolean; error?: string
           </div>
         )}
       </div>
-    </div>
-  );
-}
-
-function SidebarPlaceholder() {
-  return (
-    <div style={{ height: '100%', padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', color: TEXT3 }}>
-        Inspector
-      </div>
-      <p style={{ margin: 0, fontSize: 12, color: TEXT2, lineHeight: 1.5 }}>
-        Inspector / Processing / Gridding tabs land in commit 3.
-      </p>
     </div>
   );
 }
