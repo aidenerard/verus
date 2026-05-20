@@ -152,9 +152,20 @@ export default function GPRUploadCard({
         open={confirmOpen}
         onCancel={() => setConfirmOpen(false)}
         onConfirm={() => { setConfirmOpen(false); onStart(); }}
+        rows={summaryRows(files.length, manufacturer, frequencyMhz)}
       />
     </div>
   );
+}
+
+function summaryRows(fileCount: number, manufacturer: ManufacturerKey | '', frequencyMhz: number) {
+  const mfr = MANUFACTURERS.find(m => m.key === manufacturer);
+  return [
+    { label: 'Files',     value: `${fileCount} file${fileCount !== 1 ? 's' : ''} selected` },
+    { label: 'Method',    value: 'GPR' },
+    { label: 'Frequency', value: `${frequencyMhz} MHz` },
+    { label: 'Equipment', value: mfr?.name ?? 'Auto-detect' },
+  ];
 }
 
 function LabelledSelect({

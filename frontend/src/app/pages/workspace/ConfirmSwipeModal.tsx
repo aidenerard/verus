@@ -1,22 +1,27 @@
 import { useEffect } from 'react';
 import { X } from 'lucide-react';
 import SwipeToConfirm from './SwipeToConfirm';
-import { BORDER, PANEL, TEXT, TEXT2 } from './tokens';
+import { BORDER, PANEL, RAISED, TEXT, TEXT2, TEXT3 } from './tokens';
+
+export interface SummaryRow {
+  label: string;
+  value: string;
+}
 
 interface Props {
   open:      boolean;
   onCancel:  () => void;
   onConfirm: () => void;
+  rows?:     SummaryRow[];
   title?:    string;
-  context?:  string;
   label?:    string;
 }
 
 export default function ConfirmSwipeModal({
   open, onCancel, onConfirm,
-  title   = 'Confirm Analysis',
-  context = 'This will upload your files and begin processing.',
-  label   = 'Slide to begin analysis',
+  rows  = [],
+  title = 'Ready to Analyze',
+  label = 'Slide to begin',
 }: Props) {
   useEffect(() => {
     if (!open) return;
@@ -31,10 +36,6 @@ export default function ConfirmSwipeModal({
   }, [open, onCancel]);
 
   if (!open) return null;
-
-  const handleConfirm = () => {
-    onConfirm();
-  };
 
   return (
     <div
@@ -70,12 +71,23 @@ export default function ConfirmSwipeModal({
           </button>
         </div>
 
-        <div style={{ padding: '20px 24px 24px' }}>
-          <p style={{ margin: '0 0 22px', fontSize: 13, color: TEXT2, lineHeight: 1.55 }}>
-            {context}
-          </p>
+        <div style={{ padding: '22px 24px 24px' }}>
+          {rows.length > 0 && (
+            <dl
+              style={{
+                margin: '0 0 22px', padding: '14px 16px',
+                background: RAISED, border: `1px solid ${BORDER}`,
+                display: 'grid', gridTemplateColumns: 'auto 1fr', columnGap: 24, rowGap: 8,
+                fontSize: 12,
+              }}
+            >
+              {rows.map(r => (
+                <Row key={r.label} label={r.label} value={r.value} />
+              ))}
+            </dl>
+          )}
 
-          <SwipeToConfirm onConfirm={handleConfirm} label={label} />
+          <SwipeToConfirm onConfirm={onConfirm} label={label} />
 
           <div style={{ marginTop: 16, textAlign: 'center' }}>
             <button
@@ -92,5 +104,18 @@ export default function ConfirmSwipeModal({
         </div>
       </div>
     </div>
+  );
+}
+
+function Row({ label, value }: SummaryRow) {
+  return (
+    <>
+      <dt style={{ color: TEXT3, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', fontSize: 10 }}>
+        {label}
+      </dt>
+      <dd style={{ margin: 0, color: TEXT, fontWeight: 600, textAlign: 'right' }}>
+        {value}
+      </dd>
+    </>
   );
 }
