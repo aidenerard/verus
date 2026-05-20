@@ -1,0 +1,7 @@
+{
+  "algorithm": "natural_neighbor",
+  "search_radius_ft": 3.75,
+  "edge_clip": true,
+  "cell_size_ft": 0.5,
+  "anisotropy": { "angle_deg": 0, "ratio": 1.0 }
+}

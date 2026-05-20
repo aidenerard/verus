@@ -1,12 +1,14 @@
 import { useMemo } from 'react';
-import { ImageOff } from 'lucide-react';
+import { Link } from 'react-router';
+import { ImageOff, MousePointer2 } from 'lucide-react';
 import type { AnalysisResult } from '../inspect/types';
 import { SERVER } from '../inspect/constants';
 import { useMapbox } from '../inspect/useMapbox';
-import { BORDER, PANEL, RAISED, TEXT, TEXT2, TEXT3, ACCENT, ACCENT_SOFT } from './tokens';
+import { BORDER, BORDER2, PANEL, RAISED, TEXT, TEXT2, TEXT3, ACCENT, ACCENT_SOFT } from './tokens';
 
 interface Props {
-  result: AnalysisResult;
+  result:     AnalysisResult;
+  projectId?: string;
 }
 
 interface PanelSpec { title: string; src: string | undefined }
@@ -25,7 +27,7 @@ function meanRebarDepth(result: AnalysisResult): number | undefined {
   return samples.reduce((a, b) => a + b, 0) / samples.length;
 }
 
-export default function GPRResults({ result }: Props) {
+export default function GPRResults({ result, projectId }: Props) {
   const panels: PanelSpec[] = useMemo(() => [
     { title: 'Horizon Picks', src: resolveUrl(result.horizon_picks ?? result.cscan_url ?? result.cscan_image) },
     { title: 'Rebar Depth Map', src: resolveUrl(result.rebar_depth_map ?? result.rebar_depth_image) },
@@ -52,6 +54,8 @@ export default function GPRResults({ result }: Props) {
       <div className="gpr-panel-grid">
         {panels.map(p => <ResultPanel key={p.title} title={p.title} src={p.src} />)}
       </div>
+
+      <InteractiveCTA projectId={projectId} />
 
       <div style={{ background: PANEL, border: `1px solid ${BORDER}`, padding: '14px 20px', display: 'flex', flexWrap: 'wrap', gap: 24, alignItems: 'center' }}>
         <Stat label="Mean Depth"      value={stats.mean !== undefined ? `${stats.mean.toFixed(2)}"` : '—'} />
@@ -103,6 +107,37 @@ function ResultPanel({ title, src }: PanelSpec) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function InteractiveCTA({ projectId }: { projectId?: string }) {
+  if (!projectId) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <span title="Save the project first to enable the interactive view"
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 16px',
+            background: 'transparent', border: `1px dashed ${BORDER2}`, color: TEXT3,
+            fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase',
+          }}>
+          <MousePointer2 size={13} /> Open Interactive View (save project first)
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+      <Link
+        to={`/workspace/em/gpr/${projectId}/interactive`}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 8, padding: '11px 18px',
+          background: ACCENT, color: '#fff', textDecoration: 'none',
+          fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase',
+          boxShadow: '0 4px 12px rgba(232,96,28,0.25)',
+        }}>
+        <MousePointer2 size={13} /> Open Interactive View →
+      </Link>
     </div>
   );
 }

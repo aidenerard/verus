@@ -74,7 +74,7 @@ export default function GPRWorkspace() {
       {loadingJob ? (
         <LoadingCard />
       ) : analysisResult ? (
-        <GPRResults result={analysisResult} />
+        <GPRResults result={analysisResult} projectId={viewJobId ?? undefined} />
       ) : (
         <GPRUploadCard
           files={files} setFiles={setFiles}

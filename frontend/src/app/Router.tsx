@@ -14,6 +14,7 @@ import FDEMWorkspace from './pages/workspace/FDEMWorkspace';
 import MagWorkspace from './pages/workspace/MagWorkspace';
 import MASWWorkspace from './pages/workspace/MASWWorkspace';
 import ImpactEchoWorkspace from './pages/workspace/ImpactEchoWorkspace';
+import InteractivePage from './pages/interactive/InteractivePage';
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth();
@@ -61,6 +62,11 @@ export default function Router() {
           <Route path="/workspace/seismic/masw"        element={<MASWWorkspace />} />
           <Route path="/workspace/seismic/impact-echo" element={<ImpactEchoWorkspace />} />
         </Route>
+
+        {/* Interactive view — full-screen, sibling of WorkspaceLayout */}
+        <Route path="/workspace/em/gpr/:projectId/interactive" element={
+          <ProtectedRoute><InteractivePage /></ProtectedRoute>
+        } />
 
         {/* Legacy redirects — preserve query string for ?project_id=... links */}
         <Route path="/analyze"      element={<RedirectKeepQuery to="/workspace/em/gpr" />} />
