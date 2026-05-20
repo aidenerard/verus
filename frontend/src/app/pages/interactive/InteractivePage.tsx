@@ -1,6 +1,9 @@
+import { Suspense } from 'react';
 import { useParams } from 'react-router';
 import { useScene } from './state/hooks';
 import InteractiveTopBar from './InteractiveTopBar';
+import SceneCanvas from './scene/SceneCanvas';
+import ColorLegend from './scene/ColorLegend';
 import {
   BG, BORDER, PANEL, PANEL_LIGHT, TEXT, TEXT2, TEXT3,
   FONT_FAMILY, SIDEBAR_WIDTH, BSCAN_HEIGHT_PCT, ACCENT,
@@ -31,7 +34,16 @@ export default function InteractivePage() {
         gridTemplateRows:    `${100 - BSCAN_HEIGHT_PCT}fr ${BSCAN_HEIGHT_PCT}fr`,
       }}>
         <section style={{ background: PANEL, borderRight: `1px solid ${BORDER}`, borderBottom: `1px solid ${BORDER}`, position: 'relative' }}>
-          <ScenePlaceholder loading={isLoading} error={error?.message} />
+          {scene ? (
+            <>
+              <Suspense fallback={<SceneStatus message="Loading 3D scene…" />}>
+                <SceneCanvas projectId={projectId} scene={scene} />
+              </Suspense>
+              <ColorLegend range={scene.surface.depth_range_in} units="in" />
+            </>
+          ) : (
+            <ScenePlaceholder loading={isLoading} error={error?.message} />
+          )}
         </section>
 
         <aside style={{ background: PANEL_LIGHT, borderBottom: `1px solid ${BORDER}`, gridRow: '1 / span 2', overflow: 'hidden' }}>
@@ -42,6 +54,14 @@ export default function InteractivePage() {
           <BScanPlaceholder />
         </section>
       </div>
+    </div>
+  );
+}
+
+function SceneStatus({ message }: { message: string }) {
+  return (
+    <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: TEXT2, fontSize: 13 }}>
+      {message}
     </div>
   );
 }
