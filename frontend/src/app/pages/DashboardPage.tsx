@@ -15,9 +15,9 @@ const MODULES: InspectionModule[] = [
 ];
 
 const INSPECT_ROUTES: Record<string, string> = {
-  gpr:      '/inspect/gpr',
-  masw:     '/inspect/masw',
-  infrared: '/inspect/ir',
+  gpr:      '/workspace/em/gpr',
+  masw:     '/workspace/seismic/masw',
+  infrared: '/workspace/seismic/impact-echo',
 };
 
 export default function DashboardPage() {
@@ -178,7 +178,7 @@ export default function DashboardPage() {
               <h2 style={{ margin: 0, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#7A7470' }}>Recent Projects</h2>
               {jobs.length > 0 && <span style={{ fontSize: 11, color: '#B0A9A4' }}>{jobs.length} job{jobs.length !== 1 ? 's' : ''}</span>}
             </div>
-            <JobTable jobs={jobs} loading={jobsLoading} onView={job => navigate(`/inspect/gpr?project_id=${job.id}`)} onDelete={handleDelete} onStartFirst={() => navigate('/analyze')} />
+            <JobTable jobs={jobs} loading={jobsLoading} onView={job => navigate(`/workspace/em/gpr?project_id=${job.id}`)} onDelete={handleDelete} onStartFirst={() => navigate('/workspace/em/gpr')} />
           </div>
         </section>
 

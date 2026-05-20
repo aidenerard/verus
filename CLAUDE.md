@@ -17,6 +17,10 @@ The precedent is already set: GPRWorkspace (1659→940→493→277), HomePage (8
 | New top-level pages | `app/pages/PageName.tsx` |
 | Page sub-components | `app/pages/[page]/ComponentName.tsx` (co-located) |
 | Page design tokens | `app/pages/[page]/tokens.ts` or inline in `constants.ts` |
+| Inspection workspaces | `app/pages/workspace/[Method]Workspace.tsx` |
+| Workspace shell & sidebar | `app/pages/workspace/WorkspaceLayout.tsx`, `WorkspaceSidebar.tsx` |
+| Processing options context | `app/pages/workspace/ProcessingOptionsContext.tsx` |
+| Shared analysis primitives | `app/pages/inspect/` (polling hook, Mapbox hook, types, constants) |
 | Shared components | `app/components/ComponentName.tsx` |
 | shadcn/ui primitives | `app/components/ui/` ← never hand-edit |
 | Figma-generated assets | `app/components/figma/` ← never hand-edit |
@@ -156,10 +160,20 @@ export const SERVER = import.meta.env.VITE_API_URL !== undefined
 | `/signup` | `SignupPage` | public |
 | `/team` | `TeamPage` | public |
 | `/dashboard` | `DashboardPage` | protected |
-| `/inspect/gpr` | `GPRWorkspace` | protected |
-| `/inspect/masw` | `ComingSoonWorkspace` | protected |
-| `/inspect/ir` | `ComingSoonWorkspace` | protected |
-| `/analyze` | → redirects to `/inspect/gpr` | — |
+| `/workspace` | → redirects to `/workspace/em/gpr` | — |
+| `/workspace/em` | → redirects to `/workspace/em/gpr` | — |
+| `/workspace/em/gpr` | `GPRWorkspace` (inside `WorkspaceLayout`) | protected |
+| `/workspace/em/fdem` | `FDEMWorkspace` (placeholder) | protected |
+| `/workspace/em/magnetometer` | `MagWorkspace` (placeholder) | protected |
+| `/workspace/seismic` | → redirects to `/workspace/seismic/masw` | — |
+| `/workspace/seismic/masw` | `MASWWorkspace` (placeholder) | protected |
+| `/workspace/seismic/impact-echo` | `ImpactEchoWorkspace` (placeholder) | protected |
+| `/analyze` | → redirects to `/workspace/em/gpr` (preserves query) | — |
+| `/inspect/gpr` | → redirects to `/workspace/em/gpr` (preserves query) | — |
+| `/inspect/masw` | → redirects to `/workspace/seismic/masw` | — |
+| `/inspect/ir` | → redirects to `/workspace/seismic/impact-echo` | — |
+
+`WorkspaceLayout` wraps all `/workspace/*` routes with a left sidebar (Electromagnetic + Seismic sections, plus collapsible Processing Options) and a top toolbar. Method components render inside the layout's `<Outlet />`. Legacy `/inspect/*` redirects use `RedirectKeepQuery` so `?project_id=…` deep links from the dashboard survive.
 
 ---
 
@@ -262,26 +276,30 @@ git push origin main              # triggers both Vercel + Render auto-deploy
 | `app/pages/DashboardPage.tsx` | Project list + job history (protected) |
 | `app/pages/home/` | Sub-components: Hero, Navbar, HowItWorks, MethodSlider, OurPlatform, WhyVerus, TickerStripe, Footer, tokens, useReveal |
 | `app/pages/dashboard/` | Sub-components: JobTable, ComingSoonModal, types |
-| `app/pages/inspect/GPRWorkspace.tsx` | GPR workspace shell — state, hook composition, top-level layout |
-| `app/pages/inspect/CentralColumn.tsx` | Vertical PanelGroup: viewport + icon strip + RightSlidePanel + BScanPanel |
-| `app/pages/inspect/WorkspaceToolbar.tsx` | 44px top toolbar: project title, view toggle, export, settings |
-| `app/pages/inspect/LayersSidebar.tsx` | Left 220px panel: layer list, file list, add/export menus |
-| `app/pages/inspect/RightSlidePanel.tsx` | Slide-out right panel: Properties / Analysis / Adjust tabs |
-| `app/pages/inspect/BScanPanel.tsx` | Resizable bottom B-scan panel |
-| `app/pages/inspect/ProjectsDrawer.tsx` | "My Projects" overlay drawer with recent job list |
-| `app/pages/inspect/OutputMaps.tsx` | Output tab canvases: condition, rebar depth, amplitude |
-| `app/pages/inspect/AdjustPanel.tsx` | Sliders: detection threshold, dielectric εr, amp clamp |
-| `app/pages/inspect/SetupWizard.tsx` | Project setup wizard for new analysis runs |
-| `app/pages/inspect/ComingSoonWorkspace.tsx` | Placeholder for MASW / IR workspaces |
-| `app/pages/inspect/useAnalysisJob.ts` | Analysis job hook: submit, poll, progress overlay state |
-| `app/pages/inspect/useCanvasRenderers.ts` | Canvas render effects: b-scan, condition, rebar, amplitude |
-| `app/pages/inspect/useMapbox.ts` | Mapbox init, GPS layer, layer visibility + opacity effects |
-| `app/pages/inspect/useViewJobLoader.ts` | Startup effects: restore from localStorage + load job from URL param |
-| `app/pages/inspect/useSetupCallbacks.ts` | `completeSetup` (Supabase upsert) and `newProject` (full reset) |
-| `app/pages/inspect/constants.ts` | Inspect design tokens + `SERVER` URL constant |
-| `app/pages/inspect/types.ts` | `AnalysisResult`, `FileResult`, `OutputTab` types |
-| `app/pages/inspect/utils.ts` | `badgeColor` and shared view helpers |
-| `app/pages/inspect/colormaps.ts` | Canvas colormap LUTs: condition, rebar, amplitude |
+| `app/pages/workspace/WorkspaceLayout.tsx` | Shell: sidebar host + top toolbar + `<Outlet />`; wraps all `/workspace/*` in `ProcessingOptionsProvider` |
+| `app/pages/workspace/WorkspaceSidebar.tsx` | Two-section nav (Electromagnetic / Seismic) with "Soon" badges; mobile drawer |
+| `app/pages/workspace/ProcessingOptionsPanel.tsx` | Collapsible sidebar section: gridding algorithm, search radius, edge clipping, filters |
+| `app/pages/workspace/ProcessingOptionsContext.tsx` | `ProcessingOptionsProvider` + `useProcessingOptions` hook + `toFormData` serializer |
+| `app/pages/workspace/PlaceholderWorkspace.tsx` | Reusable Coming Soon screen (description, use cases, email capture) |
+| `app/pages/workspace/EMModule.tsx` | `/workspace/em` → `/workspace/em/gpr` redirect |
+| `app/pages/workspace/SeismicModule.tsx` | `/workspace/seismic` → `/workspace/seismic/masw` redirect |
+| `app/pages/workspace/GPRWorkspace.tsx` | GPR shell: upload + polling + result; loads saved job via `?project_id=` |
+| `app/pages/workspace/GPRUploadCard.tsx` | Drag-drop file list + equipment/frequency selects + Start button |
+| `app/pages/workspace/GPRResults.tsx` | Three-panel result view (Horizon Picks / Rebar Depth / Corrosion Risk) + stats bar + Mapbox GPS panel |
+| `app/pages/workspace/FDEMWorkspace.tsx` | Placeholder workspace for Frequency-Domain EM |
+| `app/pages/workspace/MagWorkspace.tsx` | Placeholder workspace for Magnetometry |
+| `app/pages/workspace/MASWWorkspace.tsx` | Placeholder workspace for MASW |
+| `app/pages/workspace/ImpactEchoWorkspace.tsx` | Placeholder workspace for Impact Echo |
+| `app/pages/workspace/modules.ts` | Module catalog (Electromagnetic + Seismic) driving sidebar + breadcrumb |
+| `app/pages/workspace/tokens.ts` | Workspace design tokens (BG/PANEL/BORDER/TEXT/ACCENT + layout constants) |
+| `app/pages/workspace/types.ts` | `ProcessingOptions`, `MethodMeta`, `ModuleMeta`, defaults |
+| `app/pages/inspect/useAnalysisJob.ts` | Analysis job hook: wake, submit, poll; accepts `extraFormData` for processing options |
+| `app/pages/inspect/useMapbox.ts` | Mapbox init, GPS layer, visibility + opacity effects |
+| `app/pages/inspect/ConfirmAnalysisModal.tsx` | "Ready to analyze" confirmation dialog |
+| `app/pages/inspect/AnalysisProgressOverlay.tsx` | Full-screen progress overlay during job execution |
+| `app/pages/inspect/constants.ts` | `SERVER` URL, Mapbox token, manufacturer + frequency catalogs, shared tokens |
+| `app/pages/inspect/types.ts` | `AnalysisResult` (with v5 keys `horizon_picks`, `rebar_depth_map`, `corrosion_map`, `mean_depth_inches`, etc.), `FileResult`, `UploadedFile` |
+| `app/pages/inspect/utils.ts` | `estimateAnalysisSeconds`, `delamColor`, `badgeColor` |
 | `app/pages/team/` | Sub-components: FounderCard, tokens |
 | `vite.config.ts` | Vite + Tailwind config, dev proxy to `:10000` |
 

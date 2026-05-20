@@ -25,6 +25,7 @@ interface UseAnalysisJobProps {
   customFreq: string;
   projectId: string | null;
   onComplete: (result: AnalysisResult, otsuThreshold: number | undefined, freq: number | undefined) => void;
+  extraFormData?: (fd: FormData) => void;
 }
 
 interface UseAnalysisJobReturn {
@@ -55,6 +56,7 @@ export function useAnalysisJob({
   customFreq,
   projectId,
   onComplete,
+  extraFormData,
 }: UseAnalysisJobProps): UseAnalysisJobReturn {
   const [jobId,               setJobId]               = useState<string | null>(null);
   const [jobStatus,           setJobStatus]           = useState<'idle'|'pending'|'processing'|'complete'|'failed'>('idle');
@@ -107,6 +109,7 @@ export function useAnalysisJob({
       const effectiveFreq = useCustomFreq ? (parseInt(customFreq) || 1600) : frequencyMhz;
       formData.append('frequency_mhz', String(effectiveFreq));
       if (projectId) formData.append('project_id', projectId);
+      if (extraFormData) extraFormData(formData);
 
       const res = await fetch(`${SERVER}/analyze`, {
         method: 'POST', headers, body: formData, signal: AbortSignal.timeout(60000),
@@ -158,7 +161,7 @@ export function useAnalysisJob({
       setErrorMsg(err instanceof Error ? err.message : 'Analysis failed');
       setJobStatus('failed');
     }
-  }, [files, session, jobStatus, manufacturer, frequencyMhz, useCustomFreq, customFreq, projectId, onComplete]);
+  }, [files, session, jobStatus, manufacturer, frequencyMhz, useCustomFreq, customFreq, projectId, onComplete, extraFormData]);
 
   // Cleanup on unmount
   useEffect(() => () => {

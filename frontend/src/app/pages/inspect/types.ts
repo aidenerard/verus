@@ -54,6 +54,13 @@ export interface AnalysisResult {
   // v4+ canvas grid data (JSON arrays, pre-downsampled)
   prob_grid_data?:          (number | null)[][];
   amplitude_grid_data?:     (number | null)[][];
+  // v5+ simplified 3-panel result keys
+  horizon_picks?:           string;
+  rebar_depth_map?:         string;
+  corrosion_map?:           string;
+  mean_depth_inches?:       number;
+  deck_thickness_inches?:   number;
+  high_risk_pct?:           number;
 }
 
 export interface UploadedFile { file: File; name: string }

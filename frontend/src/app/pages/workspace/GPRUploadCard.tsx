@@ -1,0 +1,138 @@
+import { useRef } from 'react';
+import { UploadCloud, X, Play } from 'lucide-react';
+import type { UploadedFile } from '../inspect/types';
+import { MANUFACTURERS, FREQ_OPTIONS, GPR_EXTS, type ManufacturerKey } from '../inspect/constants';
+import { ACCENT, BORDER, BORDER2, PANEL, RAISED, TEXT, TEXT2, TEXT3 } from './tokens';
+
+interface Props {
+  files:          UploadedFile[];
+  setFiles:       React.Dispatch<React.SetStateAction<UploadedFile[]>>;
+  manufacturer:   ManufacturerKey | '';
+  setManufacturer:(m: ManufacturerKey | '') => void;
+  frequencyMhz:   number;
+  setFrequencyMhz:(f: number) => void;
+  onStart:        () => void;
+  busy:           boolean;
+}
+
+export default function GPRUploadCard({
+  files, setFiles, manufacturer, setManufacturer, frequencyMhz, setFrequencyMhz, onStart, busy,
+}: Props) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const addFiles = (incoming: FileList | null) => {
+    if (!incoming) return;
+    const accepted = Array.from(incoming).filter(f =>
+      GPR_EXTS.has(f.name.slice(f.name.lastIndexOf('.')).toLowerCase()));
+    if (!accepted.length) return;
+    setFiles(prev => {
+      const existing = new Set(prev.map(f => f.name));
+      return [...prev, ...accepted.filter(f => !existing.has(f.name)).map(f => ({ file: f, name: f.name }))];
+    });
+  };
+
+  const removeFile = (name: string) =>
+    setFiles(prev => prev.filter(f => f.name !== name));
+
+  const onDrop: React.DragEventHandler<HTMLDivElement> = e => {
+    e.preventDefault();
+    addFiles(e.dataTransfer.files);
+  };
+
+  return (
+    <div style={{ background: PANEL, border: `1px solid ${BORDER}`, padding: '24px 28px' }}>
+      <div style={{ fontSize: 14, fontWeight: 700, color: TEXT, marginBottom: 4 }}>Upload GPR Scan Files</div>
+      <div style={{ fontSize: 12, color: TEXT2, marginBottom: 18 }}>
+        Drop .dzt, .dt1, .rd3/.rd7, .segy, or .csv files. Multiple files supported.
+      </div>
+
+      <div
+        onDragOver={e => e.preventDefault()}
+        onDrop={onDrop}
+        onClick={() => inputRef.current?.click()}
+        style={{
+          border: `2px dashed ${BORDER2}`, padding: '32px 24px',
+          background: RAISED, textAlign: 'center', cursor: 'pointer',
+          marginBottom: 18,
+        }}
+      >
+        <UploadCloud size={28} style={{ color: TEXT3, marginBottom: 8 }} />
+        <div style={{ fontSize: 13, color: TEXT, fontWeight: 600 }}>Click to browse or drop files here</div>
+        <div style={{ fontSize: 11, color: TEXT3, marginTop: 4 }}>Up to ~500 MB per upload</div>
+      </div>
+      <input
+        ref={inputRef}
+        type="file"
+        multiple
+        accept=".csv,.dzt,.dt1,.rd3,.rd7,.segy,.sgy,.dzg,.hd,.rad,.dt,.gec,.iprb,.iprh"
+        onChange={e => { addFiles(e.target.files); e.target.value = ''; }}
+        style={{ display: 'none' }}
+      />
+
+      {files.length > 0 && (
+        <div style={{ marginBottom: 18 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: TEXT3, marginBottom: 6 }}>
+            {files.length} file{files.length !== 1 ? 's' : ''} ready
+          </div>
+          <ul style={{ listStyle: 'none', margin: 0, padding: 0, maxHeight: 120, overflowY: 'auto', border: `1px solid ${BORDER}` }}>
+            {files.map(f => (
+              <li key={f.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 10px', fontSize: 12, color: TEXT, background: PANEL, borderBottom: `1px solid ${BORDER}` }}>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
+                <button onClick={e => { e.stopPropagation(); removeFile(f.name); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: TEXT2, padding: 2, display: 'flex' }}>
+                  <X size={12} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 18 }}>
+        <LabelledSelect
+          label="Equipment"
+          value={manufacturer}
+          onChange={v => setManufacturer(v as ManufacturerKey | '')}
+          options={[{ value: '', label: 'Auto-detect' }, ...MANUFACTURERS.map(m => ({ value: m.key, label: m.name }))]}
+        />
+        <LabelledSelect
+          label="Frequency"
+          value={String(frequencyMhz)}
+          onChange={v => setFrequencyMhz(parseInt(v))}
+          options={FREQ_OPTIONS.map(f => ({ value: String(f.mhz), label: f.label }))}
+        />
+      </div>
+
+      <button
+        onClick={onStart}
+        disabled={!files.length || busy}
+        style={{
+          width: '100%', padding: '12px 16px', background: !files.length || busy ? BORDER2 : ACCENT,
+          color: '#fff', border: 'none', cursor: !files.length || busy ? 'not-allowed' : 'pointer',
+          fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase',
+          fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+        }}
+      >
+        <Play size={14} /> Start Analysis
+      </button>
+    </div>
+  );
+}
+
+function LabelledSelect({
+  label, value, onChange, options,
+}: { label: string; value: string; onChange: (v: string) => void; options: { value: string; label: string }[] }) {
+  return (
+    <label style={{ display: 'block' }}>
+      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: TEXT3, marginBottom: 4 }}>
+        {label}
+      </div>
+      <select
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        style={{ width: '100%', padding: '8px 10px', background: RAISED, border: `1px solid ${BORDER}`, color: TEXT, fontSize: 12, fontFamily: 'inherit', outline: 'none' }}
+      >
+        {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+    </label>
+  );
+}
