@@ -10,5 +10,6 @@
     { "id": "f-4", "type": "agc",               "enabled": false, "params": { "window_ns": 8 } },
     { "id": "f-5", "type": "hilbert",           "enabled": false, "params": {} }
   ],
-  "gps_latency_ms": 120
+  "gps_latency_ms": 120,
+  "velocity_m_per_ns": 0.10
 }

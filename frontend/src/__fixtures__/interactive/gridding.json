@@ -1,5 +1,5 @@
 {
-  "algorithm": "natural_neighbor",
+  "algorithm": "minimum_curvature",
   "search_radius_ft": 3.75,
   "edge_clip": true,
   "cell_size_ft": 0.5,

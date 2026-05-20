@@ -1,7 +1,7 @@
 import { GripVertical } from 'lucide-react';
 import type { FilterStep } from '../state/types';
 import { Toggle } from './fields';
-import { BORDER, PANEL, TEXT, TEXT2, TEXT3 } from '../tokens';
+import { BORDER, RAISED, TEXT, TEXT2, TEXT3 } from '../tokens';
 
 const FILTER_LABELS: Record<FilterStep['type'], string> = {
   bandpass:           'Bandpass',
@@ -28,7 +28,7 @@ export default function FilterRow({ step, onChange, onDragStart, onDragOver, onD
       onDrop={e => { e.preventDefault(); onDrop(); }}
       style={{
         display: 'grid', gridTemplateColumns: 'auto auto 1fr auto', alignItems: 'center', gap: 8,
-        padding: '8px 10px', background: PANEL, border: `1px solid ${BORDER}`,
+        padding: '8px 10px', background: RAISED, border: `1px solid ${BORDER}`,
         cursor: 'grab', userSelect: 'none',
       }}
     >

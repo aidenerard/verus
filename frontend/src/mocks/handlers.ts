@@ -60,8 +60,15 @@ export const handlers = [
     return HttpResponse.json(griddingState);
   }),
 
-  http.post(`*/jobs/${matchJob}/reprocess`, () =>
-    HttpResponse.json({ job_id: 'reproc-' + Date.now(), status: 'queued' })),
-  http.post(`*/jobs/${matchJob}/regrid`, () =>
-    HttpResponse.json({ job_id: 'regrid-' + Date.now(), status: 'queued', texture_url: scene.surface.texture_url + '?v=' + Date.now() })),
+  http.post(`*/jobs/${matchJob}/reprocess`, () => {
+    console.info('[msw] reprocess (mock) — depths would recompute on real backend');
+    return HttpResponse.json({ job_id: 'reproc-' + Date.now(), status: 'queued' });
+  }),
+  http.post(`*/jobs/${matchJob}/regrid`, () => {
+    console.info(
+      '[msw] regrid (mock) — fixture returns the same surface, real backend would change visually',
+      { algorithm: griddingState.algorithm },
+    );
+    return HttpResponse.json({ job_id: 'regrid-' + Date.now(), status: 'queued', texture_url: scene.surface.texture_url + '?v=' + Date.now() });
+  }),
 ];

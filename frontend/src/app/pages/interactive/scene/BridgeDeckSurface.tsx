@@ -36,7 +36,7 @@ export default function BridgeDeckSurface({ scene }: Props) {
         />
       </mesh>
       <gridHelper
-        args={[Math.max(width, height) * 1.05, 12, '#3A3E45', '#24262B']}
+        args={[Math.max(width, height) * 1.05, 12, '#D4CFC9', '#E2DED9']}
         position={[0, 0.002, 0]}
       />
     </group>

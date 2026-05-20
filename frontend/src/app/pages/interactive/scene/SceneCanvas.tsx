@@ -39,7 +39,7 @@ export default function SceneCanvas({ projectId, scene }: Props) {
       camera={{ position: initialCamera.position, fov: 45 }}
       dpr={[1, 2]}
       gl={{ antialias: true, alpha: false }}
-      style={{ background: '#0F0F11' }}
+      style={{ background: '#F5F3EF' }}
     >
       <SceneLights />
       <BridgeDeckSurface scene={scene} />
@@ -59,9 +59,10 @@ export default function SceneCanvas({ projectId, scene }: Props) {
 function SceneLights() {
   return (
     <>
-      <ambientLight intensity={0.55} />
-      <directionalLight position={[20, 40, 30]} intensity={1.05} />
-      <directionalLight position={[-15, 25, -10]} intensity={0.45} color="#cdd6ff" />
+      <ambientLight intensity={0.85} />
+      <hemisphereLight args={['#ffffff', '#d8d3cc', 0.55]} />
+      <directionalLight position={[20, 40, 30]} intensity={0.85} />
+      <directionalLight position={[-15, 25, -10]} intensity={0.35} color="#fbe9da" />
     </>
   );
 }

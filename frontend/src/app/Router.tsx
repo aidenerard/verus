@@ -1,4 +1,4 @@
-import { lazy, Suspense, ReactNode } from 'react';
+import { ReactNode } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import HomePage from './pages/HomePage';
@@ -14,7 +14,6 @@ import FDEMWorkspace from './pages/workspace/FDEMWorkspace';
 import MagWorkspace from './pages/workspace/MagWorkspace';
 import MASWWorkspace from './pages/workspace/MASWWorkspace';
 import ImpactEchoWorkspace from './pages/workspace/ImpactEchoWorkspace';
-const InteractivePage = lazy(() => import('./pages/interactive/InteractivePage'));
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth();
@@ -62,15 +61,6 @@ export default function Router() {
           <Route path="/workspace/seismic/masw"        element={<MASWWorkspace />} />
           <Route path="/workspace/seismic/impact-echo" element={<ImpactEchoWorkspace />} />
         </Route>
-
-        {/* Interactive view — full-screen, sibling of WorkspaceLayout, lazy-loaded for bundle size */}
-        <Route path="/workspace/em/gpr/:projectId/interactive" element={
-          <ProtectedRoute>
-            <Suspense fallback={<div style={{ minHeight: '100vh', background: '#0F0F11' }} />}>
-              <InteractivePage />
-            </Suspense>
-          </ProtectedRoute>
-        } />
 
         {/* Legacy redirects — preserve query string for ?project_id=... links */}
         <Route path="/analyze"      element={<RedirectKeepQuery to="/workspace/em/gpr" />} />

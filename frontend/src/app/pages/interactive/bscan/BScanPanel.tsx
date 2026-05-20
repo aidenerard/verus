@@ -4,7 +4,7 @@ import { useScanLine } from '../state/hooks';
 import { useInteractiveStore } from '../state/useInteractiveStore';
 import BScanCanvas from './BScanCanvas';
 import PickDots from './PickDots';
-import { BORDER, PANEL, TEXT, TEXT2, TEXT3 } from '../tokens';
+import { BORDER, PANEL, RAISED, TEXT, TEXT2, TEXT3 } from '../tokens';
 
 interface Props {
   projectId: string;
@@ -51,7 +51,7 @@ export default function BScanPanel({ projectId, scene }: Props) {
         )}
       </div>
 
-      <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: `${AXIS_W}px 1fr`, background: '#000' }}>
+      <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: `${AXIS_W}px 1fr`, background: RAISED }}>
         {traces
           ? <YAxis nSamples={traces.n_samples} samplesPerNs={traces.samples_per_ns} epsilonR={scene.epsilon_r} pxPerSample={PX_PER_SAMPLE} />
           : <div />}
@@ -119,7 +119,7 @@ function YAxis({ nSamples, samplesPerNs, epsilonR, pxPerSample }: { nSamples: nu
 
 function StatusOverlay({ text, accent }: { text: string; accent?: boolean }) {
   return (
-    <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: accent ? '#E8601C' : TEXT2, fontSize: 12, background: '#0F0F11' }}>
+    <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: accent ? '#E8601C' : TEXT2, fontSize: 12, background: PANEL }}>
       {text}
     </div>
   );

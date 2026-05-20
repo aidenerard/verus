@@ -5,7 +5,8 @@ import { useInteractiveStore } from '../state/useInteractiveStore';
 import type { FilterStep, ProcessingConfig, Scene } from '../state/types';
 import { Section, Row, Slider, NumberField, Button, Select } from './fields';
 import FilterRow from './FilterRow';
-import { TEXT2, TEXT3 } from '../tokens';
+import VelocityControl from './VelocityControl';
+import { BORDER, TEXT2, TEXT3 } from '../tokens';
 
 interface Props { projectId: string; scene: Scene }
 
@@ -63,6 +64,8 @@ export default function ProcessingTab({ projectId, scene }: Props) {
 
   return (
     <div>
+      <VelocityControl projectId={projectId} />
+
       <Section title={`Time-zero (${scanLineLabel})`}>
         <Row label="Shift (ns)">
           <Slider value={currentShift} onChange={setShift} min={-2} max={2} step={0.05} />
@@ -112,7 +115,7 @@ export default function ProcessingTab({ projectId, scene }: Props) {
         </Row>
       </Section>
 
-      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', borderTop: '1px solid #2A2D32', paddingTop: 12 }}>
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', borderTop: `1px solid ${BORDER}`, paddingTop: 12 }}>
         <Button variant="ghost" onClick={reset}>Reset</Button>
         <Button variant="primary" onClick={apply} disabled={busy}>
           {busy ? 'Applying…' : 'Apply'}

@@ -61,9 +61,10 @@ export interface FilterStep {
 }
 
 export interface ProcessingConfig {
-  time_zero_shifts: Record<string, number>;
-  filters:          FilterStep[];
-  gps_latency_ms:   number;
+  time_zero_shifts:   Record<string, number>;
+  filters:            FilterStep[];
+  gps_latency_ms:     number;
+  velocity_m_per_ns?: number;
 }
 
 export type GriddingAlgorithm =

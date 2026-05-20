@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { BORDER, PANEL, TEXT, TEXT2, TEXT3 } from '../tokens';
+import { BORDER, RAISED, TEXT, TEXT2, TEXT3 } from '../tokens';
 
 export function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -44,7 +44,7 @@ export function NumberField({ value, onChange, step = 0.01, min, max, unit, read
         onChange={e => onChange(parseFloat(e.target.value))}
         style={{
           flex: 1, minWidth: 0, padding: '6px 8px',
-          background: PANEL, border: `1px solid ${BORDER}`,
+          background: RAISED, border: `1px solid ${BORDER}`,
           color: TEXT, fontSize: 12, fontFamily: 'inherit', outline: 'none',
         }}
       />
@@ -82,7 +82,7 @@ export function Select<T extends string>({ value, onChange, options }: { value: 
     <select
       value={value}
       onChange={e => onChange(e.target.value as T)}
-      style={{ width: '100%', padding: '6px 8px', background: PANEL, border: `1px solid ${BORDER}`, color: TEXT, fontSize: 12, fontFamily: 'inherit', outline: 'none' }}
+      style={{ width: '100%', padding: '6px 8px', background: RAISED, border: `1px solid ${BORDER}`, color: TEXT, fontSize: 12, fontFamily: 'inherit', outline: 'none' }}
     >
       {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
     </select>
@@ -98,7 +98,7 @@ export function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: 
       aria-checked={checked}
       style={{
         width: 32, height: 18, border: 'none', cursor: 'pointer', padding: 0,
-        background: checked ? '#E8601C' : '#3A3E45', borderRadius: 999, position: 'relative',
+        background: checked ? '#E8601C' : BORDER, borderRadius: 999, position: 'relative',
       }}
     >
       <span style={{
@@ -117,7 +117,7 @@ interface ButtonProps {
 }
 
 export function Button({ onClick, children, variant = 'ghost', disabled }: ButtonProps) {
-  const bg     = variant === 'primary' ? '#E8601C' : variant === 'danger' ? '#7f1d1d' : 'transparent';
+  const bg     = variant === 'primary' ? '#E8601C' : variant === 'danger' ? '#b91c1c' : 'transparent';
   const color  = variant === 'ghost' ? TEXT : '#fff';
   const border = variant === 'ghost' ? `1px solid ${BORDER}` : 'none';
   return (
@@ -126,11 +126,12 @@ export function Button({ onClick, children, variant = 'ghost', disabled }: Butto
       onClick={onClick}
       disabled={disabled}
       style={{
-        background: disabled ? '#2A2D32' : bg, color, border, padding: '8px 14px',
+        background: disabled ? '#D4CFC9' : bg, color: disabled ? '#7A7470' : color,
+        border, padding: '8px 14px',
         cursor: disabled ? 'not-allowed' : 'pointer',
         fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
         fontFamily: 'inherit',
-        opacity: disabled ? 0.6 : 1,
+        opacity: disabled ? 0.8 : 1,
       }}
     >
       {children}

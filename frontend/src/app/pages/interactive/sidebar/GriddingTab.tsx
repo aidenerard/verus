@@ -4,14 +4,13 @@ import { interactiveApi } from '../state/api';
 import { useInteractiveStore } from '../state/useInteractiveStore';
 import type { GriddingAlgorithm, GriddingConfig } from '../state/types';
 import { Section, Row, Slider, Select, Toggle, Button } from './fields';
-import { TEXT2, TEXT3 } from '../tokens';
+import { BORDER, TEXT2, TEXT3 } from '../tokens';
 
 const ALGO_OPTIONS: { value: GriddingAlgorithm; label: string }[] = [
-  { value: 'nearest_neighbor',   label: 'Nearest Neighbor' },
-  { value: 'idw',                label: 'Inverse Distance Weighting' },
-  { value: 'natural_neighbor',   label: 'Natural Neighbor' },
-  { value: 'minimum_curvature',  label: 'Minimum Curvature' },
-  { value: 'kriging',            label: 'Kriging' },
+  { value: 'minimum_curvature', label: 'Minimum Curvature' },
+  { value: 'kriging',           label: 'Kriging' },
+  { value: 'natural_neighbor',  label: 'Natural Neighbor' },
+  { value: 'nearest_neighbor',  label: 'Nearest Neighbor' },
 ];
 
 export default function GriddingTab({ projectId }: { projectId: string }) {
@@ -28,9 +27,15 @@ export default function GriddingTab({ projectId }: { projectId: string }) {
 
   const regrid = async () => {
     setBusy(true);
+    console.info(
+      '[interactive] regrid request',
+      { jobId: projectId, algorithm: cfg.algorithm, search_radius_ft: cfg.search_radius_ft,
+        cell_size_ft: cfg.cell_size_ft, edge_clip: cfg.edge_clip, anisotropy: cfg.anisotropy },
+    );
     try {
       await saveGridding(projectId, cfg);
-      await interactiveApi.regrid(projectId);
+      const ack = await interactiveApi.regrid(projectId);
+      console.info('[interactive] regrid ack', ack);
       bumpSurface();
     } finally { setBusy(false); }
   };
@@ -86,7 +91,7 @@ export default function GriddingTab({ projectId }: { projectId: string }) {
         </Section>
       )}
 
-      <div style={{ display: 'flex', justifyContent: 'flex-end', borderTop: '1px solid #2A2D32', paddingTop: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', borderTop: `1px solid ${BORDER}`, paddingTop: 12 }}>
         <Button variant="primary" onClick={regrid} disabled={busy}>
           {busy ? 'Re-gridding…' : 'Re-grid'}
         </Button>

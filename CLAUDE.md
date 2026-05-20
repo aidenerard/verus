@@ -181,15 +181,16 @@ export const SERVER = import.meta.env.VITE_API_URL !== undefined
 | `/workspace/em/magnetometer` | `MagWorkspace` (placeholder) | protected |
 | `/workspace/seismic/masw` | `MASWWorkspace` (placeholder) | protected |
 | `/workspace/seismic/impact-echo` | `ImpactEchoWorkspace` (placeholder) | protected |
-| `/workspace/em/gpr/:projectId/interactive` | `InteractivePage` (lazy-loaded; no `WorkspaceLayout` wrapper) | protected |
 | `/analyze` | → redirects to `/workspace/em/gpr` (preserves query) | — |
+
+The **interactive view** is a tab inside `GPRResults` (Overview / Interactive), not a standalone route. No URL change happens when the user opens it — `?project_id=…` is still the only param.
 | `/inspect/gpr` | → redirects to `/workspace/em/gpr` (preserves query) | — |
 | `/inspect/masw` | → redirects to `/workspace/seismic/masw` | — |
 | `/inspect/ir` | → redirects to `/workspace/seismic/impact-echo` | — |
 
 Inspection is a guided two-step flow: `/workspace` (module) → `/workspace/<module>` (method) → `/workspace/<module>/<method>` (analysis). The two select pages share `SelectPageShell` (logo + back button, no sidebar). Once the user picks a method, `WorkspaceLayout` wraps the analysis view with a minimal top bar (back, Verus logo, breadcrumb `Workspace › Module › Method`, user avatar) — no sidebar. `ProcessingOptionsProvider` lives on `WorkspaceLayout` and is consumed by the GPR upload card's collapsible "Advanced Options" section. Legacy `/inspect/*` redirects use `RedirectKeepQuery` so `?project_id=…` deep links from the dashboard survive.
 
-The **interactive view** (`/workspace/em/gpr/:projectId/interactive`) is a separate full-viewport experience reached from the "Open Interactive View →" CTA on the GPR results page. It does **not** render inside `WorkspaceLayout` — it owns its own top bar, three-pane grid (3D scene top-left, B-scan bottom-left, sidebar right), and dark color palette (tokens live at `app/pages/interactive/tokens.ts`). It is lazy-loaded so `three`/`@react-three/drei` never ship in the main chunk. Data fetching uses **SWR**; UI state uses **Zustand**; camera state persists in `localStorage` keyed per project. The mock service worker (see "Mocks & fixtures") supplies all `/jobs/{id}/*` and `/picks/{id}` endpoints behind `VITE_USE_MOCKS=true` while the real backend is being built in a parallel branch.
+The **interactive view** lives as an "Interactive" tab inside `GPRResults` (sibling of the default "Overview" tab — no separate route, no extra chrome). When the user selects the Interactive tab, `GPRResults` mounts `InteractiveView` in the same content area: a three-pane grid (3D scene top-left, B-scan bottom-left, sidebar right) in the same light Verus palette as the rest of the workspace (tokens at `app/pages/interactive/tokens.ts` mirror the workspace tokens). Data fetching uses **SWR**; UI state uses **Zustand**; camera state persists in `localStorage` keyed per project. The mock service worker (see "Mocks & fixtures") supplies all `/jobs/{id}/*` and `/picks/{id}` endpoints behind `VITE_USE_MOCKS=true` while the real backend is being built in a parallel branch. Pick depth/position are **read-only in the inspector** — they're derived from survey + velocity; adjust velocity globally in the Processing tab to recompute depths.
 
 ---
 
@@ -309,9 +310,8 @@ git push origin main              # triggers both Vercel + Render auto-deploy
 | `app/pages/workspace/modules.ts` | Module catalog (Electromagnetic + Seismic) driving sidebar + breadcrumb |
 | `app/pages/workspace/tokens.ts` | Workspace design tokens (BG/PANEL/BORDER/TEXT/ACCENT + layout constants) |
 | `app/pages/workspace/types.ts` | `ProcessingOptions`, `MethodMeta`, `ModuleMeta`, defaults |
-| `app/pages/interactive/InteractivePage.tsx` | Interactive view orchestrator — 3-pane layout (scene, B-scan, sidebar) |
-| `app/pages/interactive/InteractiveTopBar.tsx` | Top bar — back to results, breadcrumb, view-mode toggle, export stub |
-| `app/pages/interactive/tokens.ts` | Dark Geolitix-style palette + layout constants |
+| `app/pages/interactive/InteractiveView.tsx` | Embedded 3-pane orchestrator — mounted by the Interactive tab in `GPRResults` |
+| `app/pages/interactive/tokens.ts` | Light Verus palette + layout constants (mirrors workspace tokens) |
 | `app/pages/interactive/state/types.ts` | `Pick`, `Scene`, `ScanLineTraces`, `ProcessingConfig`, `GriddingConfig`, `ViewMode`, `CameraState` |
 | `app/pages/interactive/state/api.ts` | Typed `fetch` wrappers + SWR cache keys |
 | `app/pages/interactive/state/hooks.ts` | `useScene`, `usePicks`, `useScanLine`, `useProcessing`, `useGridding` + mutate helpers |
@@ -323,10 +323,11 @@ git push origin main              # triggers both Vercel + Render auto-deploy
 | `app/pages/interactive/scene/ColorLegend.tsx` | Bottom-left overlay legend for the depth colormap |
 | `app/pages/interactive/scene/colormap.ts` | 11-stop Spectral colormap + `spectral01`, `depthToColor`, `spectralStops` |
 | `app/pages/interactive/sidebar/SidebarTabs.tsx` | Tab strip for Inspector / Processing / Gridding |
-| `app/pages/interactive/sidebar/InspectorTab.tsx` | Selected-pick metadata + edit + delete + reset; 400 ms-debounced regrid |
-| `app/pages/interactive/sidebar/ProcessingTab.tsx` | Time-zero slider, filter chain editor, GPS latency, apply/reset |
+| `app/pages/interactive/sidebar/InspectorTab.tsx` | Read-only pick metadata + delete + "Add pick" stub; position/depth not user-editable |
+| `app/pages/interactive/sidebar/ProcessingTab.tsx` | Velocity (global, debounced regrid) + time-zero slider + filter chain + GPS latency |
+| `app/pages/interactive/sidebar/VelocityControl.tsx` | Velocity (m/ns) slider, 0.05–0.15, default 0.10; debounced reprocess + revalidate |
 | `app/pages/interactive/sidebar/FilterRow.tsx` | Drag-to-reorder filter row with enabled toggle + param summary |
-| `app/pages/interactive/sidebar/GriddingTab.tsx` | Algorithm, radius, edge clip, cell size, anisotropy (Kriging/Min-curve) |
+| `app/pages/interactive/sidebar/GriddingTab.tsx` | Algorithm (Min Curvature default · Kriging · Natural · Nearest), radius, edge clip, cell size, anisotropy (Kriging/Min-curve) |
 | `app/pages/interactive/sidebar/fields.tsx` | Shared form atoms (Section, Row, NumberField, Slider, Select, Toggle, Button) |
 | `app/pages/interactive/bscan/BScanPanel.tsx` | Bottom panel — header, scrolling, Y-axis (ns + depth in via ε_r) |
 | `app/pages/interactive/bscan/BScanCanvas.tsx` | Canvas trace renderer (int8 → grayscale ImageData) |
