@@ -151,24 +151,7 @@ def build_cscan_maps(cscan_slices, output_dir, title_prefix=''):
     }
 
 
-def _median_swath_length(pos_files: list[str]) -> float:
-    lengths = []
-    for path in pos_files:
-        try:
-            dists, in_sec, n_exp = [], False, -1
-            for s in (l.strip() for l in open(path, errors="replace")):
-                if s == "<VALID_MARKERS_SWEEP>": in_sec = True; n_exp = -1; continue
-                if in_sec and n_exp < 0:
-                    try: n_exp = int(s)
-                    except: pass
-                    continue
-                if in_sec and n_exp > 0 and len(s.split(",")) == 4:
-                    try: dists.append(float(s.split(",")[0]))
-                    except: pass
-                if in_sec and len(dists) >= n_exp > 0: break
-            if dists: lengths.append(max(dists))
-        except Exception: pass
-    return float(np.median(lengths)) if lengths else 35.0
+from analysis_proceq_utils import median_swath_length as _median_swath_length  # noqa: E402
 
 
 def process_proceq_dataset(
@@ -177,11 +160,12 @@ def process_proceq_dataset(
     epsr: float = _RIS_EPSR,
     search_start: int = 55,
     search_end: int = 150,
+    inference_sample_rate: int = 8,
 ) -> dict | None:
     import sys
     sys.path.insert(0, os.path.dirname(__file__))
     from ingest import read_proceq
-    from analysis import extract_amplitude_and_depth
+    from analysis import extract_amplitude_and_depth, parse_pos_file, get_trace_gps
 
     data_dir = os.path.abspath(data_dir)
     output_dir = os.path.abspath(output_dir)
@@ -195,10 +179,8 @@ def process_proceq_dataset(
         f for f in scan_files
         if int(os.path.basename(f).replace("PRC_", "").replace(".scan", "")) % 2 == 1
     ]
-    print(
-        f"[ANALYSIS] {len(scan_files)} PRC  {len(odd_scans)} odd  "
-        f"{len(pos_files)} pos  {len(cscan_01_files)} CScan_01"
-    )
+    print(f"[ANALYSIS] {len(scan_files)} PRC  {len(odd_scans)} odd  "
+          f"{len(pos_files)} pos  {len(cscan_01_files)} CScan_01")
 
     CHANNELS_PER_SWATH = 4
     DY = 0.05
@@ -219,11 +201,13 @@ def process_proceq_dataset(
         'easting':   [],
         'northing':  [],
         'depths_in': [],
+        'traces':    [],
     }
     total_traces = 0
 
     for swath_idx, swath_scans in enumerate(swath_groups):
         pos_path = pos_files[swath_idx] if swath_idx < len(pos_files) else None
+        pos_df   = parse_pos_file(pos_path) if pos_path else None
 
         for ch_idx, scan_path in enumerate(swath_scans):
             base = os.path.basename(scan_path)
@@ -234,27 +218,25 @@ def process_proceq_dataset(
                 continue
 
             traces   = result["traces"]
-            coords   = result["coordinates"]
             n_traces = len(traces)
             total_traces += n_traces
+            ts_data['traces'].append(traces)
 
             depth_result = extract_amplitude_and_depth(
                 traces, search_start=search_start, search_end=search_end, epsr=epsr,
             )
 
-            if coords is not None and len(coords) >= 2:
-                gps_idx = np.linspace(0, n_traces - 1, len(coords))
-                along_track = np.interp(
-                    np.arange(n_traces), gps_idx, coords["distance"].values)
+            east, north = get_trace_gps(pos_df, n_traces)
+            if east is not None:
+                ts_data['easting'].append(east)
+                ts_data['northing'].append(north)
+                print(f"  [GPS] swath {swath_idx+1} ch {ch_idx+1}: "
+                      f"real GPS {east.min():.1f}–{east.max():.1f}E")
             else:
-                along_track = np.linspace(0, median_length, n_traces)
-
-            cross_track = np.full(
-                n_traces, swath_idx * CHANNELS_PER_SWATH * DY + ch_idx * DY,
-            )
-
-            ts_data['easting'].append(along_track)
-            ts_data['northing'].append(cross_track)
+                print(f"  [GPS] swath {swath_idx+1} ch {ch_idx+1}: "
+                      f"no GPS, skipping from depth map")
+                ts_data['easting'].append(None)
+                ts_data['northing'].append(None)
             ts_data['depths_in'].append(depth_result['depths_in'])
 
             if ch_idx == 0:
@@ -265,11 +247,8 @@ def process_proceq_dataset(
                 ts_data['bottom_cm'].append(bottom['depths_m'] * 100)
                 ts_data['rebar_in'].append(depth_result['depths_in'])
 
-            print(
-                f"[ANALYSIS]   swath {swath_idx+1:02d} ch {ch_idx+1}: "
-                f"{n_traces} traces  depth {depth_result['depths_in'].mean():.2f}\"  "
-                f"cross={cross_track[0]:.2f}m"
-            )
+            print(f"[ANALYSIS]   swath {swath_idx+1:02d} ch {ch_idx+1}: "
+                  f"{n_traces} traces  depth {depth_result['depths_in'].mean():.2f}\"")
 
     if not ts_data['easting']:
         print("[ANALYSIS] No data — aborting")
@@ -280,8 +259,21 @@ def process_proceq_dataset(
     # Output 1 — horizon picks
     build_horizon_picks_plot(odd_scans, ts_data, output_dir)
 
-    # Output 2 — rebar depth map
-    build_ts_depth_map(ts_data, output_dir)
+    # Output 2 — rebar depth map (real GPS coords, signal-proc depths; no-GPS swaths dropped)
+    valid_mask  = [e is not None for e in ts_data['easting']]
+    east_valid_chunks  = [e for e in ts_data['easting']  if e is not None]
+    north_valid_chunks = [n for n in ts_data['northing'] if n is not None]
+    depth_valid_chunks = [d for d, v in zip(ts_data['depths_in'], valid_mask) if v]
+    east_valid  = np.concatenate(east_valid_chunks)  if east_valid_chunks  else np.array([])
+    north_valid = np.concatenate(north_valid_chunks) if north_valid_chunks else np.array([])
+    depth_valid = np.concatenate(depth_valid_chunks) if depth_valid_chunks else np.array([])
+    if len(east_valid) > 100:
+        from analysis import build_model_depth_map
+        build_model_depth_map(east_valid, north_valid, depth_valid,
+                              output_dir, title='Rebar Depth Map')
+        print(f"[DEPTH MAP] built from {len(east_valid):,} GPS-valid traces")
+    else:
+        print("[DEPTH MAP] insufficient GPS traces, skipping depth map")
 
     # Output 3 — corrosion map
     cscan_slices  = [s for s in cscan_raw if s is not None]

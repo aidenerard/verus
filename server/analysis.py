@@ -138,6 +138,140 @@ def build_corrosion_map(
     print(f"[ANALYSIS] corrosion map saved → {output_path}")
 
 
+def parse_pos_file(pos_path):
+    """Parse Proceq .pos UTM file. Returns DataFrame[distance,easting,northing,elevation] or None."""
+    try:
+        rows: list[list[float]] = []
+        in_data = False
+        for raw in open(pos_path, "r"):
+            line = raw.strip()
+            if line.startswith("<VALID_MARKERS_SWEEP>"):
+                in_data = True; continue
+            if line.startswith("<INVALID_INTERVALS>"):
+                in_data = False; continue
+            if in_data and "," in line:
+                parts = line.split(",")
+                if len(parts) == 4:
+                    try: rows.append([float(p) for p in parts])
+                    except ValueError: pass
+        if not rows:
+            return None
+        import pandas as pd
+        return pd.DataFrame(rows, columns=["distance", "easting", "northing", "elevation"])
+    except Exception as exc:
+        print(f"[POS] Failed to parse {pos_path}: {exc}")
+        return None
+
+
+def get_trace_gps(pos_df, n_traces):
+    """
+    Interpolate GPS fixes to per-trace easting / northing.
+    Returns (easting_arr, northing_arr) both shape (n_traces,),
+    or (None, None) if pos_df is unusable.
+    """
+    if pos_df is None or len(pos_df) < 2:
+        return None, None
+    trace_indices = np.arange(n_traces)
+    gps_indices   = np.linspace(0, n_traces - 1, len(pos_df))
+    easting  = np.interp(trace_indices, gps_indices, pos_df["easting"].values)
+    northing = np.interp(trace_indices, gps_indices, pos_df["northing"].values)
+    return easting, northing
+
+
+def build_model_depth_map(
+    all_easting,
+    all_northing,
+    all_depths_in,
+    output_dir,
+    title: str = "Rebar Depth Map",
+) -> str:
+    """
+    Infrasense-style contourf rebar depth heatmap from dense per-trace model
+    predictions. Objective measurement — no analyst review needed.
+
+    Writes <output_dir>/rebar_depth_map.png and returns the path.
+    """
+    import os
+    from matplotlib.colors import LinearSegmentedColormap
+    from scipy.interpolate import griddata
+    from scipy.ndimage import gaussian_filter, median_filter
+
+    # Snap per-trace depths to nearest 0.5" so downstream binning stays consistent.
+    all_depths_in = np.round(np.asarray(all_depths_in) * 2) / 2
+
+    e0, e1 = all_easting.min(),  all_easting.max()
+    n0, n1 = all_northing.min(), all_northing.max()
+
+    grid_e, grid_n = np.mgrid[e0:e1:500j, n0:n1:150j]
+
+    grid_d = griddata((all_easting, all_northing), all_depths_in,
+                      (grid_e, grid_n), method="cubic")
+    grid_d_near = griddata((all_easting, all_northing), all_depths_in,
+                           (grid_e, grid_n), method="nearest")
+    grid_d[np.isnan(grid_d)] = grid_d_near[np.isnan(grid_d)]
+
+    # Smoother spatial grouping — larger median + Gaussian, then re-snap to 0.5".
+    grid_d = median_filter(grid_d, size=9)
+    grid_d = gaussian_filter(grid_d, sigma=3)
+    grid_d = np.round(grid_d * 2) / 2
+
+    fig, ax = plt.subplots(figsize=(16, 6))
+
+    # Relative colorscale per map, rounded outward to nearest 0.5".
+    vmin = np.percentile(all_depths_in, 2)
+    vmax = np.percentile(all_depths_in, 98)
+    vmin = np.floor(vmin * 2) / 2
+    vmax = np.ceil(vmax * 2) / 2
+    levels_fill = np.arange(vmin, vmax + 0.5, 0.5)
+    levels_line = np.arange(vmin, vmax + 0.5, 0.5)
+
+    # Red-yellow only colormap (no green, no blue).
+    red_yellow = LinearSegmentedColormap.from_list(
+        "red_yellow",
+        ["#FF0000", "#FF4400", "#FF8800", "#FFAA00", "#FFCC00", "#FFE800", "#FFFF00"],
+        N=256,
+    )
+
+    cf = ax.contourf(grid_e, grid_n, grid_d,
+                     levels=levels_fill, cmap=red_yellow, extend="both")
+    cs = ax.contour(grid_e, grid_n, grid_d,
+                    levels=levels_line, colors="black", linewidths=0.6)
+
+    # Label each contour level exactly once — pick the longest path for that level
+    # and put a single inline-text label at its midpoint.
+    for level_idx, level_val in enumerate(cs.levels):
+        if level_idx >= len(cs.collections):
+            continue
+        paths = cs.collections[level_idx].get_paths()
+        if not paths:
+            continue
+        longest = max(paths, key=lambda p: len(p.vertices))
+        mid_idx = len(longest.vertices) // 2
+        x_mid, y_mid = longest.vertices[mid_idx]
+        ax.text(x_mid, y_mid, f'{level_val:.1f}"',
+                fontsize=8, ha="center", va="center", fontweight="bold",
+                bbox=dict(boxstyle="round,pad=0.1",
+                          facecolor="white", alpha=0.7, edgecolor="none"))
+
+    cbar = plt.colorbar(cf, ax=ax, orientation="horizontal",
+                        pad=0.15, aspect=50,
+                        ticks=np.arange(vmin, vmax + 0.5, 0.5))
+    cbar.set_label("Rebar Depth (inches)", fontsize=11)
+    cbar.ax.tick_params(labelsize=9)
+    ax.set_xlabel("Easting (m, UTM Zone 16N)", fontsize=11)
+    ax.set_ylabel("Northing (m, UTM Zone 16N)", fontsize=11)
+    ax.set_title(title, fontsize=13, fontweight="bold")
+    ax.set_aspect("auto")
+    ax.tick_params(which="both", direction="in", top=True, right=True)
+
+    plt.tight_layout()
+    out = os.path.join(output_dir, "rebar_depth_map.png")
+    plt.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"[DEPTH MAP] saved → {out}")
+    return out
+
+
 # Re-export Proceq pipeline so existing callers (jobs.py, diagnostics.py) keep working.
 from analysis_proceq import (  # noqa: E402
     load_cscan_amplitudes,
@@ -151,6 +285,7 @@ __all__ = [
     "build_amplitude_map",
     "build_depth_map",
     "build_corrosion_map",
+    "build_model_depth_map",
     "load_cscan_amplitudes",
     "build_cscan_maps",
     "process_proceq_dataset",

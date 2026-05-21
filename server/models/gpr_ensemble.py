@@ -15,7 +15,7 @@ import torch
 import torch.nn as nn
 from scipy.signal import resample as scipy_resample
 
-MAX_REBAR_DEPTH_CM = 30.0
+MAX_REBAR_DEPTH_CM = 10.0
 MAX_THICKNESS_CM   = 35.0
 
 MODELS_DIR     = os.path.dirname(os.path.abspath(__file__))
