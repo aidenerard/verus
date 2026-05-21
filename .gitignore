@@ -16,3 +16,6 @@ __pycache__/
 .env
 *_out.txt
 .claude/
+
+# Model weights — downloaded separately, not committed
+*.pth
