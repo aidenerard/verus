@@ -292,6 +292,22 @@ def read_proceq(scan_path: str, pos_path: str = None) -> dict:
     }
 
 
+def convert_proceq(file_path: Path, upload_dir: Path, **kwargs):
+    """
+    Wrap read_proceq() for the generic /analyze pipeline.
+    Writes traces to CSV (one row per trace) so downstream load_csv() works
+    unchanged. Returns (csv_path, gps_data) matching the other converters.
+    """
+    file_path  = Path(file_path)
+    upload_dir = Path(upload_dir)
+    result   = read_proceq(str(file_path))
+    traces   = result["traces"]                            # (n_traces, 510) float32
+    csv_path = upload_dir / f"{file_path.stem}.csv"
+    pd.DataFrame(traces).to_csv(csv_path, index=False, header=False)
+    print(f"[INGEST][proceq] wrote CSV: {csv_path.name} ({traces.shape})", flush=True)
+    return csv_path, None
+
+
 def read_cscan(cscan_path: str) -> dict:
     """
     Read a Proceq .CScan file and return peak amplitude map.
@@ -328,3 +344,9 @@ def read_cscan(cscan_path: str) -> dict:
         "dy_m": dy,
         "depth_range_m": depth_range,
     }
+
+
+# Register convert_proceq in the dispatch maps. Done at module load AFTER the
+# function is defined so the reference resolves cleanly without forward decls.
+_EXT_MAP[".scan"] = convert_proceq
+MANUFACTURER_FORMAT_MAP["proceq"] = convert_proceq

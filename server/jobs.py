@@ -229,6 +229,8 @@ def run_proceq_job(
     file_data: list[tuple[str, bytes]],
     tmpdir: Path,
     epsr: float,
+    user_id: Optional[str] = None,
+    supabase_client = None,
 ) -> None:
     import base64
     from analysis import process_proceq_dataset
@@ -282,6 +284,22 @@ def run_proceq_job(
             },
         })
         print(f"[job:{job_id}] Proceq done in {elapsed}s", flush=True)
+
+        # Best-effort Supabase persist. Only writes columns we know exist on
+        # analysis_jobs (id, user_id, status, completed_at, analysis_time_sec).
+        # Result blob stays in _jobs — frontend can fetch via GET /job/{id}.
+        if supabase_client:
+            try:
+                supabase_client.table("analysis_jobs").upsert({
+                    "id":                job_id,
+                    "user_id":           user_id,
+                    "status":            "complete",
+                    "completed_at":      "now()",
+                    "analysis_time_sec": elapsed,
+                }).execute()
+                print(f"[job:{job_id}] Proceq DB row written", flush=True)
+            except Exception as exc:
+                print(f"[job:{job_id}] Proceq DB write failed (non-fatal): {exc}", flush=True)
 
     except Exception as exc:
         print(f"[job:{job_id}] Proceq FAILED: {exc}", flush=True)

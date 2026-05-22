@@ -280,7 +280,7 @@ async def analyze_proceq(
     tmpdir = Path(tempfile.mkdtemp(prefix=f"verus_proceq_{job_id}_"))
     _jobs[job_id] = {"status": "pending", "user_id": user_id, "created_at": time.time()}
 
-    _executor.submit(run_proceq_job, job_id, file_data, tmpdir, epsr)
+    _executor.submit(run_proceq_job, job_id, file_data, tmpdir, epsr, user_id, _supabase)
     print(f"[analyze-proceq] Queued job {job_id} ({len(file_data)} files)", flush=True)
 
     return JSONResponse({"job_id": job_id, "status": "pending"})
