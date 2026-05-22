@@ -103,15 +103,23 @@ export function useAnalysisJob({
       if (!serverReady) { setErrorMsg('Server did not respond in time.'); setJobStatus('failed'); return; }
 
       setStatusMsg('Uploading files…');
+      const hasProceqFiles = files.some(f => f.file.name.toLowerCase().endsWith('.scan'));
+      const endpoint = hasProceqFiles ? '/analyze-proceq' : '/analyze';
+
       const formData = new FormData();
       files.forEach(f => formData.append('files', f.file));
-      if (manufacturer) formData.append('manufacturer', manufacturer);
-      const effectiveFreq = useCustomFreq ? (parseInt(customFreq) || 1600) : frequencyMhz;
-      formData.append('frequency_mhz', String(effectiveFreq));
-      if (projectId) formData.append('project_id', projectId);
-      if (extraFormData) extraFormData(formData);
+      if (hasProceqFiles) {
+        // /analyze-proceq takes epsr only; manufacturer/frequency/project_id don't apply.
+        formData.append('epsr', '9.0');
+      } else {
+        if (manufacturer) formData.append('manufacturer', manufacturer);
+        const effectiveFreq = useCustomFreq ? (parseInt(customFreq) || 1600) : frequencyMhz;
+        formData.append('frequency_mhz', String(effectiveFreq));
+        if (projectId) formData.append('project_id', projectId);
+        if (extraFormData) extraFormData(formData);
+      }
 
-      const res = await fetch(`${SERVER}/analyze`, {
+      const res = await fetch(`${SERVER}${endpoint}`, {
         method: 'POST', headers, body: formData, signal: AbortSignal.timeout(60000),
       });
       if (!res.ok) {
