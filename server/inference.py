@@ -115,7 +115,7 @@ def run_rebar_inference(
 
     def _physics(sigs: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         peak_samples = np.argmax(np.abs(sigs), axis=1).astype(np.int32)
-        twt          = peak_samples.astype(np.float32) * 0.023
+        twt          = peak_samples.astype(np.float32) * (15.0 / 512)
         depth        = (velocity * twt / 2.0) * 39.3701
         return depth.astype(np.float32), twt, peak_samples
 
