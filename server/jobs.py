@@ -22,6 +22,35 @@ from processing_state import DEFAULT_PROCESSING_STATE
 _jobs: dict[str, dict] = {}
 _executor = ThreadPoolExecutor(max_workers=2)
 
+# Columns on analysis_jobs that _update_job is allowed to write. `error` maps
+# to the `error_msg` schema column.
+_DB_PERSIST_COLS = ("status", "progress", "stage", "error", "completed_at")
+_DB_COL_RENAME   = {"error": "error_msg"}
+
+
+def _update_job(job_id: str, updates: dict, sb=None) -> None:
+    """
+    Update job state in both the in-memory _jobs dict and Supabase.
+    Only allowlisted polling fields (status/progress/stage/error/completed_at)
+    flow to Supabase — heavier blobs go through the explicit upsert at job end.
+    Best-effort: DB failure is logged and ignored so the job continues.
+    """
+    if job_id in _jobs:
+        _jobs[job_id].update(updates)
+    if not sb:
+        return
+    db_fields = {
+        _DB_COL_RENAME.get(k, k): v
+        for k, v in updates.items()
+        if k in _DB_PERSIST_COLS
+    }
+    if not db_fields:
+        return
+    try:
+        sb.table("analysis_jobs").upsert({"id": job_id, **db_fields}).execute()
+    except Exception as exc:
+        print(f"[JOBS:{job_id}] Supabase update failed (non-fatal): {exc}", flush=True)
+
 
 def _set_progress(job_id: str, progress: int, stage: str, sb) -> None:
     _jobs[job_id]['progress'] = progress
@@ -177,6 +206,7 @@ def run_analysis_job(
                     "signal_quality": result["signal_quality"],
                     "project_id": project_id,
                     "processing_state": DEFAULT_PROCESSING_STATE,
+                    "result": result,
                 }).execute()
                 print(f"[job:{job_id}] DB row written", flush=True)
             except Exception as exc:
@@ -236,8 +266,11 @@ def run_proceq_job(
     from analysis import process_proceq_dataset
     from models import get_ensemble
 
-    _jobs[job_id]["status"] = "processing"
-    _jobs[job_id]["stage"]  = "Running Proceq analysis"
+    _update_job(job_id, {
+        "status": "processing",
+        "stage":  "Running Proceq analysis",
+        "progress": 5,
+    }, supabase_client)
     t0 = time.perf_counter()
 
     try:
@@ -268,26 +301,28 @@ def run_proceq_job(
             return base64.b64encode(p.read_bytes()).decode() if p.exists() else None
 
         elapsed = round(time.perf_counter() - t0, 3)
+        proceq_result = {
+            "horizon_picks":         _enc("horizon_picks.png"),
+            "rebar_depth_map":       _enc("rebar_depth_map.png"),
+            "corrosion_map":         _enc("corrosion_map.png"),
+            "stats":                 stats or {},
+            "analysis_time_sec":     elapsed,
+            "mean_depth_inches":     model_stats.get("mean_depth_inches"),
+            "mean_thickness_inches": model_stats.get("mean_thickness_inches"),
+            "high_risk_pct":         model_stats.get("high_risk_pct"),
+            "model_version":         model_stats.get("model_version"),
+        }
         _jobs[job_id].update({
             "status":       "complete",
             "completed_at": time.time(),
-            "result": {
-                "horizon_picks":         _enc("horizon_picks.png"),
-                "rebar_depth_map":       _enc("rebar_depth_map.png"),
-                "corrosion_map":         _enc("corrosion_map.png"),
-                "stats":                 stats or {},
-                "analysis_time_sec":     elapsed,
-                "mean_depth_inches":     model_stats.get("mean_depth_inches"),
-                "mean_thickness_inches": model_stats.get("mean_thickness_inches"),
-                "high_risk_pct":         model_stats.get("high_risk_pct"),
-                "model_version":         model_stats.get("model_version"),
-            },
+            "result":       proceq_result,
         })
         print(f"[job:{job_id}] Proceq done in {elapsed}s", flush=True)
 
-        # Best-effort Supabase persist. Only writes columns we know exist on
-        # analysis_jobs (id, user_id, status, completed_at, analysis_time_sec).
-        # Result blob stays in _jobs — frontend can fetch via GET /job/{id}.
+        # Full result upsert — Proceq has no per-field columns, so the result
+        # JSONB column (migration 009) is the only durable home for horizon_picks
+        # /rebar_depth_map/corrosion_map PNGs + stats. Required for cross-instance
+        # polling to return the result instead of 404.
         if supabase_client:
             try:
                 supabase_client.table("analysis_jobs").upsert({
@@ -295,19 +330,23 @@ def run_proceq_job(
                     "user_id":           user_id,
                     "status":            "complete",
                     "completed_at":      "now()",
+                    "progress":          100,
+                    "stage":             "Complete",
                     "analysis_time_sec": elapsed,
+                    "result":            proceq_result,
                 }).execute()
-                print(f"[job:{job_id}] Proceq DB row written", flush=True)
+                print(f"[job:{job_id}] Proceq DB row + result written", flush=True)
             except Exception as exc:
                 print(f"[job:{job_id}] Proceq DB write failed (non-fatal): {exc}", flush=True)
 
     except Exception as exc:
         print(f"[job:{job_id}] Proceq FAILED: {exc}", flush=True)
-        _jobs[job_id].update({
+        _update_job(job_id, {
             "status":       "failed",
             "error":        str(exc),
-            "completed_at": time.time(),
-        })
+            "completed_at": "now()",
+        }, supabase_client)
+        _jobs[job_id]["completed_at"] = time.time()  # in-memory: python float
 
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
