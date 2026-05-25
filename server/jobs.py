@@ -279,7 +279,16 @@ def run_proceq_job(
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(content)
 
-        stats = process_proceq_dataset(data_dir=str(tmpdir), output_dir=str(tmpdir), epsr=epsr)
+        # Inner try so a pipeline error (e.g. no GPS-valid traces -> griddata
+        # 'Number of rows must be positive') still lets the job complete with
+        # whatever PNGs the pipeline wrote to tmpdir before failing.
+        proceq_error_detail: Optional[str] = None
+        try:
+            stats = process_proceq_dataset(data_dir=str(tmpdir), output_dir=str(tmpdir), epsr=epsr)
+        except Exception as exc:
+            proceq_error_detail = str(exc)
+            print(f"[job:{job_id}] Proceq pipeline error (continuing with partial results): {exc}", flush=True)
+            stats = None
 
         # Optional model ensemble stats — best-effort, never fails the job.
         model_stats: dict = {"model_version": "signal_processing_only", "mean_depth_inches": None}
@@ -311,6 +320,7 @@ def run_proceq_job(
             "mean_thickness_inches": model_stats.get("mean_thickness_inches"),
             "high_risk_pct":         model_stats.get("high_risk_pct"),
             "model_version":         model_stats.get("model_version"),
+            "error_detail":          proceq_error_detail,
         }
         _jobs[job_id].update({
             "status":       "complete",

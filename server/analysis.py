@@ -109,6 +109,9 @@ def build_corrosion_map(
     output_path: str,
     title: str = "Corrosion Risk Map",
 ) -> None:
+    if len(all_easting) == 0 or len(all_northing) == 0 or len(all_amplitudes) == 0:
+        print("[ANALYSIS] corrosion map: empty input arrays — skipping")
+        return
     p2  = np.percentile(all_amplitudes, 2)
     p98 = np.percentile(all_amplitudes, 98)
     norm_amp = np.clip((all_amplitudes - p2) / (p98 - p2 or 1.0), 0.0, 1.0)
@@ -184,17 +187,22 @@ def build_model_depth_map(
     all_depths_in,
     output_dir,
     title: str = "Rebar Depth Map",
-) -> str:
+) -> str | None:
     """
     Infrasense-style contourf rebar depth heatmap from dense per-trace model
     predictions. Objective measurement — no analyst review needed.
 
-    Writes <output_dir>/rebar_depth_map.png and returns the path.
+    Writes <output_dir>/rebar_depth_map.png and returns the path, or None when
+    inputs are empty (e.g. no GPS-valid traces).
     """
     import os
     from matplotlib.colors import LinearSegmentedColormap
     from scipy.interpolate import griddata
     from scipy.ndimage import gaussian_filter, median_filter
+
+    if len(all_easting) == 0 or len(all_northing) == 0 or len(all_depths_in) == 0:
+        print("[DEPTH MAP] no valid georeferenced traces — skipping depth map")
+        return None
 
     # Snap per-trace depths to nearest 0.5" so downstream binning stays consistent.
     all_depths_in = np.round(np.asarray(all_depths_in) * 2) / 2
