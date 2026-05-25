@@ -68,9 +68,9 @@ app = FastAPI(title="Verus GPR Inference Server", version="2.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
     allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
     expose_headers=["*"],
 )
 
@@ -210,6 +210,11 @@ async def analyze(
     return JSONResponse({"job_id": job_id, "status": "pending"})
 
 
+@app.options("/analyze")
+async def options_analyze():
+    return {}
+
+
 @app.get("/job/{job_id}/status")
 def get_job_status(
     job_id: str,
@@ -244,6 +249,11 @@ def get_job_status(
     raise HTTPException(status_code=404, detail="Job not found.")
 
 
+@app.options("/job/{job_id}/status")
+async def options_job_status(job_id: str):
+    return {}
+
+
 @app.get("/job/{job_id}")
 def get_job(
     job_id: str,
@@ -262,6 +272,11 @@ def get_job(
                 pass
         raise HTTPException(status_code=404, detail="Job not found.")
     return JSONResponse(job)
+
+
+@app.options("/job/{job_id}")
+async def options_job(job_id: str):
+    return {}
 
 
 @app.post("/analyze-proceq")
@@ -306,6 +321,11 @@ async def analyze_proceq(
     print(f"[analyze-proceq] Queued job {job_id} ({len(file_data)} files)", flush=True)
 
     return JSONResponse({"job_id": job_id, "status": "pending"})
+
+
+@app.options("/analyze-proceq")
+async def options_analyze_proceq():
+    return {}
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
