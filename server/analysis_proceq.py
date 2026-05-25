@@ -160,7 +160,7 @@ def process_proceq_dataset(
     epsr: float = _RIS_EPSR,
     search_start: int = 55,
     search_end: int = 150,
-    inference_sample_rate: int = 8,
+    inference_sample_rate: int = 16,
 ) -> dict | None:
     import sys
     sys.path.insert(0, os.path.dirname(__file__))
