@@ -227,9 +227,17 @@ def get_job_status(
     if _supabase:
         try:
             row = _supabase.table("analysis_jobs") \
-                .select("status,progress,stage").eq("id", job_id).single().execute()
+                .select("status,progress,stage,error_msg") \
+                .eq("id", job_id).single().execute()
             if row.data:
-                return JSONResponse(row.data)
+                d = row.data
+                return JSONResponse({
+                    "status":          d.get("status", "unknown"),
+                    "progress":        d.get("progress", 100 if d.get("status") == "complete" else 0),
+                    "stage":           d.get("stage", ""),
+                    "elapsed_seconds": 0,
+                    "error":           d.get("error_msg"),
+                })
         except Exception:
             pass
     raise HTTPException(status_code=404, detail="Job not found.")
@@ -279,6 +287,19 @@ async def analyze_proceq(
     job_id = str(uuid.uuid4())
     tmpdir = Path(tempfile.mkdtemp(prefix=f"verus_proceq_{job_id}_"))
     _jobs[job_id] = {"status": "pending", "user_id": user_id, "created_at": time.time()}
+
+    # Insert DB row at submission so polling never 404s before the worker writes.
+    # Mirrors the /analyze pattern. Best-effort — DB unavailable still lets the
+    # in-memory worker run.
+    if _supabase:
+        try:
+            _supabase.table("analysis_jobs").insert({
+                "id":      job_id,
+                "user_id": user_id,
+                "status":  "pending",
+            }).execute()
+        except Exception as exc:
+            print(f"[analyze-proceq] DB insert failed: {exc}", flush=True)
 
     _executor.submit(run_proceq_job, job_id, file_data, tmpdir, epsr, user_id, _supabase)
     print(f"[analyze-proceq] Queued job {job_id} ({len(file_data)} files)", flush=True)
