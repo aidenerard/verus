@@ -16,9 +16,10 @@ from typing import Optional
 
 import psutil
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends
+from fastapi import FastAPI, Request, UploadFile, File, Form, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from auth import verify_token
 from jobs import _jobs, _executor, run_analysis_job, run_proceq_job
@@ -64,6 +65,33 @@ MAX_TOTAL_MB  = 2000
 
 app = FastAPI(title="Verus GPR Inference Server", version="2.0.0")
 
+
+class ForceCORSMiddleware(BaseHTTPMiddleware):
+    """
+    Ensures CORS headers are present on EVERY response, including 404s,
+    exception responses, and edge errors that CORSMiddleware may miss.
+    Short-circuits OPTIONS preflight before routing so it can never 404.
+    """
+    async def dispatch(self, request: Request, call_next):
+        if request.method == "OPTIONS":
+            return Response(headers={
+                "Access-Control-Allow-Origin":  "*",
+                "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+                "Access-Control-Allow-Headers": "*",
+                "Access-Control-Max-Age":       "86400",
+            })
+        response = await call_next(request)
+        response.headers["Access-Control-Allow-Origin"]  = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        return response
+
+
+# Order note: Starlette wraps middlewares in reverse-add order, so the LAST
+# add_middleware() call becomes the OUTERMOST wrapper. ForceCORSMiddleware
+# is added last on purpose — it must wrap the entire app (including
+# CORSMiddleware and the exception handler) so that 404/5xx responses still
+# carry CORS headers.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -72,6 +100,7 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"],
 )
+app.add_middleware(ForceCORSMiddleware)
 
 _model:        CNN1D         | None = None
 _rebar_model:  RebarDepthCNN | None = None
