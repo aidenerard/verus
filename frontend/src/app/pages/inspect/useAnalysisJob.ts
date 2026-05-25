@@ -15,6 +15,50 @@ import {
 import type { ManufacturerKey } from './constants';
 import type { AnalysisResult, UploadedFile } from './types';
 import { estimateAnalysisSeconds } from './utils';
+import { supabase } from '../../../lib/supabase';
+
+interface PollSnapshot {
+  status:   string;
+  progress: number;
+  stage:    string;
+  error:    string | null;
+  result:   AnalysisResult | null;
+}
+
+async function pollFromSupabase(jobId: string): Promise<PollSnapshot | null> {
+  const { data, error } = await supabase
+    .from('analysis_jobs')
+    .select('id, status, progress, stage, error_msg, result')
+    .eq('id', jobId)
+    .single();
+  if (error || !data) return null;
+  return {
+    status:   data.status,
+    progress: data.progress ?? 0,
+    stage:    data.stage ?? '',
+    error:    data.error_msg ?? null,
+    result:   (data.result as AnalysisResult | null) ?? null,
+  };
+}
+
+async function pollJobStatus(jobId: string, headers: Record<string, string>): Promise<PollSnapshot> {
+  // Supabase first (no CORS — direct PostgREST call).
+  const s = await pollFromSupabase(jobId);
+  if (s && s.status) return s;
+
+  // Fallback: Render server. result blob not included by /status; will be
+  // fetched separately on completion via /job/{id} below.
+  const r = await fetch(`${SERVER}/job/${jobId}/status`, { headers });
+  if (!r.ok) throw new Error(`Job not found: ${r.status}`);
+  const raw = await r.json();
+  return {
+    status:   raw.status,
+    progress: raw.progress ?? 0,
+    stage:    raw.stage ?? '',
+    error:    raw.error ?? null,
+    result:   null,
+  };
+}
 
 interface UseAnalysisJobProps {
   files: UploadedFile[];
@@ -142,17 +186,20 @@ export function useAnalysisJob({
           setErrorMsg('Analysis timed out.'); setJobStatus('failed'); return;
         }
         try {
-          const sr = await fetch(`${SERVER}/job/${job_id}/status`, { headers });
-          if (!sr.ok) return;
-          const s = await sr.json();
-          setJobProgress(s.progress ?? 0);
-          setJobStage(s.stage ?? '');
+          const s = await pollJobStatus(job_id, headers);
+          setJobProgress(s.progress);
+          setJobStage(s.stage);
           if (s.status === 'complete') {
             clearInterval(pollRef.current!);
-            const jr = await fetch(`${SERVER}/job/${job_id}`, { headers });
-            if (!jr.ok) { setErrorMsg(`HTTP ${jr.status}`); setJobStatus('failed'); return; }
-            const job = await jr.json();
-            const result: AnalysisResult = job.result ?? (job.signals_analyzed != null ? job : null);
+            // Use the result blob from Supabase if it landed there; otherwise
+            // fall back to GET /job/{id} on the server.
+            let result: AnalysisResult | null = s.result;
+            if (!result) {
+              const jr = await fetch(`${SERVER}/job/${job_id}`, { headers });
+              if (!jr.ok) { setErrorMsg(`HTTP ${jr.status}`); setJobStatus('failed'); return; }
+              const job = await jr.json();
+              result = job.result ?? (job.signals_analyzed != null ? job : null);
+            }
             if (result) {
               setJobStatus('complete');
               setJobProgress(100);
