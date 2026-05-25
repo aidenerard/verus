@@ -4,6 +4,7 @@ Imported and re-exported by analysis.py.
 """
 from __future__ import annotations
 
+import gc
 import glob
 import os
 
@@ -211,7 +212,6 @@ def process_proceq_dataset(
         'easting':   [],
         'northing':  [],
         'depths_in': [],
-        'traces':    [],
     }
     total_traces = 0
 
@@ -230,7 +230,6 @@ def process_proceq_dataset(
             traces   = result["traces"]
             n_traces = len(traces)
             total_traces += n_traces
-            ts_data['traces'].append(traces)
 
             depth_result = extract_amplitude_and_depth(
                 traces, search_start=search_start, search_end=search_end, epsr=epsr,
@@ -259,6 +258,12 @@ def process_proceq_dataset(
 
             print(f"[ANALYSIS]   swath {swath_idx+1:02d} ch {ch_idx+1}: "
                   f"{n_traces} traces  depth {depth_result['depths_in'].mean():.2f}\"")
+
+            # Release the (n_traces, 510) raw trace array now that depth picking
+            # is done — the rest of the loop only needs the small per-trace
+            # depth/easting/northing scalars accumulated in ts_data.
+            del result, traces, depth_result
+            gc.collect()
 
     if not ts_data['easting']:
         print("[ANALYSIS] No data — aborting")

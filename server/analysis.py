@@ -5,6 +5,8 @@ Proceq-specific pipeline lives in analysis_proceq.py (re-exported below).
 """
 from __future__ import annotations
 
+import gc
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -73,6 +75,8 @@ def build_amplitude_map(
     plt.tight_layout()
     plt.savefig(output_path, dpi=150)
     plt.close(fig)
+    plt.close('all')
+    gc.collect()
     print(f"[ANALYSIS] amplitude map saved → {output_path}")
 
 
@@ -99,6 +103,8 @@ def build_depth_map(
     plt.tight_layout()
     plt.savefig(output_path, dpi=150)
     plt.close(fig)
+    plt.close('all')
+    gc.collect()
     print(f"[ANALYSIS] depth map saved → {output_path}")
 
 
@@ -138,6 +144,8 @@ def build_corrosion_map(
     plt.tight_layout()
     plt.savefig(output_path, dpi=150)
     plt.close(fig)
+    plt.close('all')
+    gc.collect()
     print(f"[ANALYSIS] corrosion map saved → {output_path}")
 
 
@@ -276,6 +284,8 @@ def build_model_depth_map(
     out = os.path.join(output_dir, "rebar_depth_map.png")
     plt.savefig(out, dpi=150, bbox_inches="tight")
     plt.close()
+    plt.close('all')
+    gc.collect()
     print(f"[DEPTH MAP] saved → {out}")
     return out
 
