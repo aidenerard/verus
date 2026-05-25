@@ -107,9 +107,19 @@ def build_cscan_maps(cscan_slices, output_dir, title_prefix=''):
     """
     Build corrosion risk map directly from CScan raster data.
     cscan_slices: list of dicts from load_cscan_amplitudes()
+    Returns a stats dict; returns a zero-filled shape-matching dict when there
+    are no usable slices so callers reading ['high_risk_pct'] keep working.
     """
+    empty_stats = {'corrosion_map_path': None, 'high_risk_pct': 0.0,
+                   'threshold': 0.0, 'shape': (0, 0)}
+    if not cscan_slices:
+        print("[ANALYSIS] no CScan slices — skipping corrosion map")
+        return empty_stats
     all_amps = [s['amp'] for s in cscan_slices]
     full_map = np.concatenate(all_amps, axis=1)  # (n_cross, total_cols)
+    if full_map.size == 0:
+        print("[ANALYSIS] CScan slices contained no data — skipping corrosion map")
+        return empty_stats
     dx = cscan_slices[0]['dx']
     dy = cscan_slices[0]['dy']
     total_length_m = full_map.shape[1] * dx
