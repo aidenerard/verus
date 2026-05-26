@@ -4,6 +4,7 @@ Imported and re-exported by analysis.py.
 """
 from __future__ import annotations
 
+import gc
 import glob
 import os
 
@@ -107,9 +108,19 @@ def build_cscan_maps(cscan_slices, output_dir, title_prefix=''):
     """
     Build corrosion risk map directly from CScan raster data.
     cscan_slices: list of dicts from load_cscan_amplitudes()
+    Returns a stats dict; returns a zero-filled shape-matching dict when there
+    are no usable slices so callers reading ['high_risk_pct'] keep working.
     """
+    empty_stats = {'corrosion_map_path': None, 'high_risk_pct': 0.0,
+                   'threshold': 0.0, 'shape': (0, 0)}
+    if not cscan_slices:
+        print("[ANALYSIS] no CScan slices — skipping corrosion map")
+        return empty_stats
     all_amps = [s['amp'] for s in cscan_slices]
     full_map = np.concatenate(all_amps, axis=1)  # (n_cross, total_cols)
+    if full_map.size == 0:
+        print("[ANALYSIS] CScan slices contained no data — skipping corrosion map")
+        return empty_stats
     dx = cscan_slices[0]['dx']
     dy = cscan_slices[0]['dy']
     total_length_m = full_map.shape[1] * dx
@@ -160,7 +171,7 @@ def process_proceq_dataset(
     epsr: float = _RIS_EPSR,
     search_start: int = 55,
     search_end: int = 150,
-    inference_sample_rate: int = 8,
+    inference_sample_rate: int = 16,
 ) -> dict | None:
     import sys
     sys.path.insert(0, os.path.dirname(__file__))
@@ -201,7 +212,6 @@ def process_proceq_dataset(
         'easting':   [],
         'northing':  [],
         'depths_in': [],
-        'traces':    [],
     }
     total_traces = 0
 
@@ -220,7 +230,6 @@ def process_proceq_dataset(
             traces   = result["traces"]
             n_traces = len(traces)
             total_traces += n_traces
-            ts_data['traces'].append(traces)
 
             depth_result = extract_amplitude_and_depth(
                 traces, search_start=search_start, search_end=search_end, epsr=epsr,
@@ -249,6 +258,12 @@ def process_proceq_dataset(
 
             print(f"[ANALYSIS]   swath {swath_idx+1:02d} ch {ch_idx+1}: "
                   f"{n_traces} traces  depth {depth_result['depths_in'].mean():.2f}\"")
+
+            # Release the (n_traces, 510) raw trace array now that depth picking
+            # is done — the rest of the loop only needs the small per-trace
+            # depth/easting/northing scalars accumulated in ts_data.
+            del result, traces, depth_result
+            gc.collect()
 
     if not ts_data['easting']:
         print("[ANALYSIS] No data — aborting")

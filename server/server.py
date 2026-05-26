@@ -16,9 +16,10 @@ from typing import Optional
 
 import psutil
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends
+from fastapi import FastAPI, Request, UploadFile, File, Form, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from auth import verify_token
 from jobs import _jobs, _executor, run_analysis_job, run_proceq_job
@@ -65,14 +66,42 @@ MAX_TOTAL_MB  = 2000
 
 app = FastAPI(title="Verus GPR Inference Server", version="2.0.0")
 
+
+class ForceCORSMiddleware(BaseHTTPMiddleware):
+    """
+    Ensures CORS headers are present on EVERY response, including 404s,
+    exception responses, and edge errors that CORSMiddleware may miss.
+    Short-circuits OPTIONS preflight before routing so it can never 404.
+    """
+    async def dispatch(self, request: Request, call_next):
+        if request.method == "OPTIONS":
+            return Response(headers={
+                "Access-Control-Allow-Origin":  "*",
+                "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+                "Access-Control-Allow-Headers": "*",
+                "Access-Control-Max-Age":       "86400",
+            })
+        response = await call_next(request)
+        response.headers["Access-Control-Allow-Origin"]  = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        return response
+
+
+# Order note: Starlette wraps middlewares in reverse-add order, so the LAST
+# add_middleware() call becomes the OUTERMOST wrapper. ForceCORSMiddleware
+# is added last on purpose — it must wrap the entire app (including
+# CORSMiddleware and the exception handler) so that 404/5xx responses still
+# carry CORS headers.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
     allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
     expose_headers=["*"],
 )
+app.add_middleware(ForceCORSMiddleware)
 
 _model:        CNN1D         | None = None
 _rebar_model:  HorizonCNN    | None = None
@@ -210,6 +239,11 @@ async def analyze(
     return JSONResponse({"job_id": job_id, "status": "pending"})
 
 
+@app.options("/analyze")
+async def options_analyze():
+    return {}
+
+
 @app.get("/job/{job_id}/status")
 def get_job_status(
     job_id: str,
@@ -228,12 +262,25 @@ def get_job_status(
     if _supabase:
         try:
             row = _supabase.table("analysis_jobs") \
-                .select("status,progress,stage").eq("id", job_id).single().execute()
+                .select("status,progress,stage,error_msg") \
+                .eq("id", job_id).single().execute()
             if row.data:
-                return JSONResponse(row.data)
+                d = row.data
+                return JSONResponse({
+                    "status":          d.get("status", "unknown"),
+                    "progress":        d.get("progress", 100 if d.get("status") == "complete" else 0),
+                    "stage":           d.get("stage", ""),
+                    "elapsed_seconds": 0,
+                    "error":           d.get("error_msg"),
+                })
         except Exception:
             pass
     raise HTTPException(status_code=404, detail="Job not found.")
+
+
+@app.options("/job/{job_id}/status")
+async def options_job_status(job_id: str):
+    return {}
 
 
 @app.get("/job/{job_id}")
@@ -254,6 +301,11 @@ def get_job(
                 pass
         raise HTTPException(status_code=404, detail="Job not found.")
     return JSONResponse(job)
+
+
+@app.options("/job/{job_id}")
+async def options_job(job_id: str):
+    return {}
 
 
 @app.post("/analyze-proceq")
@@ -281,10 +333,28 @@ async def analyze_proceq(
     tmpdir = Path(tempfile.mkdtemp(prefix=f"verus_proceq_{job_id}_"))
     _jobs[job_id] = {"status": "pending", "user_id": user_id, "created_at": time.time()}
 
+    # Insert DB row at submission so polling never 404s before the worker writes.
+    # Mirrors the /analyze pattern. Best-effort — DB unavailable still lets the
+    # in-memory worker run.
+    if _supabase:
+        try:
+            _supabase.table("analysis_jobs").insert({
+                "id":      job_id,
+                "user_id": user_id,
+                "status":  "pending",
+            }).execute()
+        except Exception as exc:
+            print(f"[analyze-proceq] DB insert failed: {exc}", flush=True)
+
     _executor.submit(run_proceq_job, job_id, file_data, tmpdir, epsr, user_id, _supabase)
     print(f"[analyze-proceq] Queued job {job_id} ({len(file_data)} files)", flush=True)
 
     return JSONResponse({"job_id": job_id, "status": "pending"})
+
+
+@app.options("/analyze-proceq")
+async def options_analyze_proceq():
+    return {}
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

@@ -18,8 +18,13 @@ from typing import Optional
 
 import numpy as np
 
+# Hard cap on traces fed to ensemble.predict — defensive bound for OOM on
+# Render free tier (512 MB). With per_file=100 across ~14 files we land near
+# 1.4k traces, so this cap is a safety net rather than a routine trim.
+MAX_INFERENCE_TRACES = 50_000
 
-def _load_trace_sample(data_dir: str, per_file: int = 200) -> Optional[np.ndarray]:
+
+def _load_trace_sample(data_dir: str, per_file: int = 50) -> Optional[np.ndarray]:
     """Uniformly subsample traces from every odd PRC file under data_dir.
     Returns (N, 510) float32, or None if no readable scans."""
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -56,17 +61,29 @@ def _load_trace_sample(data_dir: str, per_file: int = 200) -> Optional[np.ndarra
 def run_ensemble_stats(
     data_dir: str,
     ensemble,
-    per_file: int = 200,
+    per_file: int = 50,
+    max_total: int = 5_000,
 ) -> Optional[dict]:
     """
     Sample traces from the dataset, run ensemble.predict, build a flat
     model_stats dict suitable for the job result. Returns None on any
     failure so callers can safely default to signal-processing-only.
+    max_total caps the total trace count fed to predict — protects against
+    OOM on Render free tier even if per_file produces more than expected.
     """
     try:
         sample = _load_trace_sample(data_dir, per_file=per_file)
         if sample is None or len(sample) == 0:
             return None
+        # Two-tier cap: hard MAX_INFERENCE_TRACES safety, then caller's max_total.
+        if len(sample) > MAX_INFERENCE_TRACES:
+            rng = np.random.default_rng(0)
+            keep = rng.choice(len(sample), size=MAX_INFERENCE_TRACES, replace=False)
+            print(f"[ensemble] hard-cap {len(sample)} -> {MAX_INFERENCE_TRACES}", flush=True)
+            sample = sample[keep]
+        if len(sample) > max_total:
+            sample = sample[:max_total]
+            print(f"[ensemble] caller-cap -> {max_total} traces", flush=True)
         print(f"[ensemble] predict on {len(sample)} sampled traces", flush=True)
         predictions = ensemble.predict(sample)
     except Exception as exc:

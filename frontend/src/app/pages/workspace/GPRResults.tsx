@@ -1,7 +1,6 @@
 import { lazy, Suspense, useMemo, useState } from 'react';
 import { ImageOff, LayoutGrid, MousePointer2 } from 'lucide-react';
 import type { AnalysisResult } from '../inspect/types';
-import { SERVER } from '../inspect/constants';
 import { useMapbox } from '../inspect/useMapbox';
 import { BORDER, BORDER2, PANEL, RAISED, TEXT, TEXT2, TEXT3, ACCENT, ACCENT_SOFT } from './tokens';
 
@@ -16,10 +15,12 @@ type ResultsTab = 'overview' | 'interactive';
 
 interface PanelSpec { title: string; src: string | undefined }
 
-function resolveUrl(src: string | undefined): string | undefined {
-  if (!src) return undefined;
-  if (src.startsWith('http') || src.startsWith('data:')) return src;
-  return `${SERVER}${src.startsWith('/') ? '' : '/'}${src}`;
+function resolveImageSrc(value: string | undefined | null): string | undefined {
+  if (!value) return undefined;
+  if (value.startsWith('http') || value.startsWith('data:')) return value;
+  // DZT/Proceq pipelines return raw base64 PNG when Supabase upload skipped —
+  // wrap with the data URI prefix so <img src=...> renders it.
+  return `data:image/png;base64,${value}`;
 }
 
 function meanRebarDepth(result: AnalysisResult): number | undefined {
@@ -80,9 +81,9 @@ function ResultsTabs({ tab, setTab, interactiveDisabled }:
 
 function OverviewTab({ result }: { result: AnalysisResult }) {
   const panels: PanelSpec[] = useMemo(() => [
-    { title: 'Horizon Picks',   src: resolveUrl(result.horizon_picks   ?? result.cscan_url ?? result.cscan_image) },
-    { title: 'Rebar Depth Map', src: resolveUrl(result.rebar_depth_map ?? result.rebar_depth_image) },
-    { title: 'Corrosion Risk',  src: resolveUrl(result.corrosion_map   ?? result.amplitude_image) },
+    { title: 'Horizon Picks',   src: resolveImageSrc(result.horizon_picks   ?? result.cscan_url ?? result.cscan_image) },
+    { title: 'Rebar Depth Map', src: resolveImageSrc(result.rebar_depth_map ?? result.rebar_depth_image) },
+    { title: 'Corrosion Risk',  src: resolveImageSrc(result.corrosion_map   ?? result.amplitude_image) },
   ], [result]);
 
   const stats = useMemo(() => {

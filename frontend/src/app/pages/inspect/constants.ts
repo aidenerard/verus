@@ -8,6 +8,7 @@ export const DEFAULT_CENTER: [number, number] = [-73.9519, 40.8517];
 export const GPR_EXTS = new Set([
   '.csv', '.dzt', '.dt1', '.rd3', '.rd7', '.segy', '.sgy', '.dzg', '.hd', '.rad',
   '.dt', '.gec', '.iprb', '.iprh',
+  '.scan', '.pos', '.cscan',  // Proceq RIS + companions
 ]);
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
