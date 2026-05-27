@@ -24,7 +24,7 @@ function resolveImageSrc(value: string | undefined | null): string | undefined {
 }
 
 function meanRebarDepth(result: AnalysisResult): number | undefined {
-  const samples = result.per_file_summary
+  const samples = (result.per_file_summary ?? [])
     .map(f => f.rebar_depth_mean)
     .filter((n): n is number => typeof n === 'number');
   if (!samples.length) return undefined;
@@ -114,19 +114,16 @@ function OverviewTab({ result }: { result: AnalysisResult }) {
         <Stat label="Risk"            value={stats.risk !== undefined ? `${stats.risk.toFixed(0)}%` : '—'} accent={typeof stats.risk === 'number' && stats.risk >= 30} />
       </div>
 
-      <div style={{ background: PANEL, border: `1px solid ${BORDER}` }}>
-        <div style={{ padding: '12px 20px', borderBottom: `1px solid ${BORDER}`, fontSize: 11, fontWeight: 700, letterSpacing: '0.10em', textTransform: 'uppercase', color: TEXT2 }}>
-          Scan Location
+      {hasGps && (
+        <div style={{ background: PANEL, border: `1px solid ${BORDER}` }}>
+          <div style={{ padding: '12px 20px', borderBottom: `1px solid ${BORDER}`, fontSize: 11, fontWeight: 700, letterSpacing: '0.10em', textTransform: 'uppercase', color: TEXT2 }}>
+            Scan Location
+          </div>
+          <div style={{ position: 'relative', height: 320 }}>
+            <div ref={mapContainerRef} style={{ position: 'absolute', inset: 0 }} />
+          </div>
         </div>
-        <div style={{ position: 'relative', height: 320 }}>
-          <div ref={mapContainerRef} style={{ position: 'absolute', inset: 0 }} />
-          {!hasGps && (
-            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: RAISED, color: TEXT3, fontSize: 12, pointerEvents: 'none' }}>
-              No GPS data in scan
-            </div>
-          )}
-        </div>
-      </div>
+      )}
 
       <style>{`
         .gpr-panel-grid {
