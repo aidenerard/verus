@@ -147,7 +147,7 @@ export function useAnalysisJob({
       if (!serverReady) { setErrorMsg('Server did not respond in time.'); setJobStatus('failed'); return; }
 
       setStatusMsg('Uploading files…');
-      const hasProceqFiles = files.some(f => f.file.name.toLowerCase().endsWith('.scan'));
+      const hasProceqFiles = (files ?? []).some(f => f.file.name.toLowerCase().endsWith('.scan'));
       const endpoint = hasProceqFiles ? '/analyze-proceq' : '/analyze';
 
       const formData = new FormData();

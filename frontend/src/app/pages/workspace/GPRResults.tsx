@@ -99,7 +99,8 @@ function OverviewTab({ result }: { result: AnalysisResult }) {
     conditionOpacity: 80,
   });
 
-  const hasGps = result.per_file_summary.some(f => f.gps);
+  // per_file_summary is DZT-only; Proceq results don't carry it.
+  const hasGps = (result.per_file_summary ?? []).some(f => f.gps);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
