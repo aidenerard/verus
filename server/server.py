@@ -116,8 +116,47 @@ def _do_load() -> None:
     _model, _rebar_model, _model_config = m, rm, cfg
 
 
+def _download_horizon_model_if_missing() -> bool:
+    """
+    Pull horizon_model.pth from Supabase public storage if it's not on disk.
+    Sync + requests (already in requirements). Best-effort — server still
+    starts on failure; ensemble inference falls back to signal processing.
+
+    Assumes a public bucket named 'models' with the file uploaded at the
+    expected path: $SUPABASE_URL/storage/v1/object/public/models/horizon_model.pth
+    """
+    model_path = Path(__file__).parent / "models" / "horizon_model.pth"
+    if model_path.exists():
+        print(f"[startup] horizon_model.pth already present "
+              f"({model_path.stat().st_size:,} bytes)", flush=True)
+        return True
+
+    supabase_url = os.environ.get("SUPABASE_URL")
+    if not supabase_url:
+        print("[startup] SUPABASE_URL not set — skipping model download", flush=True)
+        return False
+
+    url = f"{supabase_url}/storage/v1/object/public/models/horizon_model.pth"
+    print(f"[startup] Downloading horizon_model.pth from Supabase public storage…", flush=True)
+    try:
+        import requests
+        r = requests.get(url, timeout=120)
+        if r.status_code != 200:
+            print(f"[startup] Model download failed: HTTP {r.status_code}", flush=True)
+            return False
+        model_path.parent.mkdir(parents=True, exist_ok=True)
+        model_path.write_bytes(r.content)
+        print(f"[startup] horizon_model.pth downloaded "
+              f"({len(r.content):,} bytes)", flush=True)
+        return True
+    except Exception as exc:
+        print(f"[startup] Model download error: {exc}", flush=True)
+        return False
+
+
 @app.on_event("startup")
 def startup_event() -> None:
+    _download_horizon_model_if_missing()
     _init_supabase()
     interactive.init(lambda: _supabase)
     threading.Thread(target=_do_load, daemon=True).start()
