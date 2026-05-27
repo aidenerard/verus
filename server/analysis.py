@@ -25,7 +25,7 @@ def extract_amplitude_and_depth(
 ) -> dict:
     n_samples = traces.shape[1]
     ns_per_sample = time_range_ns / n_samples
-    velocity = 0.15 / np.sqrt(epsr)
+    velocity = 0.3 / np.sqrt(epsr)
     envelope = np.abs(hilbert(traces, axis=1))
     window = envelope[:, search_start:search_end]
     picks = np.argmax(window, axis=1) + search_start

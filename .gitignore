@@ -4,7 +4,10 @@ frontend/dist/
 frontend/node_modules/
 node_modules/
 bscan_parts/
-scripts/
+scripts/generate_synthetic_fast.py
+scripts/generate_synthetic_bscan.py
+scripts/combine_bscan_parts.py
+scripts/ingest_gpr_data.py
 verus-server/
 gpr_data/
 all_bridges_csv/
@@ -15,7 +18,7 @@ __pycache__/
 *.pyo
 .env
 *_out.txt
-.claude/
+.claude/settings.local.json
 
 # Model weights — downloaded separately, not committed
 *.pth

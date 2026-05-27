@@ -350,3 +350,129 @@ git push origin main              # triggers both Vercel + Render auto-deploy
 |---|---|
 | `001_initial.sql` | `profiles` table, auth trigger, RLS policies |
 | `002_projects.sql` | `projects` + `analysis_jobs` tables |
+
+---
+
+## Machine Learning
+
+### Models
+
+| Model | File | Task | Input | Output |
+|---|---|---|---|---|
+| CNN1D (V17) | `server/model.pth` | Delamination classification | (n, 2, 250) dual-channel | P(sound) via sigmoid |
+| HorizonCNN | `server/models/horizon_model.pth` | Rebar depth regression | (n, 1, 512) | depth ∈ [0,1] × 300 mm |
+| RebarDepthCNN | `server/models/rebar_model.pth` | Legacy rebar depth | (n, 2, 256) | depth in inches |
+| Corrosion model | `server/models/corrosion_model.pth` | Corrosion risk | (n, 1, 512) | risk score |
+| Deck thickness | `server/models/thickness_model.pth` | Deck thickness | (n, 1, 512) | thickness |
+
+**Label convention (critical):** `model output = P(sound)` via sigmoid. `1 = sound`, `0 = delaminated`. Positive class for all inspection metrics = delaminated (label 0). This is inverted from sklearn's convention — watch for it in every metric call.
+
+**Production threshold:** `THRESHOLD = 0.65` in `server/model.py`. `P(sound) < 0.65 → delaminated`. The val-selected best-F1 threshold from training is written into `model_config.json` and picked up by the server on load.
+
+### Data Pipeline
+
+```
+Raw DZT/SEG-Y/RD3 files
+      ↓ server/ingest_converters.py
+SDNET2021 CSV format  (FILE____*.csv)
+      ↓ kaggle_push/cnn.py: load_csv()
+(n, 512) float32  DC-remove (offset 32768) + taper + per-signal z-score
+      ↓ Hilbert envelope
+(n, 2, 512)  [channel 0 = raw z-scored, channel 1 = envelope]
+      ↓ crop samples 200:450
+(n, 2, 250) → CNN1D input
+```
+
+**SDNET2021 CSV row layout:**
+- Row 0, col 4: `n_signals`
+- Row 7, cols 1…n: labels (1=sound, 0=delaminated)
+- Rows 9–13: amplitude data start (512 rows × n_signals columns)
+
+### Raw Data Directories (outside repo)
+
+All raw field data lives at `C:\Users\quack\Documents\Projects\Verus\Data\` — not inside the repo. Never commit large data files.
+
+| Directory | Format | Count | Contents |
+|---|---|---|---|
+| `Data/SDNET 2021 GPR Data/` | `.xlsx` (`FILE____*.xlsx`) | 206 files, 5 bridges | Delamination-labelled A-scans. Bridges: Park River Median (1–49), Forest River NB (50–77), Park River NB (78–102+), Park River SB, Forest River SB |
+| `Data/Ken Infrasense Data #1/` | GSSI `.DZT` | 9 DZT, 2 bridges | B170020 (4 files, scans 95–98), B440029 (5 files, scans 799–807). Ground truth: `B170020/B440029 Rebar Depth Report.csv` — cols `preProcessedFileName`, `scanNumber`, `L2Depth_inches` |
+| `Data/Stephen Terracon Cornbread/Data/` | Proceq `.scan` + `TS_NNNN_1/2.txt` | 168 scan files, 14 swaths | `PRC_000001–000168.scan` (~12/swath). Ground truth: `TS_NNNN_1.txt` and `TS_NNNN_2.txt` — one float per line, rebar depth in **mm**. GPS: `GPSLog_Scan_N.nmea`. Processed C-scans in `swath_NNNN/` subdirs |
+
+**Processed training-ready data (inside repo, gitignored):**
+
+```
+data/
+  csv/
+    sdnet2021/       5 bridges, ~657,938 signals — FILE____.csv format (converted from xlsx)
+    synthetic_numpy/ 50,000 fast numpy Ricker-wavelet signals
+    synthetic_gprmax/ ~50,000 gprMax physics-simulation signals
+    gatech/          GT bridge data after running ingest_gpr_data.py
+```
+
+### Training Commands
+
+**Delamination model (CNN1D V17) — runs on Kaggle:**
+1. Upload `kaggle_push/cnn.py` as a Kaggle notebook script.
+2. Attach datasets: `aidenerard/all-bridges-csv` + `aidenerard/synthetic-data`.
+3. Run. Training branch executes when no `model.pth` is found at `MODEL_PATH`.
+4. Evaluation branch executes when `model.pth` already exists (drop in existing weights to eval only).
+5. Download `model.pth` + `model_config.json` from Kaggle → Output Files.
+
+Key hyperparameters in `kaggle_push/cnn.py`:
+- `FocalLoss(alpha=0.75, gamma=2.0)` — no `pos_weight` needed
+- `WeightedRandomSampler` — 50/50 batches regardless of class imbalance
+- `CosineAnnealingLR(T_max=60, eta_min=1e-6)`, early-stop patience=20
+
+**Rebar depth model (HorizonCNN) — runs on Colab:**
+```bash
+# Adapt notebook paths for local execution
+python adapt_notebooks.py          # rewrites data/model paths in train_rebar_horizon.ipynb
+jupyter notebook train_rebar_horizon.ipynb
+# OR paste colab_train_horizon.py as a single Colab cell after mounting Drive
+```
+
+**Deck thickness / Corrosion models:**
+```bash
+jupyter notebook notebooks/train_deck_thickness.ipynb
+jupyter notebook notebooks/train_corrosion.ipynb
+# OR notebooks/train_rebar_universal.ipynb for the combined rebar training
+```
+
+### Evaluation Commands
+
+```bash
+# Full eval from repo root — outputs to eval_results/<timestamp>/
+python scripts/eval_model.py --model server/model.pth --data data/csv/sdnet2021/
+
+# With a specific threshold (use the value from model_config.json)
+python scripts/eval_model.py --model server/model.pth --data data/csv/ --threshold 0.65
+
+# Rebar depth validation against Infrasense ground truth
+cd server && python test_rebar_validation.py
+```
+
+`scripts/eval_model.py` outputs: precision, recall, F1, FNR, confusion matrix, PR-AUC, threshold sweep, per-bridge breakdown, and saved plots. No manual metric recalculation needed after tuning.
+
+### Post-Training Deployment
+
+After every retraining run:
+1. Download `model.pth` **and** `model_config.json` from Kaggle/Colab output.
+2. Upload both to Google Drive → share as "Anyone with link (Viewer)".
+3. Copy each file's Drive ID (`/d/<FILE_ID>` from the share URL).
+4. Update **both** env vars in the Render dashboard:
+   - `MODEL_GDRIVE_URL` → `https://drive.google.com/uc?export=download&id=<ID>`
+   - `MODEL_CONFIG_GDRIVE_URL` → same pattern for the config file
+5. Trigger a Render redeploy (or push to `main`).
+
+Skipping `model_config.json` causes the server to probe fallback architectures — it may load the wrong layer sizes silently.
+
+### Scripts
+
+| Script | Run from | Purpose |
+|---|---|---|
+| `scripts/eval_model.py` | repo root | Full eval: metrics + plots + per-bridge CSV |
+| `kaggle_push/cnn.py` | Kaggle | Train/eval CNN1D delamination model |
+| `colab_train_horizon.py` | Colab | Train HorizonCNN rebar depth model |
+| `adapt_notebooks.py` | repo root | Rewrite notebook paths for local execution |
+| `server/test_rebar_validation.py` | `server/` | Rebar depth MAE vs Infrasense ground truth |
+| `server/test_csv_format.py` | `server/` | Validate CSV signal format before training |
