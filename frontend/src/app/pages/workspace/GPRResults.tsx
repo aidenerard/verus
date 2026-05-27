@@ -130,6 +130,7 @@ function OverviewTab({ result }: { result: AnalysisResult }) {
           display: grid;
           grid-template-columns: repeat(3, minmax(0, 1fr));
           gap: 16px;
+          min-height: 400px;
         }
         @media (max-width: 900px) {
           .gpr-panel-grid { grid-template-columns: 1fr; }
@@ -165,9 +166,9 @@ function ResultPanel({ title, src }: PanelSpec) {
       <div style={{ padding: '10px 14px', borderBottom: `1px solid ${BORDER}`, fontSize: 10, fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', color: TEXT2 }}>
         {title}
       </div>
-      <div style={{ flex: 1, aspectRatio: '4 / 3', background: RAISED, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+      <div style={{ flex: 1, minHeight: 350, background: RAISED, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
         {src ? (
-          <img src={src} alt={title} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+          <img src={src} alt={title} style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, color: TEXT3 }}>
             <ImageOff size={22} />
