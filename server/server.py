@@ -23,7 +23,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from auth import verify_token
 from jobs import _jobs, _executor, run_analysis_job, run_proceq_job
-from run import CNN1D, RebarDepthCNN, DEVICE  # noqa: F401 — re-exported for type hints
+from run import CNN1D, HorizonCNN, DEVICE  # noqa: F401 — re-exported for type hints
 from ingest import SUPPORTED_EXTENSIONS, COMPANION_EXTENSIONS, FORMAT_INFO
 from model_loader import load_models_background
 import interactive
@@ -56,7 +56,7 @@ def _init_supabase() -> None:
 
 _HERE = Path(__file__).parent
 MODEL_PATH              = Path(os.environ.get("MODEL_PATH",             _HERE / "model.pth"))
-REBAR_MODEL_PATH        = Path(os.environ.get("REBAR_MODEL_PATH",       _HERE / "models" / "rebar_model.pth"))
+REBAR_MODEL_PATH        = Path(os.environ.get("REBAR_MODEL_PATH",       _HERE / "models" / "horizon_model.pth"))
 MODEL_CONFIG_PATH       = Path(os.environ.get("MODEL_CONFIG_PATH",      _HERE / "configs" / "model_config.json"))
 REBAR_MODEL_CONFIG_PATH = Path(os.environ.get("REBAR_MODEL_CONFIG_PATH", _HERE / "configs" / "rebar_model_config.json"))
 MAX_FILE_MB   = 50
@@ -104,7 +104,7 @@ app.add_middleware(
 app.add_middleware(ForceCORSMiddleware)
 
 _model:        CNN1D         | None = None
-_rebar_model:  RebarDepthCNN | None = None
+_rebar_model:  HorizonCNN    | None = None
 _model_config: dict          | None = None
 
 

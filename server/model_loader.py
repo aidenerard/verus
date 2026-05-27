@@ -1,7 +1,7 @@
 """
 server/model_loader.py
 Downloads model weights and config files from Google Drive (or any URL),
-then loads CNN1D and RebarDepthCNN into memory.
+then loads CNN1D and HorizonCNN into memory.
 
 Does NOT: set any globals, start threads, or interact with FastAPI.
 """
@@ -14,7 +14,7 @@ from typing import Optional
 import requests
 import torch
 
-from run import CNN1D, RebarDepthCNN, DEVICE
+from run import CNN1D, HorizonCNN, DEVICE
 
 
 def download_file(url: str, dest: str) -> None:
@@ -57,14 +57,14 @@ def load_models_background(
     rebar_model_path: Path,
     model_config_path: Path,
     rebar_model_config_path: Path,
-) -> tuple[Optional[CNN1D], Optional[RebarDepthCNN], Optional[dict]]:
+) -> tuple[Optional[CNN1D], Optional[HorizonCNN], Optional[dict]]:
     """
     Download (if needed) and load the delamination and rebar models.
     Returns (model, rebar_model, model_config).
     Any value may be None if loading fails for that model.
     """
     model: Optional[CNN1D] = None
-    rebar_model: Optional[RebarDepthCNN] = None
+    rebar_model: Optional[HorizonCNN] = None
     loaded_cfg: Optional[dict] = None
 
     print(f"[startup] Looking for model at: {model_path.resolve()}", flush=True)
@@ -135,16 +135,16 @@ def load_models_background(
             f"  Original error: {exc}"
         ) from exc
 
-    # ── Rebar model ───────────────────────────────────────────────────────────
+    # ── Horizon (rebar depth) model ───────────────────────────────────────────
     if not rebar_model_path.exists():
         gdrive_url = os.environ.get("REBAR_MODEL_GDRIVE_URL")
         if gdrive_url:
-            print(f"[startup] Downloading rebar model from {gdrive_url} …", flush=True)
+            print(f"[startup] Downloading horizon model from {gdrive_url} …", flush=True)
             try:
                 rebar_model_path.parent.mkdir(parents=True, exist_ok=True)
                 download_file(gdrive_url, str(rebar_model_path))
             except Exception as exc:
-                print(f"[startup] WARNING: Rebar model download failed: {exc}", flush=True)
+                print(f"[startup] WARNING: Horizon model download failed: {exc}", flush=True)
         else:
             print(
                 "[startup] REBAR_MODEL_GDRIVE_URL not set — "
@@ -153,37 +153,16 @@ def load_models_background(
             )
 
     if rebar_model_path.exists():
-        rebar_cfg_url = os.environ.get("REBAR_MODEL_CONFIG_URL")
-        if rebar_cfg_url and not rebar_model_config_path.exists():
-            try:
-                download_file(rebar_cfg_url, str(rebar_model_config_path))
-            except Exception as exc:
-                print(f"[startup] WARNING: rebar_model_config.json download failed: {exc}", flush=True)
-
-        rebar_in_ch = 2
-        if rebar_model_config_path.exists():
-            try:
-                with open(rebar_model_config_path) as f:
-                    rebar_cfg = json.load(f)
-                rebar_in_ch = rebar_cfg.get("in_channels", 2)
-                print(f"[startup] Rebar config: {rebar_cfg}", flush=True)
-            except json.JSONDecodeError as e:
-                with open(rebar_model_config_path) as f:
-                    head = f.read(200)
-                raise RuntimeError(
-                    f"Rebar config from {rebar_cfg_url!r} is not valid JSON. First 200 bytes: {head!r}"
-                ) from e
-
         try:
-            rm = RebarDepthCNN(in_channels=rebar_in_ch).to(DEVICE)
+            rm = HorizonCNN().to(DEVICE)
             rm.load_state_dict(
                 torch.load(rebar_model_path, map_location=DEVICE, weights_only=False)
             )
             rm.eval()
             n_rp = sum(p.numel() for p in rm.parameters() if p.requires_grad)
             rebar_model = rm
-            print(f"[startup] Rebar model loaded ({n_rp:,} params, in_channels={rebar_in_ch})", flush=True)
+            print(f"[startup] HorizonCNN loaded ({n_rp:,} params)", flush=True)
         except Exception as exc:
-            print(f"[startup] WARNING: Rebar model load failed: {exc}", flush=True)
+            print(f"[startup] WARNING: HorizonCNN load failed: {exc}", flush=True)
 
     return model, rebar_model, loaded_cfg

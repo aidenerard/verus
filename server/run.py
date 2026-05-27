@@ -15,7 +15,7 @@ CLI usage:
 # ── Re-exports (keep server.py imports working unchanged) ─────────────────────
 
 from model import (                                         # noqa: F401
-    CNN1D, TemporalAttention, RebarDepthCNN,
+    CNN1D, TemporalAttention, RebarDepthCNN, HorizonCNN,
     THRESHOLD, DC_OFFSET, N_SAMPLES, INFER_BATCH, DEVICE,
 )
 from data import load_csv                                   # noqa: F401

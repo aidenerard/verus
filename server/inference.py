@@ -106,7 +106,7 @@ def run_rebar_inference(
     frequency_mhz: int = 1600,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Input: z-score normalised signals (n_signals, 512).
+    Input: raw signals (n_signals, 512).
     Returns (depth_inches, twt_ns, peak_samples) all (n_signals,).
     Falls back to physics peak-time estimate when model is None or fails.
     """
@@ -114,10 +114,6 @@ def run_rebar_inference(
     velocity = 0.3 / np.sqrt(er)  # m/ns in concrete
 
     def _physics(sigs: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        # Placeholder: argmax on Kirchhoff-migrated data (IDS PRC files) gives
-        # unreliable depths because migration spreads energy across the window.
-        # Values will be correct once rebar_model.pth is loaded and the model
-        # path above is taken instead.
         peak_samples = np.argmax(np.abs(sigs), axis=1).astype(np.int32)
         twt          = peak_samples.astype(np.float32) * 0.023
         depth        = (velocity * twt / 2.0) * 39.3701
@@ -127,17 +123,13 @@ def run_rebar_inference(
         return _physics(signals)
 
     try:
-        # Downsample 512 → 256 (every other sample matches training data)
-        raw = signals[:, ::2].astype(np.float32)
-        # DC-remove then max-abs — matches training convention exactly
+        # DC-remove + max-abs normalise — matches HorizonCNN training exactly
+        raw = signals.astype(np.float32)
         raw = raw - raw.mean(axis=1, keepdims=True)
         mx  = np.abs(raw).max(axis=1, keepdims=True)
         mx  = np.where(mx == 0, 1.0, mx)
         raw = raw / mx
-        # Hilbert envelope
-        env = np.abs(_hilbert(raw, axis=1)).astype(np.float32)
-        # Stack → (n, 2, 256)
-        X   = np.stack([raw, env], axis=1)
+        X   = raw[:, np.newaxis, :]  # (n, 1, 512)
 
         preds: list[np.ndarray] = []
         model.eval()
@@ -147,8 +139,10 @@ def run_rebar_inference(
                 out   = model(batch.to(DEVICE)).cpu().numpy()
                 preds.append(out)
 
-        depth_in     = np.clip(np.concatenate(preds), 0.5, 12.0).astype(np.float32)
-        twt          = (2.0 * (depth_in / 39.3701) / velocity).astype(np.float32)
+        norm_depth   = np.clip(np.concatenate(preds), 0.0, 1.0)
+        depth_mm     = norm_depth * 300.0
+        depth_in     = (depth_mm / 25.4).astype(np.float32)
+        twt          = (2.0 * (depth_mm / 1000.0) / velocity).astype(np.float32)
         peak_samples = np.argmax(np.abs(signals), axis=1).astype(np.int32)
         return depth_in, twt, peak_samples
 
