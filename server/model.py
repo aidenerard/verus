@@ -90,7 +90,7 @@ class HorizonCNN(nn.Module):
             nn.Conv1d(128, 128, kernel_size=3, padding=1), nn.ReLU(), nn.MaxPool1d(2),
         )
         self.attn       = TemporalAttention(128)
-        self.depth_head = nn.Sequential(
+        self.head = nn.Sequential(
             nn.Linear(128, 64), nn.ReLU(),
             nn.Dropout(0.3),
             nn.Linear(64, 1),
@@ -98,4 +98,4 @@ class HorizonCNN(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.depth_head(self.attn(self.conv(x))).squeeze(-1)
+        return self.head(self.attn(self.conv(x))).squeeze(-1)
