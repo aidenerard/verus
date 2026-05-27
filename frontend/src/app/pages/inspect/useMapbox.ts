@@ -64,7 +64,7 @@ export function useMapbox({
     const add = () => {
       ['condition-fill'].forEach(id => { if (map.getLayer(id)) map.removeLayer(id); });
       if (map.getSource('condition')) map.removeSource('condition');
-      const gpsFiles = analysisResult.per_file_summary.filter(f => f.gps);
+      const gpsFiles = (analysisResult.per_file_summary ?? []).filter(f => f.gps);
       if (!gpsFiles.length) return;
       const features: GeoJSON.Feature<GeoJSON.LineString>[] = gpsFiles.map(f => ({
         type: 'Feature',
