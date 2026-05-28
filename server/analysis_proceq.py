@@ -34,21 +34,26 @@ def load_cscan_amplitudes(cscan_paths: list[str]) -> list[dict | None]:
     return result
 
 
-def build_horizon_picks_plot(odd_scans, ts_data, output_dir):
+def build_horizon_picks_plot(first_channel_paths, ts_data, output_dir):
     """
     Plot B-scan for each swath with TS ground truth horizon overlaid.
     Shows rebar pick (red) and deck bottom pick (blue) per trace.
+    Caller passes the first odd PRC path per swath; previous /4 indexing
+    hardcoded the channel count and broke after the autodetect refactor.
     """
     from ingest import read_proceq
 
-    n_swaths = min(len(odd_scans) // 4, ts_data['n_swaths'])
+    n_swaths = min(len(first_channel_paths), ts_data['n_swaths'])
+    if n_swaths == 0:
+        print("[PICKS] no swaths to plot — skipping horizon-picks figure", flush=True)
+        return None
     fig, axes = plt.subplots(n_swaths, 1, figsize=(24, n_swaths * 2))
     if n_swaths == 1:
         axes = [axes]
 
     for swath_idx in range(n_swaths):
         ax = axes[swath_idx]
-        scan_path = odd_scans[swath_idx * 4]
+        scan_path = first_channel_paths[swath_idx]
         try:
             result = read_proceq(scan_path)
             traces = result['traces']  # (n_traces, 510)
@@ -269,7 +274,8 @@ def process_proceq_dataset(
     print(f"[ANALYSIS] total_traces={total_traces:,}")
 
     # Output 1 — horizon picks
-    build_horizon_picks_plot(odd_scans, ts_data, output_dir)
+    first_channel_paths = [s[0] for s in swath_groups if s]
+    build_horizon_picks_plot(first_channel_paths, ts_data, output_dir)
 
     # Output 2 — rebar depth map (real GPS coords, signal-proc depths; no-GPS swaths dropped)
     valid_mask  = [e is not None for e in ts_data['easting']]

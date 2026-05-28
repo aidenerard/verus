@@ -256,12 +256,14 @@ def run_analysis_job(
 
 def run_proceq_job(
     job_id: str,
-    file_data: list[tuple[str, bytes]],
+    file_data: Optional[list[tuple[str, bytes]]],
     tmpdir: Path,
     epsr: float,
     user_id: Optional[str] = None,
     supabase_client = None,
 ) -> None:
+    """When file_data is None the files are assumed to already exist in tmpdir
+    (e.g. pre-staged by run_proceq_storage_job)."""
     import base64
     from analysis import process_proceq_dataset
     from models import get_ensemble
@@ -274,10 +276,11 @@ def run_proceq_job(
     t0 = time.perf_counter()
 
     try:
-        for fname, content in file_data:
-            dest = tmpdir / fname
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(content)
+        if file_data is not None:
+            for fname, content in file_data:
+                dest = tmpdir / fname
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(content)
 
         # Inner try so a pipeline error (e.g. no GPS-valid traces -> griddata
         # 'Number of rows must be positive') still lets the job complete with
@@ -367,4 +370,71 @@ def run_proceq_job(
         _jobs[job_id]["completed_at"] = time.time()  # in-memory: python float
 
     finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def run_proceq_storage_job(
+    job_id: str,
+    storage_path: str,
+    epsr: float,
+    user_id: Optional[str],
+    supabase_client,
+) -> None:
+    """
+    Download a Proceq dataset from Supabase storage (bucket 'uploads',
+    folder = storage_path) into a tmpdir, then hand off to run_proceq_job
+    with file_data=None (files pre-staged).
+    """
+    import tempfile
+    import os as _os
+
+    _update_job(job_id, {
+        "status":   "processing",
+        "progress": 5,
+        "stage":    "Downloading from storage",
+    }, supabase_client)
+
+    if not supabase_client:
+        _update_job(job_id, {
+            "status":       "failed",
+            "error":        "Supabase not configured",
+            "completed_at": "now()",
+        }, supabase_client)
+        return
+
+    tmpdir = Path(tempfile.mkdtemp(prefix="verus_proceq_storage_"))
+    try:
+        # supabase-py: list returns [{name, id, ...}]; download returns bytes
+        bucket = supabase_client.storage.from_("uploads")
+        files = bucket.list(storage_path) or []
+        total = len(files)
+        if total == 0:
+            raise RuntimeError(f"No files in storage path: {storage_path}")
+        print(f"[STORAGE] {total} files in {storage_path}", flush=True)
+
+        for i, f in enumerate(files):
+            fname = f.get("name")
+            if not fname:
+                continue
+            data = bucket.download(f"{storage_path}/{fname}")
+            (tmpdir / fname).write_bytes(data)
+            progress = 5 + int((i + 1) / total * 20)
+            _update_job(job_id, {
+                "progress": progress,
+                "stage":    f"Downloaded {i + 1}/{total} files",
+            }, supabase_client)
+
+        run_proceq_job(
+            job_id=job_id, file_data=None, tmpdir=tmpdir, epsr=epsr,
+            user_id=user_id, supabase_client=supabase_client,
+        )
+
+    except Exception as exc:
+        print(f"[STORAGE JOB] {job_id}: {exc}", flush=True)
+        _update_job(job_id, {
+            "status":       "failed",
+            "error":        str(exc),
+            "completed_at": "now()",
+        }, supabase_client)
+        # run_proceq_job's finally cleans tmpdir on success path; ensure cleanup on error too
         shutil.rmtree(tmpdir, ignore_errors=True)
