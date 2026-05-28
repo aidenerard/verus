@@ -71,6 +71,8 @@ export interface AnalysisResult {
   // User-supplied metadata, mirrored from the analysis_jobs row
   analysis_name?:           string;
   analysis_notes?:          string;
+  company?:                 string;
+  project?:                 string;
 }
 
 export interface UploadedFile { file: File; name: string }

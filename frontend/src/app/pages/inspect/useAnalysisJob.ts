@@ -72,6 +72,8 @@ interface UseAnalysisJobProps {
   extraFormData?: (fd: FormData) => void;
   analysisName?:  string;
   analysisNotes?: string;
+  company?:       string;
+  project?:       string;
 }
 
 interface UseAnalysisJobReturn {
@@ -105,6 +107,8 @@ export function useAnalysisJob({
   extraFormData,
   analysisName,
   analysisNotes,
+  company,
+  project,
 }: UseAnalysisJobProps): UseAnalysisJobReturn {
   const [jobId,               setJobId]               = useState<string | null>(null);
   const [jobStatus,           setJobStatus]           = useState<'idle'|'pending'|'processing'|'complete'|'failed'>('idle');
@@ -162,6 +166,8 @@ export function useAnalysisJob({
       files.forEach(f => formData.append('files', f.file));
       formData.append('analysis_name',  (analysisName  ?? '').trim() || 'Untitled Analysis');
       formData.append('analysis_notes', (analysisNotes ?? '').trim());
+      formData.append('company',        (company       ?? '').trim());
+      formData.append('project',        (project       ?? '').trim());
       if (hasProceqFiles) {
         formData.append('epsr', '9.0');
       } else {
@@ -225,7 +231,7 @@ export function useAnalysisJob({
       setErrorMsg(err instanceof Error ? err.message : 'Analysis failed');
       setJobStatus('failed');
     }
-  }, [files, session, jobStatus, manufacturer, frequencyMhz, useCustomFreq, customFreq, projectId, onComplete, extraFormData, analysisName, analysisNotes]);
+  }, [files, session, jobStatus, manufacturer, frequencyMhz, useCustomFreq, customFreq, projectId, onComplete, extraFormData, analysisName, analysisNotes, company, project]);
 
   // Cleanup on unmount
   useEffect(() => () => {
