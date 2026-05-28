@@ -5,7 +5,67 @@ analysis_proceq.py to keep that module under the 300-line cap.
 """
 from __future__ import annotations
 
+import math
+from pathlib import Path
+
 import numpy as np
+
+
+def group_files_by_swath(data_dir: str) -> dict:
+    """
+    Auto-group a flat upload of Proceq files into swaths.
+
+    Naming convention assumed (per user spec):
+      PRC_NNNNNN.scan — swath = ceil(NNNNNN / 16); odd = trace data, even = processed
+      Swath_NNNN.pos  — GPS for swath NNNN
+      CScan_NN.CScan  — corrosion amplitude for swath NN
+
+    Uses rglob so it handles both flat uploads (everything in data_dir) and
+    nested local layouts (data_dir/swath_NNNN/...).
+
+    Returns: {swath_idx: {odd_scans, even_scans, pos_file, cscan_file}}
+    """
+    data_path = Path(data_dir)
+    swaths: dict[int, dict] = {}
+
+    for f in sorted(data_path.rglob("PRC_*.scan")):
+        try:
+            num = int(f.stem.replace("PRC_", ""))
+        except ValueError:
+            continue
+        swath_idx = math.ceil(num / 16)  # 1-indexed; per spec
+        bucket = swaths.setdefault(swath_idx, {
+            "odd_scans": [], "even_scans": [], "pos_file": None, "cscan_file": None,
+        })
+        if num % 2 == 1:
+            bucket["odd_scans"].append(str(f))
+        else:
+            bucket["even_scans"].append(str(f))
+
+    for f in sorted(data_path.rglob("Swath_*.pos")):
+        try:
+            num = int(f.stem.replace("Swath_", ""))
+        except ValueError:
+            continue
+        if num in swaths:
+            swaths[num]["pos_file"] = str(f)
+
+    for f in sorted(data_path.rglob("CScan_*.CScan")):
+        try:
+            num = int(f.stem.replace("CScan_", ""))
+        except ValueError:
+            continue
+        if num in swaths:
+            swaths[num]["cscan_file"] = str(f)
+
+    print(f"[GROUP] found {len(swaths)} swaths from uploaded files", flush=True)
+    for idx, s in sorted(swaths.items()):
+        print(f"  swath {idx}: {len(s['odd_scans'])} odd + "
+              f"{len(s['even_scans'])} even PRC, "
+              f"pos={'yes' if s['pos_file'] else 'no'}, "
+              f"cscan={'yes' if s['cscan_file'] else 'no'}",
+              flush=True)
+    return swaths
 
 
 def median_swath_length(pos_files: list[str]) -> float:
