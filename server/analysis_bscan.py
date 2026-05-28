@@ -17,6 +17,86 @@ import matplotlib.ticker as ticker
 import numpy as np
 
 
+def preprocess_for_display(traces, frequency_mhz: float = 2000):
+    """
+    Apply standard GPR signal processing for B-scan display, matching the
+    output quality of Geolitix / GSSI RADAN / Proceq OneVision.
+
+    Steps:
+      1. DC removal (dewow) via running-mean subtraction per trace
+      2. Time-zero correction via Hilbert-envelope surface pick + shift
+      3. Linear gain with depth (1× → 4×)
+      4. Bandpass filter (4th-order Butterworth, 0.02–0.8 of Nyquist)
+      5. AGC — per-trace RMS normalization
+      6. Global contrast stretch — 1st/99th percentile clip → [-1, 1]
+    """
+    from scipy import signal as sp_signal
+    from scipy.signal import hilbert
+
+    processed = traces.copy().astype(np.float32)
+    n_traces, n_samples = processed.shape
+
+    # Step 1 — DC removal (dewow): subtract a sliding mean per trace to kill
+    # low-frequency drift / DC bias without flattening reflectors.
+    window = max(n_samples // 8, 10)
+    kernel = np.ones(window) / window
+    for i in range(n_traces):
+        dc = np.convolve(processed[i], kernel, mode="same")
+        processed[i] -= dc
+
+    # Step 2 — Time-zero correction: find the first strong arrival per trace
+    # via Hilbert envelope inside the first quarter, then shift each trace so
+    # surface reflections line up at the median pick.
+    search_end = n_samples // 4
+    surface_picks = []
+    for i in range(n_traces):
+        env = np.abs(hilbert(processed[i, :search_end]))
+        surface_picks.append(int(np.argmax(env)))
+    t0_ref = int(np.median(surface_picks))
+    corrected = np.zeros_like(processed)
+    for i in range(n_traces):
+        shift = t0_ref - surface_picks[i]
+        if shift > 0:
+            corrected[i, shift:] = processed[i, :n_samples - shift]
+        elif shift < 0:
+            corrected[i, :n_samples + shift] = processed[i, -shift:]
+        else:
+            corrected[i] = processed[i]
+    processed = corrected
+
+    # Step 3 — Linear gain with depth: compensate signal attenuation, boosting
+    # deeper samples up to 4× to keep late reflectors visible.
+    gain = np.linspace(1.0, 4.0, n_samples).astype(np.float32)
+    processed *= gain[np.newaxis, :]
+
+    # Step 4 — Bandpass: drop DC residual and high-frequency noise outside the
+    # GPR signal band. Best-effort — short / pathological traces may fail
+    # filtfilt's padding requirement; pass-through on error.
+    try:
+        b, a = sp_signal.butter(4, [0.02, 0.8], btype="band")
+        for i in range(n_traces):
+            processed[i] = sp_signal.filtfilt(b, a, processed[i])
+    except Exception:
+        pass
+
+    # Step 5 — AGC: divide each trace by its RMS so weak reflectors come up to
+    # parity with strong ones (independent per A-scan).
+    for i in range(n_traces):
+        rms = float(np.sqrt(np.mean(processed[i] ** 2)))
+        if rms > 1e-10:
+            processed[i] /= rms
+
+    # Step 6 — Global contrast stretch: 1st/99th percentile clip mapped to
+    # [-1, 1] for matplotlib's vmin/vmax range.
+    p1, p99 = np.percentile(processed, 1), np.percentile(processed, 99)
+    processed = np.clip(processed, p1, p99)
+    if p99 > p1:
+        processed = (processed - p1) / (p99 - p1) * 2 - 1
+    else:
+        processed = np.zeros_like(processed)
+    return processed
+
+
 def build_bscan_image(
     traces,              # np.ndarray (n_traces, n_samples) normalized float32
     output_path,
@@ -37,26 +117,10 @@ def build_bscan_image(
     max_depth_in = max_depth_m * 39.3701
     total_dist_m = n_traces * dx
 
-    # Per-trace DC removal (subtract each A-scan's own mean) so reflector
-    # polarity is centered around zero regardless of any DC offset on that
-    # individual trace.
-    dc_removed = traces - traces.mean(axis=1, keepdims=True)
-
-    # Per-trace 2nd/98th percentile contrast stretch — each A-scan is
-    # independently mapped so its p2 → -1 and p98 → +1. Every column in the
-    # rendered B-scan then fills the full -1..1 dynamic range, matching the
-    # per-trace AGC look of pro GPR software (Proceq OneVision, GSSI RADAN,
-    # ReflexW). Trade-off: this hides systematic amplitude attenuation along
-    # the scan — fine for delamination/rebar interpretation, less appropriate
-    # for absolute reflector strength comparisons across distance.
-    p2  = np.percentile(dc_removed, 2,  axis=1, keepdims=True)
-    p98 = np.percentile(dc_removed, 98, axis=1, keepdims=True)
-    span = p98 - p2
-    span_safe = np.where(span > 0, span, 1.0)
-    display = np.clip((dc_removed - p2) / span_safe * 2 - 1, -1, 1)
-    # Flat traces (constant signal) would saturate to black under the above;
-    # collapse them to neutral mid-gray instead.
-    display[(span <= 0)[:, 0], :] = 0.0
+    # Full 6-step GPR preprocessing — dewow, time-zero alignment, depth gain,
+    # bandpass, per-trace AGC, then a global percentile contrast stretch into
+    # [-1, 1]. See preprocess_for_display() for details.
+    display = preprocess_for_display(traces)
 
     fig, ax = plt.subplots(figsize=(20, 6))
     fig.patch.set_facecolor("white")
@@ -103,7 +167,7 @@ def build_bscan_image(
     plt.tight_layout()
     out_dir = os.path.dirname(output_path) or "."
     os.makedirs(out_dir, exist_ok=True)
-    plt.savefig(output_path, dpi=150, bbox_inches="tight",
+    plt.savefig(output_path, dpi=200, bbox_inches="tight",
                 facecolor="white", edgecolor="none")
     plt.close("all")
     gc.collect()
