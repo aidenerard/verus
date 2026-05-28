@@ -55,7 +55,7 @@ export default function GPRUploadCard({
     <div style={{ background: PANEL, border: `1px solid ${BORDER}`, padding: '24px 28px' }}>
       <div style={{ fontSize: 14, fontWeight: 700, color: TEXT, marginBottom: 4 }}>Upload GPR Scan Files</div>
       <div style={{ fontSize: 12, color: TEXT2, marginBottom: 18 }}>
-        Drop .dzt, .dt1, .rd3/.rd7, .segy, .csv, or .scan files (include .pos / .cscan companions for Proceq). Multiple files supported.
+        Upload all files from your Proceq dataset folder — PRC scan files, .pos GPS files, and .CScan amplitude files. The system groups them into swaths automatically. (Also accepts GSSI .dzt, S&S .dt1, MALA .rd3/.rd7, SEG-Y, and .csv.)
       </div>
 
       <div
@@ -76,7 +76,7 @@ export default function GPRUploadCard({
         ref={inputRef}
         type="file"
         multiple
-        accept=".csv,.dzt,.dt1,.rd3,.rd7,.segy,.sgy,.dzg,.hd,.rad,.dt,.gec,.iprb,.iprh,.scan,.pos,.cscan"
+        accept=".csv,.dzt,.dt1,.rd3,.rd7,.segy,.sgy,.dzg,.hd,.rad,.dt,.gec,.iprb,.iprh,.scan,.pos,.cscan,.CScan"
         onChange={e => { addFiles(e.target.files); e.target.value = ''; }}
         style={{ display: 'none' }}
       />
