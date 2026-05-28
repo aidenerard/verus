@@ -1,20 +1,22 @@
 import { Link } from 'react-router';
 
-const ACCENT     = '#E8601C';
-const MUTED      = '#6b7280';
-const MUTED_DIM  = '#9ca3af';
-const BORDER     = '#e5e7eb';
+const BG          = '#0A0A0A';
+const BORDER      = 'rgba(255,255,255,0.08)';
+const LINK        = 'rgba(240,237,232,0.68)';
+const LINK_HOVER  = '#F0EDE8';
+const COPYRIGHT   = 'rgba(240,237,232,0.45)';
 
 export default function Footer() {
   return (
     <footer style={{
+      background: BG,
       borderTop: `1px solid ${BORDER}`,
       padding: '20px 24px',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'space-between',
       fontSize: 12,
-      color: MUTED_DIM,
+      color: COPYRIGHT,
       flexWrap: 'wrap',
       gap: 12,
       fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, sans-serif',
@@ -37,9 +39,9 @@ function FooterLink({ to, children }: { to: string; children: React.ReactNode })
   return (
     <Link
       to={to}
-      style={{ color: MUTED, textDecoration: 'none' }}
-      onMouseEnter={e => (e.currentTarget.style.color = ACCENT)}
-      onMouseLeave={e => (e.currentTarget.style.color = MUTED)}
+      style={{ color: LINK, textDecoration: 'none' }}
+      onMouseEnter={e => (e.currentTarget.style.color = LINK_HOVER)}
+      onMouseLeave={e => (e.currentTarget.style.color = LINK)}
     >
       {children}
     </Link>
@@ -50,9 +52,9 @@ function FooterMail() {
   return (
     <a
       href="mailto:info@verus.com"
-      style={{ color: MUTED, textDecoration: 'none' }}
-      onMouseEnter={e => (e.currentTarget.style.color = ACCENT)}
-      onMouseLeave={e => (e.currentTarget.style.color = MUTED)}
+      style={{ color: LINK, textDecoration: 'none' }}
+      onMouseEnter={e => (e.currentTarget.style.color = LINK_HOVER)}
+      onMouseLeave={e => (e.currentTarget.style.color = LINK)}
     >
       info@verus.com
     </a>
