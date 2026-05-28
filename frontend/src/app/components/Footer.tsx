@@ -16,13 +16,17 @@ export default function Footer() {
       fontSize: 12,
       color: MUTED_DIM,
       flexWrap: 'wrap',
-      gap: 8,
+      gap: 12,
       fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, sans-serif',
     }}>
       <span>© {new Date().getFullYear()} Verus Technologies, Inc. All rights reserved.</span>
-      <div style={{ display: 'flex', gap: 20 }}>
-        <FooterLink to="/privacy">Privacy Policy</FooterLink>
-        <FooterLink to="/terms">Terms of Use</FooterLink>
+      <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'center' }}>
+        <FooterLink to="/">Home</FooterLink>
+        <FooterLink to="/team">Team</FooterLink>
+        <FooterLink to="/login">Log In</FooterLink>
+        <FooterLink to="/signup">Sign Up</FooterLink>
+        <FooterLink to="/privacy">Privacy</FooterLink>
+        <FooterLink to="/terms">Terms</FooterLink>
         <FooterMail />
       </div>
     </footer>
@@ -50,7 +54,7 @@ function FooterMail() {
       onMouseEnter={e => (e.currentTarget.style.color = ACCENT)}
       onMouseLeave={e => (e.currentTarget.style.color = MUTED)}
     >
-      Contact
+      info@verus.com
     </a>
   );
 }
