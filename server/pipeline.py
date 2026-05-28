@@ -43,6 +43,7 @@ def process_files(
     file_names:       list[str]        = []
     file_peak_idxs:   list[np.ndarray] = []
     file_peak_amps:   list[np.ndarray] = []
+    file_atten_arrs:  list[np.ndarray] = []
     rebar_depth_arrs: list[np.ndarray] = []
     rebar_twt_arrs:   list[np.ndarray] = []
     rebar_peak_arrs:  list[np.ndarray] = []
@@ -99,6 +100,14 @@ def process_files(
         preds, confs                 = run_inference(model, signals, model_config=model_config,
                                                       progress_callback=_infer_cb)
         depth_arr, twt_arr, peak_arr = run_rebar_inference(rebar_model, signals, frequency_mhz)
+
+        # Depth-normalised attenuation: rebar return amplitude / surface wave amplitude.
+        # Surface wave amplitude uses the first 30 samples (direct wave zone).
+        # Lower ratio = more attenuation at rebar depth = potential deterioration.
+        surface_amp = np.abs(signals[:, :30]).max(axis=1).astype(np.float32)
+        surface_amp = np.where(surface_amp == 0, 1.0, surface_amp)
+        atten_arr   = np.clip(peak_amp / surface_amp, 0.0, 2.0)
+
         del signals
         if csv_path != dest:
             csv_path.unlink(missing_ok=True)
@@ -116,6 +125,7 @@ def process_files(
         file_names.append(fname)
         file_peak_idxs.append(peak_idx)
         file_peak_amps.append(peak_amp)
+        file_atten_arrs.append(atten_arr)
         rebar_depth_arrs.append(depth_arr)
         rebar_twt_arrs.append(twt_arr)
         rebar_peak_arrs.append(peak_arr)
@@ -138,7 +148,7 @@ def process_files(
 
     return (
         file_preds, file_confs, file_names,
-        file_peak_idxs, file_peak_amps,
+        file_peak_idxs, file_peak_amps, file_atten_arrs,
         rebar_depth_arrs, rebar_twt_arrs, rebar_peak_arrs,
         per_file_summary, total_sigs,
     )
@@ -151,6 +161,7 @@ def build_result_payload(
     file_names: list[str],
     file_peak_idxs: list[np.ndarray],
     file_peak_amps: list[np.ndarray],
+    file_atten_arrs: list[np.ndarray],
     rebar_depth_arrs: list[np.ndarray],
     rebar_twt_arrs: list[np.ndarray],
     rebar_peak_arrs: list[np.ndarray],
@@ -246,7 +257,9 @@ def build_result_payload(
     conf_pct = depth_acc_in = 0.0; sig_quality = "Fair"
     try:
         depth_grid, amp_grid, twt_grid = build_extra_grids(
-            file_peak_idxs, file_peak_amps, frequency_mhz
+            file_peak_idxs,
+            file_atten_arrs if file_atten_arrs else file_peak_amps,
+            frequency_mhz,
         )
         rebar_b64             = render_rebar_depth_b64(depth_grid)
         amp_b64               = render_amplitude_b64(amp_grid)

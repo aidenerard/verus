@@ -196,13 +196,18 @@ def render_rebar_depth_b64(depth_grid: np.ndarray, dpi: int = 100) -> str:
 
 
 def render_amplitude_b64(amplitude_grid: np.ndarray, dpi: int = 100) -> str:
-    """Render amplitude heatmap. Red=low (deteriorated), blue=high (sound)."""
+    """Render depth-normalised attenuation heatmap. Red=high attenuation (deteriorated), blue=low (sound)."""
     cmap_obj = mcolors.LinearSegmentedColormap.from_list(
         "amp", ['#C0392B', '#E67E22', '#F1C40F', '#27AE60', '#2980B9'], N=256)
     cmap_obj.set_bad(color='#F0EFEC')
     nan_mask = np.isnan(amplitude_grid)
-    norm   = mcolors.Normalize(vmin=0.0, vmax=1.0)
-    smooth = gaussian_filter(np.where(nan_mask, 0.5, amplitude_grid), sigma=(1.5, 3.0))
+    valid    = amplitude_grid[~nan_mask]
+    vmin     = float(np.percentile(valid, 5))  if len(valid) else 0.0
+    vmax     = float(np.percentile(valid, 95)) if len(valid) else 1.0
+    if vmax - vmin < 0.05:
+        vmax = vmin + 0.05
+    norm   = mcolors.Normalize(vmin=vmin, vmax=vmax)
+    smooth = gaussian_filter(np.where(nan_mask, (vmin + vmax) / 2, amplitude_grid), sigma=(1.5, 3.0))
     masked = np.ma.array(smooth, mask=nan_mask)
     fig, ax = plt.subplots(figsize=(14, 3.5), facecolor='white')
     fig.subplots_adjust(left=0.05, right=0.97, top=0.88, bottom=0.22)
@@ -213,8 +218,8 @@ def render_amplitude_b64(amplitude_grid: np.ndarray, dpi: int = 100) -> str:
     ax.tick_params(colors='#777777', length=3, width=0.6, labelsize=7)
     cbar = fig.colorbar(plt.cm.ScalarMappable(cmap=cmap_obj, norm=norm),
                         ax=ax, orientation='horizontal', pad=0.18, fraction=0.04, aspect=50)
-    cbar.set_ticks([0.0, 0.5, 1.0])
-    cbar.set_ticklabels(['Low Amplitude (Deteriorated)', 'Boundary', 'High Amplitude (Sound)'], fontsize=8)
+    cbar.set_ticks([vmin, (vmin + vmax) / 2, vmax])
+    cbar.set_ticklabels(['High Attenuation (Deteriorated)', '', 'Low Attenuation (Sound)'], fontsize=8)
     cbar.ax.tick_params(length=0)
     cbar.outline.set_linewidth(0.5); cbar.outline.set_edgecolor('#CCCCCC')
     return _fig_to_b64(fig, dpi)
