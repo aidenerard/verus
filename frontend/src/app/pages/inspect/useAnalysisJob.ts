@@ -160,6 +160,18 @@ export function useAnalysisJob({
         return n.endsWith('.scan') || n.endsWith('.zip');
       });
 
+      console.log('[ZIP] files received:', files.map(f => f.file.name));
+      console.log('[ZIP] hasProceqFiles:', hasProceqFiles);
+      console.log('[ZIP] zipFile found:', zipFile?.file.name ?? 'none');
+      if (files[0]) {
+        console.log('[ZIP] first file object keys:', Object.keys(files[0]));
+        console.log('[ZIP] first file object:', JSON.stringify({
+          name: files[0]?.file?.name,
+          size: files[0]?.file?.size,
+          type: files[0]?.file?.type,
+        }));
+      }
+
       let job_id: string;
       if (zipFile) {
         // Direct-to-storage path: bypass Render's request body limit by
@@ -180,15 +192,21 @@ export function useAnalysisJob({
 
         const zipMb = zipFile.file.size / 1024 / 1024;
         setStatusMsg(`Uploading zip (${zipMb.toFixed(0)} MB) to storage…`);
+        console.log('[ZIP] attempting storage upload to:', storagePath);
+        console.log('[ZIP] file size:', zipFile.file.size, 'bytes');
+        console.log('[ZIP] userId:', userId);
         const { error: uploadError } = await supabase.storage
           .from('uploads')
           .upload(storagePath, zipFile.file, { upsert: true, contentType: 'application/zip' });
         if (uploadError) {
+          console.error('[ZIP] upload error:', JSON.stringify(uploadError));
           setErrorMsg(`Zip upload failed: ${uploadError.message}`);
           setJobStatus('failed'); return;
         }
+        console.log('[ZIP] upload success');
 
         setStatusMsg('Queuing analysis…');
+        console.log('[ZIP] calling /analyze-proceq-zip with storage_path:', storagePath);
         const fd = new FormData();
         fd.append('storage_path',   storagePath);
         fd.append('epsr',           '9.0');
