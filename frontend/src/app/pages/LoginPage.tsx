@@ -1,6 +1,6 @@
 import { useState, FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router';
-import VerusLogo from '../components/VerusLogo';
+import Navbar, { NAVBAR_HEIGHT } from '../components/Navbar';
 import Footer from '../components/Footer';
 import { useAuth } from '../../context/AuthContext';
 
@@ -39,15 +39,12 @@ export default function LoginPage() {
       display: 'flex', flexDirection: 'column',
       fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, sans-serif',
     }}>
+      <Navbar />
       <div style={{
         flex: 1, display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center',
-        padding: '40px 24px',
+        padding: `${NAVBAR_HEIGHT + 40}px 24px 40px`,
       }}>
-      {/* Logo */}
-      <Link to="/" style={{ textDecoration: 'none', marginBottom: 40 }}>
-        <VerusLogo size={40} wordmarkColor="#0A0A0A" />
-      </Link>
 
       {/* Card */}
       <div style={{
