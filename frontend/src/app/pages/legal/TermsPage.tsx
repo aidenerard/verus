@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import Navbar, { NAVBAR_HEIGHT } from '../../components/Navbar';
 import Footer from '../../components/Footer';
 import {
   LegalLayout, LegalHeader, Section, Subsection,
@@ -14,7 +15,8 @@ export default function TermsPage() {
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: '#ffffff' }}>
-      <div style={{ flex: 1 }}>
+      <Navbar />
+      <div style={{ flex: 1, paddingTop: NAVBAR_HEIGHT }}>
         <LegalLayout>
           <LegalHeader
             eyebrow="Verus Technologies, Inc."

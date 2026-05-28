@@ -1,5 +1,5 @@
 import { PAGE_CSS } from './home/tokens';
-import Navbar       from './home/Navbar';
+import Navbar       from '../components/Navbar';
 import Hero         from './home/Hero';
 import WhyVerus     from './home/WhyVerus';
 import TickerStripe from './home/TickerStripe';
