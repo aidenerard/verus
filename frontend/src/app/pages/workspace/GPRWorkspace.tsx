@@ -24,6 +24,8 @@ export default function GPRWorkspace() {
   const [frequencyMhz,   setFrequencyMhz]   = useState(1600);
   const [analysisName,   setAnalysisName]   = useState('');
   const [analysisNotes,  setAnalysisNotes]  = useState('');
+  const [company,        setCompany]        = useState('');
+  const [project,        setProject]        = useState('');
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [loadingJob,     setLoadingJob]     = useState(!!viewJobId);
   const [loadError,      setLoadError]      = useState<string | null>(null);
@@ -33,8 +35,10 @@ export default function GPRWorkspace() {
       ...result,
       analysis_name:  result.analysis_name  ?? (analysisName.trim()  || 'Untitled Analysis'),
       analysis_notes: result.analysis_notes ?? analysisNotes.trim(),
+      company:        result.company        ?? company.trim(),
+      project:        result.project        ?? project.trim(),
     });
-  }, [analysisName, analysisNotes]);
+  }, [analysisName, analysisNotes, company, project]);
 
   const {
     jobStatus, errorMsg, showConfirm, setShowConfirm,
@@ -46,6 +50,7 @@ export default function GPRWorkspace() {
     onComplete,
     extraFormData: toFormData,
     analysisName, analysisNotes,
+    company, project,
   });
 
   useEffect(() => {
@@ -61,6 +66,8 @@ export default function GPRWorkspace() {
             ...result,
             analysis_name:  result.analysis_name  ?? (data.analysis_name  as string | undefined) ?? 'Untitled Analysis',
             analysis_notes: result.analysis_notes ?? (data.analysis_notes as string | undefined) ?? '',
+            company:        result.company        ?? (data.company        as string | undefined) ?? '',
+            project:        result.project        ?? (data.project        as string | undefined) ?? '',
           });
         }
         setLoadingJob(false);
@@ -72,6 +79,8 @@ export default function GPRWorkspace() {
     setFiles([]);
     setAnalysisName('');
     setAnalysisNotes('');
+    setCompany('');
+    setProject('');
     setLoadError(null);
   };
 
@@ -96,6 +105,8 @@ export default function GPRWorkspace() {
           frequencyMhz={frequencyMhz} setFrequencyMhz={setFrequencyMhz}
           analysisName={analysisName}   setAnalysisName={setAnalysisName}
           analysisNotes={analysisNotes} setAnalysisNotes={setAnalysisNotes}
+          company={company}             setCompany={setCompany}
+          project={project}             setProject={setProject}
           onStart={() => setShowConfirm(true)}
           busy={isAnalyzing}
         />

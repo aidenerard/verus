@@ -35,7 +35,12 @@ export default function GPRResults({ result }: Props) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      <ResultsHeader name={result.analysis_name} notes={result.analysis_notes} />
+      <ResultsHeader
+        name={result.analysis_name}
+        notes={result.analysis_notes}
+        company={result.company}
+        project={result.project}
+      />
       <ResultsTabs tab={tab} setTab={setTab} />
       {tab === 'overview'
         ? <OverviewTab result={result} />
@@ -44,11 +49,21 @@ export default function GPRResults({ result }: Props) {
   );
 }
 
-function ResultsHeader({ name, notes }: { name?: string; notes?: string }) {
+function ResultsHeader({ name, notes, company, project }: {
+  name?: string; notes?: string; company?: string; project?: string;
+}) {
   const title = (name ?? '').trim() || 'Untitled Analysis';
   const trimmedNotes = (notes ?? '').trim();
+  const companyTrimmed = (company ?? '').trim();
+  const projectTrimmed = (project ?? '').trim();
   return (
     <div>
+      {(companyTrimmed || projectTrimmed) && (
+        <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+          {companyTrimmed && <HeaderChip>{companyTrimmed}</HeaderChip>}
+          {projectTrimmed && <HeaderChip>{projectTrimmed}</HeaderChip>}
+        </div>
+      )}
       <h2 style={{
         margin: 0, fontSize: 22, fontWeight: 800, color: TEXT,
         letterSpacing: '-0.01em', lineHeight: 1.25,
@@ -64,6 +79,18 @@ function ResultsHeader({ name, notes }: { name?: string; notes?: string }) {
         </p>
       )}
     </div>
+  );
+}
+
+function HeaderChip({ children }: { children: React.ReactNode }) {
+  return (
+    <span style={{
+      fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase',
+      color: ACCENT, background: ACCENT_SOFT,
+      padding: '4px 8px', borderRadius: 2,
+    }}>
+      {children}
+    </span>
   );
 }
 

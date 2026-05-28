@@ -17,6 +17,10 @@ interface Props {
   setAnalysisName:  (v: string) => void;
   analysisNotes:    string;
   setAnalysisNotes: (v: string) => void;
+  company:          string;
+  setCompany:       (v: string) => void;
+  project:          string;
+  setProject:       (v: string) => void;
   onStart:          () => void;
   busy:             boolean;
 }
@@ -24,6 +28,7 @@ interface Props {
 export default function GPRUploadCard({
   files, setFiles, manufacturer, setManufacturer, frequencyMhz, setFrequencyMhz,
   analysisName, setAnalysisName, analysisNotes, setAnalysisNotes,
+  company, setCompany, project, setProject,
   onStart, busy,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -102,6 +107,37 @@ export default function GPRUploadCard({
       )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 18 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <FieldLabel text="Company / Agency">
+            <input
+              type="text"
+              value={company}
+              onChange={e => setCompany(e.target.value)}
+              placeholder="e.g. Caltrans, Terracon, WISDOT"
+              maxLength={60}
+              style={{
+                width: '100%', padding: '8px 10px',
+                background: RAISED, border: `1px solid ${BORDER}`,
+                color: TEXT, fontSize: 12, fontFamily: 'inherit', outline: 'none',
+              }}
+            />
+          </FieldLabel>
+          <FieldLabel text="Project / Bridge">
+            <input
+              type="text"
+              value={project}
+              onChange={e => setProject(e.target.value)}
+              placeholder="e.g. Bridge B440029, I-80 Overcrossing"
+              maxLength={60}
+              style={{
+                width: '100%', padding: '8px 10px',
+                background: RAISED, border: `1px solid ${BORDER}`,
+                color: TEXT, fontSize: 12, fontFamily: 'inherit', outline: 'none',
+              }}
+            />
+          </FieldLabel>
+        </div>
+
         <FieldLabel text="Analysis Name">
           <input
             type="text"
@@ -193,7 +229,7 @@ export default function GPRUploadCard({
         open={confirmOpen}
         onCancel={() => setConfirmOpen(false)}
         onConfirm={() => { setConfirmOpen(false); onStart(); }}
-        rows={summaryRows(files.length, manufacturer, frequencyMhz, analysisName, analysisNotes)}
+        rows={summaryRows(files.length, manufacturer, frequencyMhz, analysisName, analysisNotes, company, project)}
       />
     </div>
   );
@@ -202,9 +238,12 @@ export default function GPRUploadCard({
 function summaryRows(
   fileCount: number, manufacturer: ManufacturerKey | '', frequencyMhz: number,
   analysisName: string, analysisNotes: string,
+  company: string, project: string,
 ) {
   const mfr = MANUFACTURERS.find(m => m.key === manufacturer);
   return [
+    { label: 'Company',       value: company.trim()       || '—' },
+    { label: 'Project',       value: project.trim()       || '—' },
     { label: 'Analysis Name', value: analysisName.trim()  || 'Untitled Analysis' },
     { label: 'Notes',         value: analysisNotes.trim() || '—' },
     { label: 'Files',         value: `${fileCount} file${fileCount !== 1 ? 's' : ''} selected` },
