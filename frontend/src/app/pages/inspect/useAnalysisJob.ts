@@ -72,7 +72,6 @@ interface UseAnalysisJobProps {
   extraFormData?: (fd: FormData) => void;
   analysisName?:  string;
   analysisNotes?: string;
-  uploadMode?: 'standard' | 'storage';
 }
 
 interface UseAnalysisJobReturn {
@@ -106,7 +105,6 @@ export function useAnalysisJob({
   extraFormData,
   analysisName,
   analysisNotes,
-  uploadMode = 'standard',
 }: UseAnalysisJobProps): UseAnalysisJobReturn {
   const [jobId,               setJobId]               = useState<string | null>(null);
   const [jobStatus,           setJobStatus]           = useState<'idle'|'pending'|'processing'|'complete'|'failed'>('idle');
@@ -152,71 +150,37 @@ export function useAnalysisJob({
       }
       if (!serverReady) { setErrorMsg('Server did not respond in time.'); setJobStatus('failed'); return; }
 
-      const hasProceqFiles = (files ?? []).some(f => f.file.name.toLowerCase().endsWith('.scan'));
-      const useStorage = uploadMode === 'storage' && hasProceqFiles;
+      const hasProceqFiles = (files ?? []).some(f => {
+        const n = f.file.name.toLowerCase();
+        return n.endsWith('.scan') || n.endsWith('.zip');
+      });
+      const endpoint = hasProceqFiles ? '/analyze-proceq' : '/analyze';
 
-      let job_id: string;
-      if (useStorage) {
-        const userId = session?.user?.id;
-        if (!userId) { setErrorMsg('You must be signed in to use Large Dataset Upload.'); setJobStatus('failed'); return; }
+      setStatusMsg('Uploading files…');
 
-        const folder = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-        const storagePath = `${userId}/${folder}`;
-        setStatusMsg(`Uploading 0/${files.length} files to storage…`);
-
-        for (let i = 0; i < files.length; i++) {
-          const f = files[i].file;
-          const { error: upErr } = await supabase.storage
-            .from('uploads')
-            .upload(`${storagePath}/${f.name}`, f, { upsert: true });
-          if (upErr) { setErrorMsg(`Upload failed (${f.name}): ${upErr.message}`); setJobStatus('failed'); return; }
-          setStatusMsg(`Uploading ${i + 1}/${files.length} files to storage…`);
-        }
-
-        setStatusMsg('Queuing analysis…');
-        const fd = new FormData();
-        fd.append('storage_path',   storagePath);
-        fd.append('epsr',           '9.0');
-        fd.append('analysis_name',  (analysisName  ?? '').trim() || 'Untitled Analysis');
-        fd.append('analysis_notes', (analysisNotes ?? '').trim());
-
-        const res = await fetch(`${SERVER}/analyze-proceq-storage`, {
-          method: 'POST', headers, body: fd, signal: AbortSignal.timeout(60000),
-        });
-        if (!res.ok) {
-          let msg = `HTTP ${res.status}`;
-          try { const j = await res.json(); msg = j.detail || j.error || msg; } catch (_e) {}
-          setErrorMsg(msg); setJobStatus('failed'); return;
-        }
-        ({ job_id } = await res.json());
+      const formData = new FormData();
+      files.forEach(f => formData.append('files', f.file));
+      formData.append('analysis_name',  (analysisName  ?? '').trim() || 'Untitled Analysis');
+      formData.append('analysis_notes', (analysisNotes ?? '').trim());
+      if (hasProceqFiles) {
+        formData.append('epsr', '9.0');
       } else {
-        setStatusMsg('Uploading files…');
-        const endpoint = hasProceqFiles ? '/analyze-proceq' : '/analyze';
-
-        const formData = new FormData();
-        files.forEach(f => formData.append('files', f.file));
-        formData.append('analysis_name',  (analysisName  ?? '').trim() || 'Untitled Analysis');
-        formData.append('analysis_notes', (analysisNotes ?? '').trim());
-        if (hasProceqFiles) {
-          formData.append('epsr', '9.0');
-        } else {
-          if (manufacturer) formData.append('manufacturer', manufacturer);
-          const effectiveFreq = useCustomFreq ? (parseInt(customFreq) || 1600) : frequencyMhz;
-          formData.append('frequency_mhz', String(effectiveFreq));
-          if (projectId) formData.append('project_id', projectId);
-          if (extraFormData) extraFormData(formData);
-        }
-
-        const res = await fetch(`${SERVER}${endpoint}`, {
-          method: 'POST', headers, body: formData, signal: AbortSignal.timeout(60000),
-        });
-        if (!res.ok) {
-          let msg = `HTTP ${res.status}`;
-          try { const j = await res.json(); msg = j.detail || j.error || msg; } catch (_e) {}
-          setErrorMsg(msg); setJobStatus('failed'); return;
-        }
-        ({ job_id } = await res.json());
+        if (manufacturer) formData.append('manufacturer', manufacturer);
+        const effectiveFreq = useCustomFreq ? (parseInt(customFreq) || 1600) : frequencyMhz;
+        formData.append('frequency_mhz', String(effectiveFreq));
+        if (projectId) formData.append('project_id', projectId);
+        if (extraFormData) extraFormData(formData);
       }
+
+      const res = await fetch(`${SERVER}${endpoint}`, {
+        method: 'POST', headers, body: formData, signal: AbortSignal.timeout(60000),
+      });
+      if (!res.ok) {
+        let msg = `HTTP ${res.status}`;
+        try { const j = await res.json(); msg = j.detail || j.error || msg; } catch (_e) {}
+        setErrorMsg(msg); setJobStatus('failed'); return;
+      }
+      const { job_id } = await res.json();
 
       setJobId(job_id);
       setJobStatus('processing');
@@ -261,7 +225,7 @@ export function useAnalysisJob({
       setErrorMsg(err instanceof Error ? err.message : 'Analysis failed');
       setJobStatus('failed');
     }
-  }, [files, session, jobStatus, manufacturer, frequencyMhz, useCustomFreq, customFreq, projectId, onComplete, extraFormData, analysisName, analysisNotes, uploadMode]);
+  }, [files, session, jobStatus, manufacturer, frequencyMhz, useCustomFreq, customFreq, projectId, onComplete, extraFormData, analysisName, analysisNotes]);
 
   // Cleanup on unmount
   useEffect(() => () => {
