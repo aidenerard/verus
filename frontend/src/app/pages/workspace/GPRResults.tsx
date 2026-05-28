@@ -36,10 +36,34 @@ export default function GPRResults({ result, projectId }: Props) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <ResultsHeader name={result.analysis_name} notes={result.analysis_notes} />
       <ResultsTabs tab={tab} setTab={setTab} interactiveDisabled={!projectId} />
       {tab === 'overview'
         ? <OverviewTab result={result} />
         : <InteractiveTabBody projectId={projectId} />}
+    </div>
+  );
+}
+
+function ResultsHeader({ name, notes }: { name?: string; notes?: string }) {
+  const title = (name ?? '').trim() || 'Untitled Analysis';
+  const trimmedNotes = (notes ?? '').trim();
+  return (
+    <div>
+      <h2 style={{
+        margin: 0, fontSize: 22, fontWeight: 800, color: TEXT,
+        letterSpacing: '-0.01em', lineHeight: 1.25,
+      }}>
+        {title}
+      </h2>
+      {trimmedNotes && (
+        <p style={{
+          margin: '6px 0 0', fontSize: 13, color: TEXT2,
+          lineHeight: 1.55, whiteSpace: 'pre-wrap',
+        }}>
+          {trimmedNotes}
+        </p>
+      )}
     </div>
   );
 }

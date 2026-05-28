@@ -61,6 +61,9 @@ export interface AnalysisResult {
   mean_depth_inches?:       number;
   deck_thickness_inches?:   number;
   high_risk_pct?:           number;
+  // User-supplied metadata, mirrored from the analysis_jobs row
+  analysis_name?:           string;
+  analysis_notes?:          string;
 }
 
 export interface UploadedFile { file: File; name: string }
