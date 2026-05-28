@@ -28,6 +28,8 @@ def group_files_by_swath(data_dir: str) -> dict:
     Returns: {swath_idx: {odd_scans, even_scans, pos_file, cscan_file}}
     """
     data_path = Path(data_dir)
+    print(f"[GROUP] scanning directory: {data_dir}", flush=True)
+    print(f"[GROUP] all files found: {[f.name for f in data_path.iterdir()]}", flush=True)
     swaths: dict[int, dict] = {}
 
     prc_paths = sorted(data_path.rglob("PRC_*.scan"))
