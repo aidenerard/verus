@@ -52,6 +52,19 @@ def _init_supabase() -> None:
         )
 
 
+def _company_from_profile(user_id: Optional[str]) -> str:
+    """Read profiles.company for this user. Empty string on any failure or
+    when Supabase isn't configured. Used as a fallback when the upload form
+    didn't carry an explicit company."""
+    if not _supabase or not user_id:
+        return ""
+    try:
+        row = _supabase.table("profiles").select("company").eq("id", user_id).single().execute()
+        return (row.data or {}).get("company") or ""
+    except Exception:
+        return ""
+
+
 # ── Configuration ─────────────────────────────────────────────────────────────
 
 _HERE = Path(__file__).parent
@@ -227,7 +240,7 @@ async def analyze(
     """Accept uploads, queue a background job, return {job_id} immediately."""
     name_clean    = (analysis_name or "").strip() or "Untitled Analysis"
     notes_clean   = (analysis_notes or "").strip()
-    company_clean = (company or "").strip()
+    company_clean = (company or "").strip() or _company_from_profile(user_id)
     project_clean = (project or "").strip()
     print(f"[analyze] {len(files)} file(s), manufacturer={manufacturer!r}, "
           f"freq={frequency_mhz} MHz, user_id={user_id}, name={name_clean!r}, "
@@ -374,7 +387,7 @@ async def analyze_proceq(
     """Accept Proceq .scan/.pos/.CScan uploads, queue background job, return {job_id}."""
     name_clean    = (analysis_name or "").strip() or "Untitled Analysis"
     notes_clean   = (analysis_notes or "").strip()
-    company_clean = (company or "").strip()
+    company_clean = (company or "").strip() or _company_from_profile(user_id)
     project_clean = (project or "").strip()
     if not files:
         raise HTTPException(status_code=400, detail="No files uploaded.")
