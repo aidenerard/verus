@@ -22,7 +22,7 @@ from fastapi.responses import JSONResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from auth import verify_token
-from jobs import _jobs, _executor, run_analysis_job, run_proceq_job, run_proceq_storage_job
+from jobs import _jobs, _executor, run_analysis_job, run_proceq_job
 from run import CNN1D, RebarDepthCNN, DEVICE  # noqa: F401 — re-exported for type hints
 from ingest import SUPPORTED_EXTENSIONS, COMPANION_EXTENSIONS, FORMAT_INFO
 from model_loader import load_models_background
@@ -377,9 +377,18 @@ async def analyze_proceq(
         file_data.append((fname, content))
         del content
 
+    is_zip = len(file_data) == 1 and file_data[0][0].lower().endswith(".zip")
+    initial_stage = "Extracting zip" if is_zip else "Queued"
+
     job_id = str(uuid.uuid4())
     tmpdir = Path(tempfile.mkdtemp(prefix=f"verus_proceq_{job_id}_"))
-    _jobs[job_id] = {"status": "pending", "user_id": user_id, "created_at": time.time()}
+    _jobs[job_id] = {
+        "status":     "pending",
+        "progress":   0,
+        "stage":      initial_stage,
+        "user_id":    user_id,
+        "created_at": time.time(),
+    }
 
     # Insert DB row at submission so polling never 404s before the worker writes.
     # Mirrors the /analyze pattern. Best-effort — DB unavailable still lets the
@@ -390,6 +399,8 @@ async def analyze_proceq(
                 "id":             job_id,
                 "user_id":        user_id,
                 "status":         "pending",
+                "progress":       0,
+                "stage":          initial_stage,
                 "analysis_name":  name_clean,
                 "analysis_notes": notes_clean,
             }).execute()
@@ -397,63 +408,13 @@ async def analyze_proceq(
             print(f"[analyze-proceq] DB insert failed: {exc}", flush=True)
 
     _executor.submit(run_proceq_job, job_id, file_data, tmpdir, epsr, user_id, _supabase)
-    print(f"[analyze-proceq] Queued job {job_id} ({len(file_data)} files)", flush=True)
+    print(f"[analyze-proceq] Queued job {job_id} ({len(file_data)} files, zip={is_zip})", flush=True)
 
     return JSONResponse({"job_id": job_id, "status": "pending"})
 
 
 @app.options("/analyze-proceq")
 async def options_analyze_proceq():
-    return {}
-
-
-@app.post("/analyze-proceq-storage")
-async def analyze_proceq_from_storage(
-    storage_path:    str = Form(...),
-    epsr:            float = Form(9.0),
-    analysis_name:   str = Form("Untitled Analysis"),
-    analysis_notes:  str = Form(""),
-    user_id: Optional[str] = Depends(verify_token),
-) -> JSONResponse:
-    """
-    Analyze a Proceq dataset already uploaded to Supabase storage (bucket
-    'uploads', folder = storage_path). Bypasses the multipart upload size
-    limit that gates POST /analyze-proceq.
-    """
-    job_id = str(uuid.uuid4())
-    print(f"[analyze-proceq-storage] queued job {job_id} (path={storage_path!r}, user={user_id})", flush=True)
-
-    if _supabase:
-        try:
-            _supabase.table("analysis_jobs").insert({
-                "id":             job_id,
-                "user_id":        user_id,
-                "status":         "pending",
-                "progress":       0,
-                "stage":          "Queued",
-                "analysis_name":  (analysis_name or "").strip() or "Untitled Analysis",
-                "analysis_notes": (analysis_notes or "").strip(),
-            }).execute()
-        except Exception as exc:
-            print(f"[analyze-proceq-storage] DB insert failed: {exc}", flush=True)
-
-    _jobs[job_id] = {
-        "status":     "pending",
-        "progress":   0,
-        "stage":      "Queued",
-        "user_id":    user_id,
-        "created_at": time.time(),
-    }
-
-    _executor.submit(
-        run_proceq_storage_job,
-        job_id, storage_path, epsr, user_id, _supabase,
-    )
-    return JSONResponse({"job_id": job_id, "status": "pending"})
-
-
-@app.options("/analyze-proceq-storage")
-async def options_analyze_proceq_storage():
     return {}
 
 
