@@ -161,7 +161,7 @@ function OverviewTab({ result }: { result: AnalysisResult }) {
 function InteractiveTabBody({ result }: { result: AnalysisResult }) {
   return (
     <div style={{ padding: 16, background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 8 }}>
-      <BScanViewer bscanImages={result.bscan_images ?? []} />
+      <BScanViewer bscanData={result.bscan_data ?? []} />
     </div>
   );
 }

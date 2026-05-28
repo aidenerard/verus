@@ -58,7 +58,12 @@ export interface AnalysisResult {
   horizon_picks?:           string;
   rebar_depth_map?:         string;
   corrosion_map?:           string;
-  bscan_images?:            string[];   // per-swath B-scan PNGs (base64)
+  bscan_data?:              Array<{      // per-swath raw trace blobs for canvas viewer
+    data:      string;                    // base64 + zlib + int8
+    n_traces:  number;
+    n_samples: number;
+    encoding:  string;
+  }>;
   bscan_count?:             number;
   mean_depth_inches?:       number;
   deck_thickness_inches?:   number;
