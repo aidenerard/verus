@@ -168,8 +168,15 @@ export function useAnalysisJob({
         // a readable storage key.
         const slug = (s: string) =>
           (s || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30);
+        // First segment MUST be the user UUID — the 'uploads' bucket's
+        // INSERT policy gates on auth.uid()::text = (storage.foldername(name))[1].
+        const userId = session?.user?.id;
+        if (!userId) {
+          setErrorMsg('You must be signed in to upload.');
+          setJobStatus('failed'); return;
+        }
         const storagePath =
-          `${slug(company ?? '')}/${slug(project ?? '')}/${slug(analysisName ?? '')}-${Date.now()}.zip`;
+          `${userId}/${slug(company ?? '')}/${slug(project ?? '')}/${slug(analysisName ?? '')}-${Date.now()}.zip`;
 
         const zipMb = zipFile.file.size / 1024 / 1024;
         setStatusMsg(`Uploading zip (${zipMb.toFixed(0)} MB) to storage…`);
