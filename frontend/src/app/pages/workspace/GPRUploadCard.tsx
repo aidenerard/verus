@@ -17,6 +17,8 @@ interface Props {
   setAnalysisName:  (v: string) => void;
   analysisNotes:    string;
   setAnalysisNotes: (v: string) => void;
+  uploadMode:       'standard' | 'storage';
+  setUploadMode:    (m: 'standard' | 'storage') => void;
   onStart:          () => void;
   busy:             boolean;
 }
@@ -24,6 +26,7 @@ interface Props {
 export default function GPRUploadCard({
   files, setFiles, manufacturer, setManufacturer, frequencyMhz, setFrequencyMhz,
   analysisName, setAnalysisName, analysisNotes, setAnalysisNotes,
+  uploadMode, setUploadMode,
   onStart, busy,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -56,6 +59,26 @@ export default function GPRUploadCard({
       <div style={{ fontSize: 14, fontWeight: 700, color: TEXT, marginBottom: 4 }}>Upload GPR Scan Files</div>
       <div style={{ fontSize: 12, color: TEXT2, marginBottom: 18 }}>
         Upload all files from your Proceq dataset folder — PRC scan files, .pos GPS files, and .CScan amplitude files. The system groups them into swaths automatically. (Also accepts GSSI .dzt, S&S .dt1, MALA .rd3/.rd7, SEG-Y, and .csv.)
+      </div>
+
+      <div style={{ marginBottom: 18 }}>
+        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: TEXT3, marginBottom: 6 }}>
+          Upload Method
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0, border: `1px solid ${BORDER}` }}>
+          <UploadModeButton
+            label="Standard"
+            sub="≤ 100 MB · sent through server"
+            active={uploadMode === 'standard'}
+            onClick={() => setUploadMode('standard')}
+          />
+          <UploadModeButton
+            label="Large Dataset"
+            sub="up to ~5 GB · direct to storage"
+            active={uploadMode === 'storage'}
+            onClick={() => setUploadMode('storage')}
+          />
+        </div>
       </div>
 
       <div
@@ -221,6 +244,28 @@ function FieldLabel({ text, optional, children }: { text: string; optional?: boo
       </div>
       {children}
     </label>
+  );
+}
+
+function UploadModeButton({
+  label, sub, active, onClick,
+}: { label: string; sub: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        background: active ? ACCENT : RAISED,
+        color: active ? '#fff' : TEXT,
+        border: 'none', cursor: 'pointer',
+        padding: '10px 12px', textAlign: 'left',
+        fontFamily: 'inherit',
+        display: 'flex', flexDirection: 'column', gap: 2,
+      }}
+    >
+      <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.04em' }}>{label}</span>
+      <span style={{ fontSize: 10, fontWeight: 500, opacity: active ? 0.85 : 0.7 }}>{sub}</span>
+    </button>
   );
 }
 
