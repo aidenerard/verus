@@ -1,6 +1,7 @@
 import { useState, FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router';
 import VerusLogo from '../components/VerusLogo';
+import Footer from '../components/Footer';
 import { useAuth } from '../../context/AuthContext';
 
 export default function LoginPage() {
@@ -36,10 +37,13 @@ export default function LoginPage() {
     <div style={{
       minHeight: '100vh', background: '#F5F3EF',
       display: 'flex', flexDirection: 'column',
-      alignItems: 'center', justifyContent: 'center',
-      padding: '40px 24px',
       fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, sans-serif',
     }}>
+      <div style={{
+        flex: 1, display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center',
+        padding: '40px 24px',
+      }}>
       {/* Logo */}
       <Link to="/" style={{ textDecoration: 'none', marginBottom: 40 }}>
         <VerusLogo size={40} wordmarkColor="#0A0A0A" />
@@ -155,10 +159,8 @@ export default function LoginPage() {
           </p>
         </form>
       </div>
-
-      <p style={{ marginTop: 32, fontSize: 11, color: '#B0A9A4', textAlign: 'center' }}>
-        © {new Date().getFullYear()} Verus · ASTM D6087 Compliant
-      </p>
+      </div>
+      <Footer />
     </div>
   );
 }
