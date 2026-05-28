@@ -1,0 +1,12 @@
+#title: sound epsr=7.27 freq=2000MHz
+#domain: 0.60 0.50 0.002
+#dx_dy_dz: 0.002 0.002 0.002
+#time_window: 15e-9
+
+#material: 7.2696 0.0118 1 0 concrete
+
+#waveform: ricker 1 2000000000 src_wave
+#hertzian_dipole: z 0.300 0.450 0 src_wave
+#rx: 0.340 0.450 0
+
+#box: 0 0 0 0.60 0.50 0.002 concrete

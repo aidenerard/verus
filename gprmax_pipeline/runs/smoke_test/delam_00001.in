@@ -1,0 +1,14 @@
+#title: delaminated gap_depth=110.3mm thick=3.6mm fill=water
+#domain: 0.60 0.50 0.002
+#dx_dy_dz: 0.002 0.002 0.002
+#time_window: 8e-9
+
+#material: 4.8372 0.0060 1 0 concrete
+#material: 81.0000 0.0100 1 0 gap_fill
+
+#waveform: ricker 1 2000000000 src_wave
+#hertzian_dipole: z 0.300 0.450 0 src_wave
+#rx: 0.340 0.450 0
+
+#box: 0 0 0 0.60 0.50 0.002 concrete
+#box: 0 0.3860 0 0.60 0.3900 0.002 gap_fill

@@ -1,0 +1,13 @@
+﻿#title: rebar_depth depth={depth_mm}mm diam={diameter_mm}mm epsr={epsr} freq={freq_mhz}MHz
+#domain: 0.60 0.50 0.002
+#dx_dy_dz: 0.002 0.002 0.002
+#time_window: 8e-9
+
+#material: {epsr} {sigma} 1 0 concrete
+
+#waveform: ricker 1 {freq_hz} src_wave
+#hertzian_dipole: z {src_x} 0.450 0 src_wave
+#rx: {rx_x} 0.450 0
+
+#box: 0 0 0 0.60 0.40 0.002 concrete
+#cylinder: 0.300 {depth_m} 0 0.300 {depth_m} 0.002 {radius_m} pec
