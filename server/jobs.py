@@ -9,9 +9,15 @@ Does NOT: contain inference logic (see pipeline.py) or model loading (see model_
 import base64 as _b64
 import shutil
 import time
+import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional
+
+# Extensions extracted from an uploaded zip. Anything else (notably macOS
+# metadata under __MACOSX/ and ._* AppleDouble files) is skipped to keep
+# tmpdir clean and avoid confusing the swath grouper.
+_ZIP_ALLOWED_EXTS = {".scan", ".pos", ".cscan", ".dzt", ".dt1"}
 
 from pipeline import process_files, build_result_payload
 from picks_writer import persist_picks_for_job, estimate_along_track_ft_per_col
@@ -254,6 +260,24 @@ def run_analysis_job(
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
+def _extract_zip_into(tmpdir: Path, zip_path: Path) -> int:
+    """Extract allowed GPR files out of a zip into tmpdir (flat). Skips
+    __MACOSX, ._* AppleDouble entries, and .DS_Store. Returns extracted count."""
+    extracted = 0
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        for member in zf.namelist():
+            basename = Path(member).name
+            if not basename or basename.startswith("._") or basename == ".DS_Store":
+                continue
+            if Path(basename).suffix.lower() not in _ZIP_ALLOWED_EXTS:
+                continue
+            target = tmpdir / basename
+            with zf.open(member) as src, open(target, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+            extracted += 1
+    return extracted
+
+
 def run_proceq_job(
     job_id: str,
     file_data: Optional[list[tuple[str, bytes]]],
@@ -262,8 +286,7 @@ def run_proceq_job(
     user_id: Optional[str] = None,
     supabase_client = None,
 ) -> None:
-    """When file_data is None the files are assumed to already exist in tmpdir
-    (e.g. pre-staged by run_proceq_storage_job)."""
+    """When file_data is None the files are assumed to already exist in tmpdir."""
     import base64
     from analysis import process_proceq_dataset
     from models import get_ensemble
@@ -281,6 +304,18 @@ def run_proceq_job(
                 dest = tmpdir / fname
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_bytes(content)
+
+        # If a zip was uploaded, extract its allowed entries into tmpdir
+        # and remove the archive to reclaim disk.
+        zip_files = list(tmpdir.glob("*.zip"))
+        if zip_files:
+            zip_path = zip_files[0]
+            print(f"[job:{job_id}] extracting zip: {zip_path.name}", flush=True)
+            _update_job(job_id, {"stage": "Extracting zip", "progress": 8}, supabase_client)
+            n_extracted = _extract_zip_into(tmpdir, zip_path)
+            zip_path.unlink()
+            print(f"[job:{job_id}] extracted {n_extracted} files from zip", flush=True)
+            _update_job(job_id, {"stage": "Processing", "progress": 10}, supabase_client)
 
         # Inner try so a pipeline error (e.g. no GPS-valid traces -> griddata
         # 'Number of rows must be positive') still lets the job complete with
@@ -370,71 +405,4 @@ def run_proceq_job(
         _jobs[job_id]["completed_at"] = time.time()  # in-memory: python float
 
     finally:
-        shutil.rmtree(tmpdir, ignore_errors=True)
-
-
-def run_proceq_storage_job(
-    job_id: str,
-    storage_path: str,
-    epsr: float,
-    user_id: Optional[str],
-    supabase_client,
-) -> None:
-    """
-    Download a Proceq dataset from Supabase storage (bucket 'uploads',
-    folder = storage_path) into a tmpdir, then hand off to run_proceq_job
-    with file_data=None (files pre-staged).
-    """
-    import tempfile
-    import os as _os
-
-    _update_job(job_id, {
-        "status":   "processing",
-        "progress": 5,
-        "stage":    "Downloading from storage",
-    }, supabase_client)
-
-    if not supabase_client:
-        _update_job(job_id, {
-            "status":       "failed",
-            "error":        "Supabase not configured",
-            "completed_at": "now()",
-        }, supabase_client)
-        return
-
-    tmpdir = Path(tempfile.mkdtemp(prefix="verus_proceq_storage_"))
-    try:
-        # supabase-py: list returns [{name, id, ...}]; download returns bytes
-        bucket = supabase_client.storage.from_("uploads")
-        files = bucket.list(storage_path) or []
-        total = len(files)
-        if total == 0:
-            raise RuntimeError(f"No files in storage path: {storage_path}")
-        print(f"[STORAGE] {total} files in {storage_path}", flush=True)
-
-        for i, f in enumerate(files):
-            fname = f.get("name")
-            if not fname:
-                continue
-            data = bucket.download(f"{storage_path}/{fname}")
-            (tmpdir / fname).write_bytes(data)
-            progress = 5 + int((i + 1) / total * 20)
-            _update_job(job_id, {
-                "progress": progress,
-                "stage":    f"Downloaded {i + 1}/{total} files",
-            }, supabase_client)
-
-        run_proceq_job(
-            job_id=job_id, file_data=None, tmpdir=tmpdir, epsr=epsr,
-            user_id=user_id, supabase_client=supabase_client,
-        )
-
-    except Exception as exc:
-        print(f"[STORAGE JOB] {job_id}: {exc}", flush=True)
-        _update_job(job_id, {
-            "status":       "failed",
-            "error":        str(exc),
-            "completed_at": "now()",
-        }, supabase_client)
-        # run_proceq_job's finally cleans tmpdir on success path; ensure cleanup on error too
         shutil.rmtree(tmpdir, ignore_errors=True)
