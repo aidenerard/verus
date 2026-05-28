@@ -6,7 +6,7 @@ import TickerStripe from './home/TickerStripe';
 import HowItWorks   from './home/HowItWorks';
 import MethodSlider from './home/MethodSlider';
 import OurPlatform  from './home/OurPlatform';
-import Footer       from './home/Footer';
+import Footer       from '../components/Footer';
 
 export default function HomePage() {
   return (
