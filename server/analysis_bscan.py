@@ -95,6 +95,40 @@ def build_bscan_image(
     return output_path
 
 
+def encode_traces_for_frontend(traces, max_traces: int = 500, max_samples: int = 256) -> dict:
+    """
+    Downsample + int8-quantize + zlib-compress + base64-encode a B-scan trace
+    array so the frontend canvas can render it cheaply.
+
+    Encoding: zlib+base64+int8. Decode order (browser side):
+      base64 → zlib decompress → Int8Array shape (n_traces, n_samples).
+    """
+    import base64
+    import zlib
+
+    n_traces, n_samples = traces.shape
+    if n_traces > max_traces:
+        idx = np.linspace(0, n_traces - 1, max_traces, dtype=int)
+        traces = traces[idx]
+    if n_samples > max_samples:
+        idx = np.linspace(0, n_samples - 1, max_samples, dtype=int)
+        traces = traces[:, idx]
+
+    t_min, t_max = float(traces.min()), float(traces.max())
+    if t_max > t_min:
+        normalized = ((traces - t_min) / (t_max - t_min) * 254 - 127).astype(np.int8)
+    else:
+        normalized = np.zeros_like(traces, dtype=np.int8)
+
+    compressed = zlib.compress(normalized.tobytes(), level=6)
+    return {
+        "data":      base64.b64encode(compressed).decode("ascii"),
+        "n_traces":  int(normalized.shape[0]),
+        "n_samples": int(normalized.shape[1]),
+        "encoding":  "zlib+base64+int8",
+    }
+
+
 def render_swath_bscan(traces, depth_result, output_dir: str,
                       swath_idx: int, epsr: float) -> str | None:
     """One-line helper for the swath loop. Best-effort — returns None on failure."""
