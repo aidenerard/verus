@@ -14,7 +14,7 @@ import { useProcessingOptions } from './ProcessingOptionsContext';
 import { ACCENT, BORDER, PANEL, TEXT, TEXT2, TEXT3, ACCENT_SOFT } from './tokens';
 
 export default function GPRWorkspace() {
-  const { session } = useAuth();
+  const { session, user } = useAuth();
   const [searchParams] = useSearchParams();
   const viewJobId = searchParams.get('project_id');
   const { toFormData } = useProcessingOptions();
@@ -52,6 +52,28 @@ export default function GPRWorkspace() {
     analysisName, analysisNotes,
     company, project,
   });
+
+  // Pre-fill Company from the user's profile so analysts never re-type it.
+  // Only runs when the field is still empty, so user-typed values are never
+  // clobbered by an in-flight profile fetch.
+  useEffect(() => {
+    const uid = user?.id;
+    if (!uid) return;
+    let cancelled = false;
+    (async () => {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('company')
+        .eq('id', uid)
+        .single();
+      if (cancelled) return;
+      const fromProfile = (profile?.company as string | undefined)?.trim();
+      const fromMetadata = (user.user_metadata?.company as string | undefined)?.trim();
+      const next = fromProfile || fromMetadata || '';
+      if (next) setCompany(prev => prev || next);
+    })();
+    return () => { cancelled = true; };
+  }, [user?.id, user?.user_metadata?.company]);
 
   useEffect(() => {
     if (!viewJobId) return;

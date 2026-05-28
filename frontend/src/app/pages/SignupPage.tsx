@@ -19,11 +19,12 @@ export default function SignupPage() {
     setError('');
 
     if (!name.trim())         { setError('Please enter your name.'); return; }
+    if (!company.trim())      { setError('Company or agency name is required.'); return; }
     if (!email.includes('@')) { setError('Please enter a valid email address.'); return; }
     if (password.length < 6)  { setError('Password must be at least 6 characters.'); return; }
     if (!agreed)              { setError('Please agree to the Terms of Service.'); return; }
 
-    const { error: authError } = await signup(email, password, name.trim(), company.trim() || undefined);
+    const { error: authError } = await signup(email, password, name.trim(), company.trim());
     if (authError) {
       setError(authError);
       return;
@@ -95,13 +96,17 @@ export default function SignupPage() {
               />
             </div>
             <div>
-              <label style={labelStyle}>Company <span style={{ color: '#B0A9A4', fontWeight: 400 }}>(optional)</span></label>
+              <label style={labelStyle}>
+                Company / Agency <span style={{ color: '#E8601C' }}>*</span>
+              </label>
               <input
                 type="text"
                 value={company}
                 onChange={e => setCompany(e.target.value)}
-                placeholder="ACME Engineering"
+                placeholder="Caltrans, Terracon, WISDOT"
                 autoComplete="organization"
+                required
+                maxLength={60}
                 style={inputStyle}
               />
             </div>
