@@ -154,39 +154,83 @@ export function useAnalysisJob({
       }
       if (!serverReady) { setErrorMsg('Server did not respond in time.'); setJobStatus('failed'); return; }
 
+      const zipFile = (files ?? []).find(f => f.file.name.toLowerCase().endsWith('.zip'));
       const hasProceqFiles = (files ?? []).some(f => {
         const n = f.file.name.toLowerCase();
         return n.endsWith('.scan') || n.endsWith('.zip');
       });
-      const endpoint = hasProceqFiles ? '/analyze-proceq' : '/analyze';
 
-      setStatusMsg('Uploading files…');
+      let job_id: string;
+      if (zipFile) {
+        // Direct-to-storage path: bypass Render's request body limit by
+        // PUTting the zip straight to the 'uploads' bucket, then handing
+        // the backend the storage path. Slug company/project/analysis for
+        // a readable storage key.
+        const slug = (s: string) =>
+          (s || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30);
+        const storagePath =
+          `${slug(company ?? '')}/${slug(project ?? '')}/${slug(analysisName ?? '')}-${Date.now()}.zip`;
 
-      const formData = new FormData();
-      files.forEach(f => formData.append('files', f.file));
-      formData.append('analysis_name',  (analysisName  ?? '').trim() || 'Untitled Analysis');
-      formData.append('analysis_notes', (analysisNotes ?? '').trim());
-      formData.append('company',        (company       ?? '').trim());
-      formData.append('project',        (project       ?? '').trim());
-      if (hasProceqFiles) {
-        formData.append('epsr', '9.0');
+        const zipMb = zipFile.file.size / 1024 / 1024;
+        setStatusMsg(`Uploading zip (${zipMb.toFixed(0)} MB) to storage…`);
+        const { error: uploadError } = await supabase.storage
+          .from('uploads')
+          .upload(storagePath, zipFile.file, { upsert: true, contentType: 'application/zip' });
+        if (uploadError) {
+          setErrorMsg(`Zip upload failed: ${uploadError.message}`);
+          setJobStatus('failed'); return;
+        }
+
+        setStatusMsg('Queuing analysis…');
+        const fd = new FormData();
+        fd.append('storage_path',   storagePath);
+        fd.append('epsr',           '9.0');
+        fd.append('analysis_name',  (analysisName  ?? '').trim() || 'Untitled Analysis');
+        fd.append('analysis_notes', (analysisNotes ?? '').trim());
+        fd.append('company',        (company       ?? '').trim());
+        fd.append('project',        (project       ?? '').trim());
+
+        const res = await fetch(`${SERVER}/analyze-proceq-zip`, {
+          method: 'POST', headers, body: fd, signal: AbortSignal.timeout(60000),
+        });
+        if (!res.ok) {
+          let msg = `HTTP ${res.status}`;
+          try { const j = await res.json(); msg = j.detail || j.error || msg; } catch (_e) {}
+          setErrorMsg(msg); setJobStatus('failed'); return;
+        }
+        ({ job_id } = await res.json());
       } else {
-        if (manufacturer) formData.append('manufacturer', manufacturer);
-        const effectiveFreq = useCustomFreq ? (parseInt(customFreq) || 1600) : frequencyMhz;
-        formData.append('frequency_mhz', String(effectiveFreq));
-        if (projectId) formData.append('project_id', projectId);
-        if (extraFormData) extraFormData(formData);
-      }
+        // Standard path: multipart through Render. Used for individual
+        // .scan/.pos/.cscan or non-Proceq formats (DZT/SEG-Y/etc.).
+        const endpoint = hasProceqFiles ? '/analyze-proceq' : '/analyze';
+        setStatusMsg('Uploading files…');
 
-      const res = await fetch(`${SERVER}${endpoint}`, {
-        method: 'POST', headers, body: formData, signal: AbortSignal.timeout(60000),
-      });
-      if (!res.ok) {
-        let msg = `HTTP ${res.status}`;
-        try { const j = await res.json(); msg = j.detail || j.error || msg; } catch (_e) {}
-        setErrorMsg(msg); setJobStatus('failed'); return;
+        const formData = new FormData();
+        files.forEach(f => formData.append('files', f.file));
+        formData.append('analysis_name',  (analysisName  ?? '').trim() || 'Untitled Analysis');
+        formData.append('analysis_notes', (analysisNotes ?? '').trim());
+        formData.append('company',        (company       ?? '').trim());
+        formData.append('project',        (project       ?? '').trim());
+        if (hasProceqFiles) {
+          formData.append('epsr', '9.0');
+        } else {
+          if (manufacturer) formData.append('manufacturer', manufacturer);
+          const effectiveFreq = useCustomFreq ? (parseInt(customFreq) || 1600) : frequencyMhz;
+          formData.append('frequency_mhz', String(effectiveFreq));
+          if (projectId) formData.append('project_id', projectId);
+          if (extraFormData) extraFormData(formData);
+        }
+
+        const res = await fetch(`${SERVER}${endpoint}`, {
+          method: 'POST', headers, body: formData, signal: AbortSignal.timeout(60000),
+        });
+        if (!res.ok) {
+          let msg = `HTTP ${res.status}`;
+          try { const j = await res.json(); msg = j.detail || j.error || msg; } catch (_e) {}
+          setErrorMsg(msg); setJobStatus('failed'); return;
+        }
+        ({ job_id } = await res.json());
       }
-      const { job_id } = await res.json();
 
       setJobId(job_id);
       setJobStatus('processing');
