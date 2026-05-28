@@ -79,7 +79,7 @@ class RebarDepthCNN(nn.Module):
 class HorizonCNN(nn.Module):
     """
     Input:  (batch, 1, 512) — DC-removed, max-abs normalised raw waveform
-    Output: (batch,) normalised depth in [0, 1]; multiply × 300 / 25.4 for inches
+    Output: (batch,) normalised depth in [0, 1]; multiply × 120 / 25.4 for inches
     """
     def __init__(self):
         super().__init__()
