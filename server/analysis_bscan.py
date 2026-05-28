@@ -37,22 +37,27 @@ def build_bscan_image(
     max_depth_in = max_depth_m * 39.3701
     total_dist_m = n_traces * dx
 
-    # Contrast stretch via 2nd–98th percentile clip, then normalize to [-1, 1]
-    p2, p98 = np.percentile(traces, 2), np.percentile(traces, 98)
-    display = np.clip(traces, p2, p98)
-    max_abs = max(abs(p2), abs(p98))
-    if max_abs > 0:
-        display = display / max_abs
+    # Contrast stretch via 1st–99th percentile clip, then linearly remap to
+    # [-1, 1]. Tighter outlier clipping than 2/98 pulls more detail into the
+    # mid-grays without saturating reflectors.
+    p1, p99 = np.percentile(traces, 1), np.percentile(traces, 99)
+    display = np.clip(traces, p1, p99)
+    if p99 > p1:
+        display = (display - p1) / (p99 - p1) * 2 - 1
+    else:
+        display = np.zeros_like(traces)
 
     fig, ax = plt.subplots(figsize=(20, 6))
     fig.patch.set_facecolor("white")
 
-    # Transpose so traces are columns (distance on X, time on Y)
+    # Transpose so traces are columns (distance on X, time on Y). nearest
+    # interpolation gives a crisp, pixel-accurate B-scan instead of the soft
+    # bilinear blend matplotlib uses by default for non-uniform extents.
     ax.imshow(
         display.T,
         aspect="auto", cmap="gray", vmin=-1, vmax=1, origin="upper",
         extent=[0, total_dist_m, time_range_ns, 0],
-        interpolation="bilinear",
+        interpolation="nearest",
     )
 
     if picks_in is not None and len(picks_in) > 0:
