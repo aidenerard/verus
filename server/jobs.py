@@ -7,6 +7,7 @@ Does NOT: contain inference logic (see pipeline.py) or model loading (see model_
 """
 
 import base64 as _b64
+import re
 import shutil
 import time
 import zipfile
@@ -18,6 +19,14 @@ from typing import Optional
 # metadata under __MACOSX/ and ._* AppleDouble files) is skipped to keep
 # tmpdir clean and avoid confusing the swath grouper.
 _ZIP_ALLOWED_EXTS = {".scan", ".pos", ".cscan", ".dzt", ".dt1"}
+
+
+def _safe_segment(name: str, fallback: str = "unknown") -> str:
+    """Lowercase + slugify to [a-z0-9-], 40-char max. Used to build readable
+    Supabase Storage paths from company / project names."""
+    s = re.sub(r"[^a-z0-9]+", "-", (name or "").lower())
+    s = re.sub(r"^-+|-+$", "", s)
+    return (s or fallback)[:40]
 
 from pipeline import process_files, build_result_payload
 from picks_writer import persist_picks_for_job, estimate_along_track_ft_per_col
@@ -70,11 +79,12 @@ def _set_progress(job_id: str, progress: int, stage: str, sb) -> None:
             print(f"[job:{job_id}] progress {progress}% update failed: {exc}", flush=True)
 
 
-def _upload_png(sb, b64: str, uid: str, job_id: str, suffix: str) -> Optional[str]:
+def _upload_png(sb, b64: str, company: str, project: str, job_id: str, suffix: str) -> Optional[str]:
+    """Upload a base64 PNG into cscan-images at {company}/{project}/{job_id}{suffix}.png."""
     if not sb or not b64:
         return None
     try:
-        path = f"{uid}/{job_id}{suffix}.png"
+        path = f"{_safe_segment(company)}/{_safe_segment(project)}/{job_id}{suffix}.png"
         sb.storage.from_("cscan-images").upload(path, _b64.b64decode(b64), {"content-type": "image/png"})
         return sb.storage.from_("cscan-images").get_public_url(path)
     except Exception as exc:
@@ -98,6 +108,8 @@ def run_analysis_job(
     supabase_client,
     structure_name: str = "Bridge Deck",
     swath_spacing_ft: float = 1.0,
+    company: str = "",
+    project: str = "",
 ) -> None:
     """
     Runs in a ThreadPoolExecutor worker thread.
@@ -182,10 +194,9 @@ def run_analysis_job(
             print(f"[job:{job_id}] picks persistence failed: {exc}", flush=True)
 
         _set_progress(job_id, 95, "Finalizing", supabase_client)
-        uid             = user_id or "anonymous"
-        cscan_url       = _upload_png(supabase_client, cscan_b64,       uid, job_id, "")
-        rebar_cscan_url = _upload_png(supabase_client, rebar_cscan_b64, uid, job_id, "_rebar")
-        amplitude_url   = _upload_png(supabase_client, amp_b64,         uid, job_id, "_amplitude")
+        cscan_url       = _upload_png(supabase_client, cscan_b64,       company, project, job_id, "")
+        rebar_cscan_url = _upload_png(supabase_client, rebar_cscan_b64, company, project, job_id, "_rebar")
+        amplitude_url   = _upload_png(supabase_client, amp_b64,         company, project, job_id, "_amplitude")
 
         if supabase_client:
             try:
@@ -211,6 +222,8 @@ def run_analysis_job(
                     "depth_accuracy_in": result["depth_accuracy_in"],
                     "signal_quality": result["signal_quality"],
                     "project_id": project_id,
+                    "company": company.strip(),
+                    "project": project.strip(),
                     "processing_state": DEFAULT_PROCESSING_STATE,
                     "result": result,
                 }).execute()
@@ -285,6 +298,8 @@ def run_proceq_job(
     epsr: float,
     user_id: Optional[str] = None,
     supabase_client = None,
+    company: str = "",
+    project: str = "",
 ) -> None:
     """When file_data is None the files are assumed to already exist in tmpdir."""
     import base64
@@ -389,6 +404,8 @@ def run_proceq_job(
                     "progress":          100,
                     "stage":             "Complete",
                     "analysis_time_sec": elapsed,
+                    "company":           company.strip(),
+                    "project":           project.strip(),
                     "result":            proceq_result,
                 }).execute()
                 print(f"[job:{job_id}] Proceq DB row + result written", flush=True)

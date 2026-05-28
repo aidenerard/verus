@@ -220,13 +220,18 @@ async def analyze(
     project_id:     Optional[str]    = Form(None),
     analysis_name:  str              = Form("Untitled Analysis"),
     analysis_notes: str              = Form(""),
+    company:        str              = Form(""),
+    project:        str              = Form(""),
     user_id:        Optional[str]    = Depends(verify_token),
 ) -> JSONResponse:
     """Accept uploads, queue a background job, return {job_id} immediately."""
-    name_clean  = (analysis_name or "").strip() or "Untitled Analysis"
-    notes_clean = (analysis_notes or "").strip()
+    name_clean    = (analysis_name or "").strip() or "Untitled Analysis"
+    notes_clean   = (analysis_notes or "").strip()
+    company_clean = (company or "").strip()
+    project_clean = (project or "").strip()
     print(f"[analyze] {len(files)} file(s), manufacturer={manufacturer!r}, "
-          f"freq={frequency_mhz} MHz, user_id={user_id}, name={name_clean!r}", flush=True)
+          f"freq={frequency_mhz} MHz, user_id={user_id}, name={name_clean!r}, "
+          f"company={company_clean!r}, project={project_clean!r}", flush=True)
 
     if not files:
         raise HTTPException(status_code=400, detail="No files uploaded.")
@@ -270,6 +275,8 @@ async def analyze(
                 "project_id":     project_id,
                 "analysis_name":  name_clean,
                 "analysis_notes": notes_clean,
+                "company":        company_clean,
+                "project":        project_clean,
             }).execute()
         except Exception as exc:
             print(f"[analyze] DB insert failed: {exc}", flush=True)
@@ -278,6 +285,7 @@ async def analyze(
         run_analysis_job,
         job_id, file_data, user_id, tmpdir,
         manufacturer, frequency_mhz, project_id, _model, _rebar_model, _model_config, _supabase,
+        "Bridge Deck", 1.0, company_clean, project_clean,
     )
     print(f"[analyze] Queued job {job_id}", flush=True)
 
@@ -359,11 +367,15 @@ async def analyze_proceq(
     epsr:           float            = Form(9.0),
     analysis_name:  str              = Form("Untitled Analysis"),
     analysis_notes: str              = Form(""),
+    company:        str              = Form(""),
+    project:        str              = Form(""),
     user_id:        Optional[str]   = Depends(verify_token),
 ) -> JSONResponse:
     """Accept Proceq .scan/.pos/.CScan uploads, queue background job, return {job_id}."""
-    name_clean  = (analysis_name or "").strip() or "Untitled Analysis"
-    notes_clean = (analysis_notes or "").strip()
+    name_clean    = (analysis_name or "").strip() or "Untitled Analysis"
+    notes_clean   = (analysis_notes or "").strip()
+    company_clean = (company or "").strip()
+    project_clean = (project or "").strip()
     if not files:
         raise HTTPException(status_code=400, detail="No files uploaded.")
 
@@ -404,11 +416,16 @@ async def analyze_proceq(
                 "stage":          initial_stage,
                 "analysis_name":  name_clean,
                 "analysis_notes": notes_clean,
+                "company":        company_clean,
+                "project":        project_clean,
             }).execute()
         except Exception as exc:
             print(f"[analyze-proceq] DB insert failed: {exc}", flush=True)
 
-    _executor.submit(run_proceq_job, job_id, file_data, tmpdir, epsr, user_id, _supabase)
+    _executor.submit(
+        run_proceq_job, job_id, file_data, tmpdir, epsr, user_id, _supabase,
+        company_clean, project_clean,
+    )
     print(f"[analyze-proceq] Queued job {job_id} ({len(file_data)} files, zip={is_zip})", flush=True)
 
     return JSONResponse({"job_id": job_id, "status": "pending"})
