@@ -205,13 +205,14 @@ def process_proceq_dataset(
     print(f"[ANALYSIS] median GPS swath length: {median_length:.1f}m")
 
     ts_data: dict = {
-        'n_swaths':  len(swath_groups),
-        'rebar_cm':  [],
-        'bottom_cm': [],
-        'rebar_in':  [],
-        'easting':   [],
-        'northing':  [],
-        'depths_in': [],
+        'n_swaths':   len(swath_groups),
+        'rebar_cm':   [],
+        'bottom_cm':  [],
+        'rebar_in':   [],
+        'easting':    [],
+        'northing':   [],
+        'depths_in':  [],
+        'bscan_data': [],
     }
     total_traces = 0
 
@@ -255,8 +256,8 @@ def process_proceq_dataset(
                 ts_data['rebar_cm'].append(depth_result['depths_m'] * 100)
                 ts_data['bottom_cm'].append(bottom['depths_m'] * 100)
                 ts_data['rebar_in'].append(depth_result['depths_in'])
-                from analysis_bscan import render_swath_bscan
-                render_swath_bscan(traces, depth_result, output_dir, swath_idx, epsr)
+                from analysis_bscan import encode_traces_for_frontend
+                ts_data['bscan_data'].append(encode_traces_for_frontend(traces))
 
             print(f"[ANALYSIS]   swath {swath_idx+1:02d} ch {ch_idx+1}: "
                   f"{n_traces} traces  depth {depth_result['depths_in'].mean():.2f}\"")
@@ -305,4 +306,5 @@ def process_proceq_dataset(
         'n_traces':      total_traces,
         'mean_depth_in': float(all_rebar_in.mean()) if len(all_rebar_in) > 0 else 0.0,
         'high_risk_pct': high_risk_pct,
+        'bscan_data':    ts_data['bscan_data'],
     }
