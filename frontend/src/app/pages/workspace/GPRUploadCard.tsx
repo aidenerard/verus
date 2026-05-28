@@ -7,18 +7,24 @@ import ProcessingOptionsPanel from './ProcessingOptionsPanel';
 import ConfirmSwipeModal from './ConfirmSwipeModal';
 
 interface Props {
-  files:          UploadedFile[];
-  setFiles:       React.Dispatch<React.SetStateAction<UploadedFile[]>>;
-  manufacturer:   ManufacturerKey | '';
-  setManufacturer:(m: ManufacturerKey | '') => void;
-  frequencyMhz:   number;
-  setFrequencyMhz:(f: number) => void;
-  onStart:        () => void;
-  busy:           boolean;
+  files:            UploadedFile[];
+  setFiles:         React.Dispatch<React.SetStateAction<UploadedFile[]>>;
+  manufacturer:     ManufacturerKey | '';
+  setManufacturer:  (m: ManufacturerKey | '') => void;
+  frequencyMhz:     number;
+  setFrequencyMhz:  (f: number) => void;
+  analysisName:     string;
+  setAnalysisName:  (v: string) => void;
+  analysisNotes:    string;
+  setAnalysisNotes: (v: string) => void;
+  onStart:          () => void;
+  busy:             boolean;
 }
 
 export default function GPRUploadCard({
-  files, setFiles, manufacturer, setManufacturer, frequencyMhz, setFrequencyMhz, onStart, busy,
+  files, setFiles, manufacturer, setManufacturer, frequencyMhz, setFrequencyMhz,
+  analysisName, setAnalysisName, analysisNotes, setAnalysisNotes,
+  onStart, busy,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -93,6 +99,39 @@ export default function GPRUploadCard({
         </div>
       )}
 
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 18 }}>
+        <FieldLabel text="Analysis Name">
+          <input
+            type="text"
+            value={analysisName}
+            onChange={e => setAnalysisName(e.target.value)}
+            placeholder="e.g. Bridge B440029 — October 2024"
+            maxLength={100}
+            style={{
+              width: '100%', padding: '8px 10px',
+              background: RAISED, border: `1px solid ${BORDER}`,
+              color: TEXT, fontSize: 12, fontFamily: 'inherit', outline: 'none',
+            }}
+          />
+        </FieldLabel>
+
+        <FieldLabel text="Notes" optional>
+          <textarea
+            value={analysisNotes}
+            onChange={e => setAnalysisNotes(e.target.value)}
+            placeholder="Any relevant notes about this scan…"
+            maxLength={500}
+            rows={2}
+            style={{
+              width: '100%', padding: '8px 10px',
+              background: RAISED, border: `1px solid ${BORDER}`,
+              color: TEXT, fontSize: 12, fontFamily: 'inherit', outline: 'none',
+              resize: 'vertical', minHeight: 44,
+            }}
+          />
+        </FieldLabel>
+      </div>
+
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 18 }}>
         <LabelledSelect
           label="Equipment"
@@ -152,20 +191,37 @@ export default function GPRUploadCard({
         open={confirmOpen}
         onCancel={() => setConfirmOpen(false)}
         onConfirm={() => { setConfirmOpen(false); onStart(); }}
-        rows={summaryRows(files.length, manufacturer, frequencyMhz)}
+        rows={summaryRows(files.length, manufacturer, frequencyMhz, analysisName, analysisNotes)}
       />
     </div>
   );
 }
 
-function summaryRows(fileCount: number, manufacturer: ManufacturerKey | '', frequencyMhz: number) {
+function summaryRows(
+  fileCount: number, manufacturer: ManufacturerKey | '', frequencyMhz: number,
+  analysisName: string, analysisNotes: string,
+) {
   const mfr = MANUFACTURERS.find(m => m.key === manufacturer);
   return [
-    { label: 'Files',     value: `${fileCount} file${fileCount !== 1 ? 's' : ''} selected` },
-    { label: 'Method',    value: 'GPR' },
-    { label: 'Frequency', value: `${frequencyMhz} MHz` },
-    { label: 'Equipment', value: mfr?.name ?? 'Auto-detect' },
+    { label: 'Analysis Name', value: analysisName.trim()  || 'Untitled Analysis' },
+    { label: 'Notes',         value: analysisNotes.trim() || '—' },
+    { label: 'Files',         value: `${fileCount} file${fileCount !== 1 ? 's' : ''} selected` },
+    { label: 'Method',        value: 'GPR' },
+    { label: 'Frequency',     value: `${frequencyMhz} MHz` },
+    { label: 'Equipment',     value: mfr?.name ?? 'Auto-detect' },
   ];
+}
+
+function FieldLabel({ text, optional, children }: { text: string; optional?: boolean; children: React.ReactNode }) {
+  return (
+    <label style={{ display: 'block' }}>
+      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: TEXT3, marginBottom: 4, display: 'flex', alignItems: 'baseline', gap: 6 }}>
+        <span>{text}</span>
+        {optional && <span style={{ fontSize: 9, fontWeight: 600, letterSpacing: '0.04em', textTransform: 'none', color: TEXT3, opacity: 0.7 }}>(optional)</span>}
+      </div>
+      {children}
+    </label>
+  );
 }
 
 function LabelledSelect({
