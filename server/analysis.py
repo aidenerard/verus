@@ -296,6 +296,7 @@ from analysis_proceq import (  # noqa: E402
     build_cscan_maps,
     process_proceq_dataset,
 )
+from analysis_bscan import build_bscan_image  # noqa: E402
 
 __all__ = [
     "extract_amplitude_and_depth",
@@ -304,6 +305,7 @@ __all__ = [
     "build_depth_map",
     "build_corrosion_map",
     "build_model_depth_map",
+    "build_bscan_image",
     "load_cscan_amplitudes",
     "build_cscan_maps",
     "process_proceq_dataset",
