@@ -286,6 +286,7 @@ def _extract_zip_into(tmpdir: Path, zip_path: Path) -> int:
                 continue
             if Path(basename).suffix.lower() not in _ZIP_ALLOWED_EXTS:
                 continue
+            print(f"[ZIP] extracting member: {member} -> {basename}", flush=True)
             target = tmpdir / basename
             with zf.open(member) as src, open(target, "wb") as dst:
                 shutil.copyfileobj(src, dst)
@@ -487,6 +488,9 @@ def run_proceq_zip_job(
         n_extracted = _extract_zip_into(tmpdir, zip_path)
         zip_path.unlink()
         print(f"[ZIP JOB] {job_id}: extracted {n_extracted} files", flush=True)
+
+        extracted_files = os.listdir(tmpdir)
+        print(f"[ZIP] files in tmpdir after extraction: {extracted_files}", flush=True)
 
         # Free the storage object early — pipeline failures shouldn't leak GB-scale
         # zips in the bucket. Best-effort; processing continues either way.
