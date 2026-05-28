@@ -20,7 +20,10 @@ from typing import Optional
 # Extensions extracted from an uploaded zip. Anything else (notably macOS
 # metadata under __MACOSX/ and ._* AppleDouble files) is skipped to keep
 # tmpdir clean and avoid confusing the swath grouper.
-_ZIP_ALLOWED_EXTS = {".scan", ".pos", ".cscan", ".dzt", ".dt1"}
+_ZIP_ALLOWED_EXTS = {
+    ".scan", ".pos", ".cscan", ".dzt", ".dt1",
+    ".rd3", ".rd7", ".segy", ".sgy", ".csv",
+}
 
 
 def _safe_segment(name: str, fallback: str = "unknown") -> str:
@@ -278,15 +281,18 @@ def run_analysis_job(
 def _extract_zip_into(tmpdir: Path, zip_path: Path) -> int:
     """Extract allowed GPR files out of a zip into tmpdir (flat). Skips
     __MACOSX, ._* AppleDouble entries, and .DS_Store. Returns extracted count."""
+    print(f"[ZIP] allowed extensions: {_ZIP_ALLOWED_EXTS}", flush=True)
     extracted = 0
     with zipfile.ZipFile(zip_path, "r") as zf:
         for member in zf.namelist():
             basename = Path(member).name
+            ext = Path(basename).suffix.lower()
+            allowed = ext in _ZIP_ALLOWED_EXTS
+            print(f"[ZIP] member={member} basename={basename} ext={ext} allowed={allowed}", flush=True)
             if not basename or basename.startswith("._") or basename == ".DS_Store":
                 continue
-            if Path(basename).suffix.lower() not in _ZIP_ALLOWED_EXTS:
+            if not allowed:
                 continue
-            print(f"[ZIP] extracting member: {member} -> {basename}", flush=True)
             target = tmpdir / basename
             with zf.open(member) as src, open(target, "wb") as dst:
                 shutil.copyfileobj(src, dst)
