@@ -22,7 +22,7 @@ from fastapi.responses import JSONResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from auth import verify_token
-from jobs import _jobs, _executor, run_analysis_job, run_proceq_job
+from jobs import _jobs, _executor, run_analysis_job, run_proceq_job, run_proceq_storage_job
 from run import CNN1D, HorizonCNN, DEVICE  # noqa: F401 — re-exported for type hints
 from ingest import SUPPORTED_EXTENSIONS, COMPANION_EXTENSIONS, FORMAT_INFO
 from model_loader import load_models_background
@@ -405,6 +405,56 @@ async def analyze_proceq(
 
 @app.options("/analyze-proceq")
 async def options_analyze_proceq():
+    return {}
+
+
+@app.post("/analyze-proceq-storage")
+async def analyze_proceq_from_storage(
+    storage_path:    str = Form(...),
+    epsr:            float = Form(9.0),
+    analysis_name:   str = Form("Untitled Analysis"),
+    analysis_notes:  str = Form(""),
+    user_id: Optional[str] = Depends(verify_token),
+) -> JSONResponse:
+    """
+    Analyze a Proceq dataset already uploaded to Supabase storage (bucket
+    'uploads', folder = storage_path). Bypasses the multipart upload size
+    limit that gates POST /analyze-proceq.
+    """
+    job_id = str(uuid.uuid4())
+    print(f"[analyze-proceq-storage] queued job {job_id} (path={storage_path!r}, user={user_id})", flush=True)
+
+    if _supabase:
+        try:
+            _supabase.table("analysis_jobs").insert({
+                "id":             job_id,
+                "user_id":        user_id,
+                "status":         "pending",
+                "progress":       0,
+                "stage":          "Queued",
+                "analysis_name":  (analysis_name or "").strip() or "Untitled Analysis",
+                "analysis_notes": (analysis_notes or "").strip(),
+            }).execute()
+        except Exception as exc:
+            print(f"[analyze-proceq-storage] DB insert failed: {exc}", flush=True)
+
+    _jobs[job_id] = {
+        "status":     "pending",
+        "progress":   0,
+        "stage":      "Queued",
+        "user_id":    user_id,
+        "created_at": time.time(),
+    }
+
+    _executor.submit(
+        run_proceq_storage_job,
+        job_id, storage_path, epsr, user_id, _supabase,
+    )
+    return JSONResponse({"job_id": job_id, "status": "pending"})
+
+
+@app.options("/analyze-proceq-storage")
+async def options_analyze_proceq_storage():
     return {}
 
 
