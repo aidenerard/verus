@@ -285,10 +285,13 @@ def _extract_zip_into(tmpdir: Path, zip_path: Path) -> int:
     extracted = 0
     with zipfile.ZipFile(zip_path, "r") as zf:
         for member in zf.namelist():
-            basename = Path(member).name
-            ext = Path(basename).suffix.lower()
+            # Strip whitespace — some Proceq zips have trailing spaces on
+            # member names (e.g. "PRC_000001.scan ") that defeat the suffix
+            # check AND make rglob("PRC_*.scan") miss the file later.
+            basename = Path(member).name.strip()
+            ext = Path(basename).suffix.lower().strip()
             allowed = ext in _ZIP_ALLOWED_EXTS
-            print(f"[ZIP] member={member} basename={basename} ext={ext} allowed={allowed}", flush=True)
+            print(f"[ZIP] member={member!r} basename={basename!r} ext={ext!r} allowed={allowed}", flush=True)
             if not basename or basename.startswith("._") or basename == ".DS_Store":
                 continue
             if not allowed:
