@@ -15,25 +15,39 @@ def group_files_by_swath(data_dir: str) -> dict:
     """
     Auto-group a flat upload of Proceq files into swaths.
 
-    Naming convention assumed (per user spec):
-      PRC_NNNNNN.scan — swath = ceil(NNNNNN / 16); odd = trace data, even = processed
+    Naming convention:
+      PRC_NNNNNN.scan — odd = trace data, even = processed
       Swath_NNNN.pos  — GPS for swath NNNN
       CScan_NN.CScan  — corrosion amplitude for swath NN
 
-    Uses rglob so it handles both flat uploads (everything in data_dir) and
-    nested local layouts (data_dir/swath_NNNN/...).
+    Files-per-swath is autodetected from len(PRC) / len(pos). The hardcoded
+    16 from the prior pass broke the Terracon dataset (which has 8 PRC per
+    swath); /pos count handles both layouts.
 
+    Uses rglob so flat uploads AND nested local layouts both work.
     Returns: {swath_idx: {odd_scans, even_scans, pos_file, cscan_file}}
     """
     data_path = Path(data_dir)
     swaths: dict[int, dict] = {}
 
-    for f in sorted(data_path.rglob("PRC_*.scan")):
+    prc_paths = sorted(data_path.rglob("PRC_*.scan"))
+    pos_paths = sorted(data_path.rglob("Swath_*.pos"))
+
+    if len(pos_paths) == 0:
+        print("[GROUP] WARNING: no pos files found — falling back to 16 PRC per swath",
+              flush=True)
+        files_per_swath = 16
+    else:
+        files_per_swath = max(1, len(prc_paths) // len(pos_paths))
+        print(f"[GROUP] auto-detected {files_per_swath} PRC files per swath "
+              f"({len(prc_paths)} PRC / {len(pos_paths)} pos)", flush=True)
+
+    for f in prc_paths:
         try:
             num = int(f.stem.replace("PRC_", ""))
         except ValueError:
             continue
-        swath_idx = math.ceil(num / 16)  # 1-indexed; per spec
+        swath_idx = math.ceil(num / files_per_swath)  # 1-indexed
         bucket = swaths.setdefault(swath_idx, {
             "odd_scans": [], "even_scans": [], "pos_file": None, "cscan_file": None,
         })
