@@ -37,15 +37,26 @@ def build_bscan_image(
     max_depth_in = max_depth_m * 39.3701
     total_dist_m = n_traces * dx
 
-    # Contrast stretch via 1st–99th percentile clip, then linearly remap to
-    # [-1, 1]. Tighter outlier clipping than 2/98 pulls more detail into the
-    # mid-grays without saturating reflectors.
-    p1, p99 = np.percentile(traces, 1), np.percentile(traces, 99)
-    display = np.clip(traces, p1, p99)
-    if p99 > p1:
-        display = (display - p1) / (p99 - p1) * 2 - 1
-    else:
-        display = np.zeros_like(traces)
+    # Per-trace DC removal (subtract each A-scan's own mean) so reflector
+    # polarity is centered around zero regardless of any DC offset on that
+    # individual trace.
+    dc_removed = traces - traces.mean(axis=1, keepdims=True)
+
+    # Per-trace 2nd/98th percentile contrast stretch — each A-scan is
+    # independently mapped so its p2 → -1 and p98 → +1. Every column in the
+    # rendered B-scan then fills the full -1..1 dynamic range, matching the
+    # per-trace AGC look of pro GPR software (Proceq OneVision, GSSI RADAN,
+    # ReflexW). Trade-off: this hides systematic amplitude attenuation along
+    # the scan — fine for delamination/rebar interpretation, less appropriate
+    # for absolute reflector strength comparisons across distance.
+    p2  = np.percentile(dc_removed, 2,  axis=1, keepdims=True)
+    p98 = np.percentile(dc_removed, 98, axis=1, keepdims=True)
+    span = p98 - p2
+    span_safe = np.where(span > 0, span, 1.0)
+    display = np.clip((dc_removed - p2) / span_safe * 2 - 1, -1, 1)
+    # Flat traces (constant signal) would saturate to black under the above;
+    # collapse them to neutral mid-gray instead.
+    display[(span <= 0)[:, 0], :] = 0.0
 
     fig, ax = plt.subplots(figsize=(20, 6))
     fig.patch.set_facecolor("white")
