@@ -195,12 +195,56 @@ export function useAnalysisJob({
         console.log('[ZIP] attempting storage upload to:', storagePath);
         console.log('[ZIP] file size:', zipFile.file.size, 'bytes');
         console.log('[ZIP] userId:', userId);
-        const { error: uploadError } = await supabase.storage
-          .from('uploads')
-          .upload(storagePath, zipFile.file, { upsert: true, contentType: 'application/zip' });
-        if (uploadError) {
-          console.error('[ZIP] upload error:', JSON.stringify(uploadError));
-          setErrorMsg(`Zip upload failed: ${uploadError.message}`);
+
+        // Direct XHR upload instead of supabase.storage.from().upload() —
+        // the JS client's fetch wrapper has been silently hanging for
+        // multi-hundred-MB zips. XHR gives us upload progress events and
+        // a real timeout. POST + x-upsert mirrors the JS client's behaviour.
+        const token        = session?.access_token;
+        const supabaseUrl  = import.meta.env.VITE_SUPABASE_URL as string;
+        const supabaseAnon = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+        if (!token) { setErrorMsg('Missing access token.'); setJobStatus('failed'); return; }
+        const uploadUrl = `${supabaseUrl}/storage/v1/object/uploads/${storagePath}`;
+        console.log('[ZIP] XHR uploading to:', uploadUrl);
+
+        try {
+          await new Promise<void>((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.timeout = 30 * 60 * 1000; // 30 min
+
+            xhr.upload.addEventListener('progress', (e) => {
+              if (!e.lengthComputable) return;
+              const pct = Math.round((e.loaded / e.total) * 100);
+              setStatusMsg(`Uploading zip (${zipMb.toFixed(0)} MB)… ${pct}%`);
+              console.log(`[ZIP] upload progress: ${pct}%`);
+            });
+            xhr.addEventListener('load', () => {
+              if (xhr.status >= 200 && xhr.status < 300) {
+                console.log('[ZIP] upload complete, status:', xhr.status);
+                resolve();
+              } else {
+                console.error('[ZIP] upload failed:', xhr.status, xhr.responseText);
+                reject(new Error(`Upload failed ${xhr.status}: ${xhr.responseText}`));
+              }
+            });
+            xhr.addEventListener('error', () => {
+              console.error('[ZIP] upload network error');
+              reject(new Error('Upload network error'));
+            });
+            xhr.addEventListener('timeout', () => {
+              console.error('[ZIP] upload timed out');
+              reject(new Error('Upload timed out after 30 minutes'));
+            });
+
+            xhr.open('POST', uploadUrl);
+            xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+            xhr.setRequestHeader('apikey', supabaseAnon);
+            xhr.setRequestHeader('Content-Type', 'application/zip');
+            xhr.setRequestHeader('x-upsert', 'true');
+            xhr.send(zipFile.file);
+          });
+        } catch (err) {
+          setErrorMsg(err instanceof Error ? err.message : 'Zip upload failed');
           setJobStatus('failed'); return;
         }
         console.log('[ZIP] upload success');
