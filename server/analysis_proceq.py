@@ -255,6 +255,8 @@ def process_proceq_dataset(
                 ts_data['rebar_cm'].append(depth_result['depths_m'] * 100)
                 ts_data['bottom_cm'].append(bottom['depths_m'] * 100)
                 ts_data['rebar_in'].append(depth_result['depths_in'])
+                from analysis_bscan import render_swath_bscan
+                render_swath_bscan(traces, depth_result, output_dir, swath_idx, epsr)
 
             print(f"[ANALYSIS]   swath {swath_idx+1:02d} ch {ch_idx+1}: "
                   f"{n_traces} traces  depth {depth_result['depths_in'].mean():.2f}\"")

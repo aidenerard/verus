@@ -310,10 +310,21 @@ def run_proceq_job(
             return base64.b64encode(p.read_bytes()).decode() if p.exists() else None
 
         elapsed = round(time.perf_counter() - t0, 3)
+
+        # Collect per-swath B-scan PNGs (written by analysis_bscan.render_swath_bscan
+        # during the swath loop). Up to 14 swaths in the current Proceq dataset.
+        bscan_images: list[str] = []
+        for i in range(1, 15):
+            enc = _enc(f"bscan_swath{i:02d}.png")
+            if enc:
+                bscan_images.append(enc)
+
         proceq_result = {
             "horizon_picks":         _enc("horizon_picks.png"),
             "rebar_depth_map":       _enc("rebar_depth_map.png"),
             "corrosion_map":         _enc("corrosion_map.png"),
+            "bscan_images":          bscan_images,
+            "bscan_count":           len(bscan_images),
             "stats":                 stats or {},
             "analysis_time_sec":     elapsed,
             "mean_depth_inches":     model_stats.get("mean_depth_inches"),
