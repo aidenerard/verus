@@ -84,10 +84,22 @@ export default function JobCards({ jobs, loading, onView, onDelete, onStartFirst
             </div>
 
             <div>
-              <div style={{ fontSize: 14, fontWeight: 700, color: TEXT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {job.project_name ?? 'Untitled Project'}
+              <div
+                title={job.analysis_name || job.project_name || 'Untitled Analysis'}
+                style={{ fontSize: 14, fontWeight: 700, color: TEXT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+              >
+                {job.analysis_name?.trim() || job.project_name || 'Untitled Analysis'}
               </div>
-              <div style={{ fontSize: 11, color: TEXT2, marginTop: 4 }}>{date}</div>
+              {job.analysis_notes && job.analysis_notes.trim() && (
+                <p
+                  title={job.analysis_notes}
+                  className="job-card-notes"
+                  style={{ margin: '6px 0 0', fontSize: 12, color: TEXT2, lineHeight: 1.45 }}
+                >
+                  {job.analysis_notes.trim()}
+                </p>
+              )}
+              <div style={{ fontSize: 11, color: TEXT2, marginTop: 6 }}>{date}</div>
             </div>
 
             <div style={{ fontSize: 11, color: TEXT2, fontVariantNumeric: 'tabular-nums' }}>
@@ -137,6 +149,13 @@ export default function JobCards({ jobs, loading, onView, onDelete, onStartFirst
         .job-card-grid { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
         @media (max-width: 640px) {
           .job-card-grid { grid-template-columns: 1fr; }
+        }
+        .job-card-notes {
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
+          overflow-wrap: anywhere;
         }
       `}</style>
     </div>
