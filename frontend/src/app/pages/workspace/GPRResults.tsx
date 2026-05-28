@@ -1,10 +1,9 @@
-import { lazy, Suspense, useMemo, useState } from 'react';
-import { ImageOff, LayoutGrid, MousePointer2 } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { ImageOff, LayoutGrid, Activity } from 'lucide-react';
 import type { AnalysisResult } from '../inspect/types';
 import { useMapbox } from '../inspect/useMapbox';
-import { BORDER, BORDER2, PANEL, RAISED, TEXT, TEXT2, TEXT3, ACCENT, ACCENT_SOFT } from './tokens';
-
-const InteractiveView = lazy(() => import('../interactive/InteractiveView'));
+import BScanViewer from './BScanViewer';
+import { BORDER, PANEL, RAISED, TEXT, TEXT2, TEXT3, ACCENT, ACCENT_SOFT } from './tokens';
 
 interface Props {
   result:     AnalysisResult;
@@ -31,16 +30,16 @@ function meanRebarDepth(result: AnalysisResult): number | undefined {
   return samples.reduce((a, b) => a + b, 0) / samples.length;
 }
 
-export default function GPRResults({ result, projectId }: Props) {
+export default function GPRResults({ result }: Props) {
   const [tab, setTab] = useState<ResultsTab>('overview');
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <ResultsHeader name={result.analysis_name} notes={result.analysis_notes} />
-      <ResultsTabs tab={tab} setTab={setTab} interactiveDisabled={!projectId} />
+      <ResultsTabs tab={tab} setTab={setTab} />
       {tab === 'overview'
         ? <OverviewTab result={result} />
-        : <InteractiveTabBody projectId={projectId} />}
+        : <InteractiveTabBody result={result} />}
     </div>
   );
 }
@@ -68,28 +67,25 @@ function ResultsHeader({ name, notes }: { name?: string; notes?: string }) {
   );
 }
 
-function ResultsTabs({ tab, setTab, interactiveDisabled }:
-  { tab: ResultsTab; setTab: (t: ResultsTab) => void; interactiveDisabled: boolean }) {
-  const items: { id: ResultsTab; label: string; Icon: typeof LayoutGrid; disabled?: boolean }[] = [
+function ResultsTabs({ tab, setTab }:
+  { tab: ResultsTab; setTab: (t: ResultsTab) => void }) {
+  const items: { id: ResultsTab; label: string; Icon: typeof LayoutGrid }[] = [
     { id: 'overview',    label: 'Overview',    Icon: LayoutGrid },
-    { id: 'interactive', label: 'Interactive', Icon: MousePointer2, disabled: interactiveDisabled },
+    { id: 'interactive', label: 'Interactive', Icon: Activity },
   ];
   return (
     <div role="tablist" style={{ display: 'flex', gap: 0, background: PANEL, border: `1px solid ${BORDER}`, alignSelf: 'flex-start' }}>
-      {items.map(({ id, label, Icon, disabled }) => {
+      {items.map(({ id, label, Icon }) => {
         const active = tab === id;
-        const dim = disabled && !active;
         return (
           <button
             key={id} role="tab" aria-selected={active}
-            onClick={() => { if (!disabled) setTab(id); }}
-            disabled={disabled}
-            title={disabled ? 'Save the project first to enable the interactive view' : undefined}
+            onClick={() => setTab(id)}
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 6,
-              padding: '10px 16px', border: 'none', cursor: disabled ? 'not-allowed' : 'pointer',
+              padding: '10px 16px', border: 'none', cursor: 'pointer',
               background: active ? ACCENT_SOFT : 'transparent',
-              color: active ? ACCENT : (dim ? TEXT3 : TEXT2),
+              color: active ? ACCENT : TEXT2,
               borderRight: id === 'overview' ? `1px solid ${BORDER}` : 'none',
               fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase',
               fontFamily: 'inherit',
@@ -162,23 +158,11 @@ function OverviewTab({ result }: { result: AnalysisResult }) {
   );
 }
 
-function InteractiveTabBody({ projectId }: { projectId: string | undefined }) {
-  if (!projectId) {
-    return (
-      <div style={{ background: PANEL, border: `1px dashed ${BORDER2}`, padding: '40px 24px', textAlign: 'center', color: TEXT2 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: TEXT, marginBottom: 6 }}>Save the project first</div>
-        <div style={{ fontSize: 12 }}>The interactive view opens once this analysis is saved and has a project id.</div>
-      </div>
-    );
-  }
+function InteractiveTabBody({ result }: { result: AnalysisResult }) {
   return (
-    <Suspense fallback={
-      <div style={{ background: PANEL, border: `1px solid ${BORDER}`, padding: '40px 24px', textAlign: 'center', color: TEXT2, fontSize: 13 }}>
-        Loading interactive view…
-      </div>
-    }>
-      <InteractiveView projectId={projectId} />
-    </Suspense>
+    <div style={{ padding: 16, background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 8 }}>
+      <BScanViewer bscanImages={result.bscan_images ?? []} />
+    </div>
   );
 }
 
