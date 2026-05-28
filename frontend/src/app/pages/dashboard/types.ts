@@ -14,6 +14,8 @@ export interface AnalysisJob {
   error_msg?: string;
   project_id?: string;
   project_name?: string;
+  analysis_name?: string;
+  analysis_notes?: string;
 }
 
 export interface InspectionModule {
