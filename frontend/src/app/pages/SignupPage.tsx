@@ -1,6 +1,7 @@
 import { useState, FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router';
 import VerusLogo from '../components/VerusLogo';
+import Footer from '../components/Footer';
 import { useAuth } from '../../context/AuthContext';
 
 export default function SignupPage() {
@@ -22,7 +23,7 @@ export default function SignupPage() {
     if (!company.trim())      { setError('Company or agency name is required.'); return; }
     if (!email.includes('@')) { setError('Please enter a valid email address.'); return; }
     if (password.length < 6)  { setError('Password must be at least 6 characters.'); return; }
-    if (!agreed)              { setError('Please agree to the Terms of Service.'); return; }
+    if (!agreed)              { setError('Please agree to the Terms of Use and Privacy Policy.'); return; }
 
     const { error: authError } = await signup(email, password, name.trim(), company.trim());
     if (authError) {
@@ -50,10 +51,13 @@ export default function SignupPage() {
     <div style={{
       minHeight: '100vh', background: '#F5F3EF',
       display: 'flex', flexDirection: 'column',
-      alignItems: 'center', justifyContent: 'center',
-      padding: '40px 24px',
       fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, sans-serif',
     }}>
+      <div style={{
+        flex: 1, display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center',
+        padding: '40px 24px',
+      }}>
       {/* Logo */}
       <Link to="/" style={{ textDecoration: 'none', marginBottom: 40 }}>
         <VerusLogo size={40} wordmarkColor="#0A0A0A" />
@@ -149,9 +153,13 @@ export default function SignupPage() {
               fontSize: 12, color: '#7A7470', cursor: 'pointer', lineHeight: 1.5,
             }}>
               I agree to the{' '}
-              <a href="#" style={{ color: '#E8601C', textDecoration: 'none', fontWeight: 600 }}>
-                Terms of Service
-              </a>
+              <Link to="/terms" style={{ color: '#E8601C', textDecoration: 'none', fontWeight: 600 }}>
+                Terms of Use
+              </Link>
+              {' '}and{' '}
+              <Link to="/privacy" style={{ color: '#E8601C', textDecoration: 'none', fontWeight: 600 }}>
+                Privacy Policy
+              </Link>.
             </label>
           </div>
 
@@ -170,6 +178,13 @@ export default function SignupPage() {
             Create Account
           </button>
 
+          <p style={{ fontSize: 12, color: '#9ca3af', textAlign: 'center', marginTop: 16 }}>
+            By creating an account, you agree to our{' '}
+            <Link to="/terms" style={{ color: '#E8601C' }}>Terms of Use</Link>
+            {' '}and{' '}
+            <Link to="/privacy" style={{ color: '#E8601C' }}>Privacy Policy</Link>.
+          </p>
+
           <p style={{ marginTop: 24, textAlign: 'center', fontSize: 13, color: '#7A7470' }}>
             Already have an account?{' '}
             <Link to="/login" style={{ color: '#E8601C', fontWeight: 600, textDecoration: 'none' }}>
@@ -178,10 +193,8 @@ export default function SignupPage() {
           </p>
         </form>
       </div>
-
-      <p style={{ marginTop: 32, fontSize: 11, color: '#B0A9A4', textAlign: 'center' }}>
-        © {new Date().getFullYear()} Verus · ASTM D6087 Compliant
-      </p>
+      </div>
+      <Footer />
     </div>
   );
 }

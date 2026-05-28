@@ -14,6 +14,8 @@ import FDEMWorkspace from './pages/workspace/FDEMWorkspace';
 import MagWorkspace from './pages/workspace/MagWorkspace';
 import MASWWorkspace from './pages/workspace/MASWWorkspace';
 import ImpactEchoWorkspace from './pages/workspace/ImpactEchoWorkspace';
+import PrivacyPage from './pages/legal/PrivacyPage';
+import TermsPage from './pages/legal/TermsPage';
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth();
@@ -35,6 +37,8 @@ export default function Router() {
         <Route path="/login"    element={<LoginPage />} />
         <Route path="/signup"   element={<SignupPage />} />
         <Route path="/team"     element={<TeamPage />} />
+        <Route path="/privacy"  element={<PrivacyPage />} />
+        <Route path="/terms"    element={<TermsPage />} />
 
         <Route path="/dashboard" element={
           <ProtectedRoute><DashboardPage /></ProtectedRoute>
