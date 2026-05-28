@@ -1,6 +1,8 @@
 """
 Paste this entire file as a single Colab cell (after mounting Drive + unzipping data).
-Trains HorizonCNN on Terracon Proceq .scan files, saves horizon_model.pth to Drive.
+Trains HorizonCNN on Terracon Proceq .scan files, saves horizon_model_depth_fix.pth to Drive.
+Experiment D — Depth-range fix: MAX_DEPTH_MM=120 matches actual top-mat training data (0-120mm).
+Previous baseline used 300mm, leaving 60% of output range unused.
 
 Setup cells to run first:
   Cell 1:
@@ -25,9 +27,9 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 DATA_DIR  = '/content/data'
-MODEL_OUT = '/content/drive/MyDrive/horizon_model.pth'   # persists after session ends
+MODEL_OUT = '/content/drive/MyDrive/horizon_model_depth_fix.pth'  # persists after session ends
 
-MAX_DEPTH_MM   = 300.0
+MAX_DEPTH_MM   = 120.0  # top-mat only (SKIP_SWATHS={0,4}); actual data range 0-120mm
 TARGET_SAMPLES = 512
 BATCH_SIZE     = 512
 EPOCHS         = 100
@@ -97,6 +99,8 @@ for sw in good:
         if raw is None or n < 10:
             continue
         gt = np.interp(np.arange(n), np.linspace(0, n-1, len(ts)), ts)
+        if gt.max() > MAX_DEPTH_MM:
+            print(f'  WARNING sw{sw+1:02d} gt_max={gt.max():.0f}mm exceeds MAX_DEPTH_MM={MAX_DEPTH_MM:.0f} — labels will be clipped', flush=True)
         all_X.append(preprocess(raw))
         all_y.append(np.clip(gt / MAX_DEPTH_MM, 0, 1).astype(np.float32))
         all_sw.extend([sw] * n)
@@ -151,15 +155,15 @@ class HorizonCNN(nn.Module):
             nn.Conv1d(64,  128, 3, padding=1), nn.ReLU(), nn.MaxPool1d(2),
             nn.Conv1d(128, 128, 3, padding=1), nn.ReLU(), nn.MaxPool1d(2),
         )
-        self.attn = TemporalAttention(128)
-        self.head = nn.Sequential(
+        self.attn       = TemporalAttention(128)
+        self.depth_head = nn.Sequential(
             nn.Linear(128, 64), nn.ReLU(),
             nn.Dropout(0.3),
             nn.Linear(64, 1),
             nn.Sigmoid(),
         )
     def forward(self, x):
-        return self.head(self.attn(self.conv(x))).squeeze(-1)
+        return self.depth_head(self.attn(self.conv(x))).squeeze(-1)
 
 model = HorizonCNN().to(DEVICE)
 print(f'Params: {sum(p.numel() for p in model.parameters()):,}')
