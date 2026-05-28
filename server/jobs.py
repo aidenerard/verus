@@ -7,8 +7,10 @@ Does NOT: contain inference logic (see pipeline.py) or model loading (see model_
 """
 
 import base64 as _b64
+import os
 import re
 import shutil
+import tempfile
 import time
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
@@ -422,4 +424,95 @@ def run_proceq_job(
         _jobs[job_id]["completed_at"] = time.time()  # in-memory: python float
 
     finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def run_proceq_zip_job(
+    job_id: str,
+    storage_path: str,
+    epsr: float,
+    user_id: Optional[str],
+    supabase_client,
+    company: str = "",
+    project: str = "",
+) -> None:
+    """
+    Stream a zipped Proceq dataset out of the 'uploads' bucket into a tmpdir,
+    extract its allowed entries, drop the archive from storage, and delegate
+    the pipeline to run_proceq_job.
+
+    Used when the upload would exceed Render's request body limit — frontend
+    PUTs the zip directly to Supabase Storage and only tells us the path.
+    """
+    import requests
+
+    _update_job(job_id, {
+        "status":   "processing",
+        "progress": 5,
+        "stage":    "Downloading zip from storage",
+    }, supabase_client)
+
+    supabase_url = os.environ.get("SUPABASE_URL", "")
+    supabase_key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+    if not supabase_url or not supabase_key:
+        _update_job(job_id, {
+            "status":       "failed",
+            "error":        "Supabase storage not configured",
+            "completed_at": "now()",
+        }, supabase_client)
+        return
+
+    tmpdir = Path(tempfile.mkdtemp(prefix="verus_zip_"))
+    try:
+        zip_url = f"{supabase_url}/storage/v1/object/uploads/{storage_path}"
+        print(f"[ZIP JOB] {job_id}: downloading from {zip_url}", flush=True)
+        headers = {"Authorization": f"Bearer {supabase_key}", "apikey": supabase_key}
+
+        zip_path = tmpdir / "dataset.zip"
+        with requests.get(zip_url, headers=headers, timeout=300, stream=True) as r:
+            if r.status_code != 200:
+                raise RuntimeError(f"Storage download failed: HTTP {r.status_code}")
+            with open(zip_path, "wb") as f:
+                for chunk in r.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        f.write(chunk)
+
+        zip_mb = zip_path.stat().st_size / 1024 / 1024
+        print(f"[ZIP JOB] {job_id}: downloaded {zip_mb:.1f} MB", flush=True)
+        _update_job(job_id, {
+            "progress": 20,
+            "stage":    f"Extracting zip ({zip_mb:.0f}MB)",
+        }, supabase_client)
+
+        n_extracted = _extract_zip_into(tmpdir, zip_path)
+        zip_path.unlink()
+        print(f"[ZIP JOB] {job_id}: extracted {n_extracted} files", flush=True)
+
+        # Free the storage object early — pipeline failures shouldn't leak GB-scale
+        # zips in the bucket. Best-effort; processing continues either way.
+        try:
+            supabase_client.storage.from_("uploads").remove([storage_path])
+        except Exception as exc:
+            print(f"[ZIP JOB] {job_id}: storage remove failed (non-fatal): {exc}", flush=True)
+
+        _update_job(job_id, {
+            "progress": 25,
+            "stage":    f"Processing {n_extracted} files",
+        }, supabase_client)
+
+        # Hand off to the standard Proceq pipeline. tmpdir already has the
+        # extracted files; run_proceq_job's finally cleans tmpdir up.
+        run_proceq_job(
+            job_id=job_id, file_data=None, tmpdir=tmpdir, epsr=epsr,
+            user_id=user_id, supabase_client=supabase_client,
+            company=company, project=project,
+        )
+
+    except Exception as exc:
+        print(f"[ZIP JOB] {job_id}: fatal: {exc}", flush=True)
+        _update_job(job_id, {
+            "status":       "failed",
+            "error":        str(exc),
+            "completed_at": "now()",
+        }, supabase_client)
         shutil.rmtree(tmpdir, ignore_errors=True)

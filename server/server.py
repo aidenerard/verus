@@ -22,7 +22,7 @@ from fastapi.responses import JSONResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from auth import verify_token
-from jobs import _jobs, _executor, run_analysis_job, run_proceq_job
+from jobs import _jobs, _executor, run_analysis_job, run_proceq_job, run_proceq_zip_job
 from run import CNN1D, HorizonCNN, DEVICE  # noqa: F401 — re-exported for type hints
 from ingest import SUPPORTED_EXTENSIONS, COMPANION_EXTENSIONS, FORMAT_INFO
 from model_loader import load_models_background
@@ -446,6 +446,62 @@ async def analyze_proceq(
 
 @app.options("/analyze-proceq")
 async def options_analyze_proceq():
+    return {}
+
+
+@app.post("/analyze-proceq-zip")
+async def analyze_proceq_zip(
+    storage_path:   str   = Form(...),
+    epsr:           float = Form(9.0),
+    analysis_name:  str   = Form("Untitled Analysis"),
+    analysis_notes: str   = Form(""),
+    company:        str   = Form(""),
+    project:        str   = Form(""),
+    user_id:        Optional[str] = Depends(verify_token),
+) -> JSONResponse:
+    """Process a Proceq zip already uploaded to the 'uploads' Supabase bucket.
+    Frontend uploads directly to storage to bypass Render's body size limit."""
+    name_clean    = (analysis_name or "").strip() or "Untitled Analysis"
+    notes_clean   = (analysis_notes or "").strip()
+    company_clean = (company or "").strip() or _company_from_profile(user_id)
+    project_clean = (project or "").strip()
+
+    job_id = str(uuid.uuid4())
+    print(f"[analyze-proceq-zip] {job_id} path={storage_path!r} user={user_id}", flush=True)
+
+    if _supabase:
+        try:
+            _supabase.table("analysis_jobs").insert({
+                "id":             job_id,
+                "user_id":        user_id,
+                "status":         "pending",
+                "progress":       0,
+                "stage":          "Downloading zip from storage",
+                "analysis_name":  name_clean,
+                "analysis_notes": notes_clean,
+                "company":        company_clean,
+                "project":        project_clean,
+            }).execute()
+        except Exception as exc:
+            print(f"[analyze-proceq-zip] DB insert failed: {exc}", flush=True)
+
+    _jobs[job_id] = {
+        "status":     "pending",
+        "progress":   0,
+        "stage":      "Downloading zip from storage",
+        "user_id":    user_id,
+        "created_at": time.time(),
+    }
+
+    _executor.submit(
+        run_proceq_zip_job, job_id, storage_path, epsr, user_id, _supabase,
+        company_clean, project_clean,
+    )
+    return JSONResponse({"job_id": job_id, "status": "pending"})
+
+
+@app.options("/analyze-proceq-zip")
+async def options_analyze_proceq_zip():
     return {}
 
 
