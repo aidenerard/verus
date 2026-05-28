@@ -9,6 +9,7 @@ export const GPR_EXTS = new Set([
   '.csv', '.dzt', '.dt1', '.rd3', '.rd7', '.segy', '.sgy', '.dzg', '.hd', '.rad',
   '.dt', '.gec', '.iprb', '.iprh',
   '.scan', '.pos', '.cscan',  // Proceq RIS + companions
+  '.zip',                     // Zipped Proceq dataset folder
 ]);
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
