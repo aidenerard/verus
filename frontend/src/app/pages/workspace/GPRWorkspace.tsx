@@ -24,6 +24,7 @@ export default function GPRWorkspace() {
   const [frequencyMhz,   setFrequencyMhz]   = useState(1600);
   const [analysisName,   setAnalysisName]   = useState('');
   const [analysisNotes,  setAnalysisNotes]  = useState('');
+  const [uploadMode,     setUploadMode]     = useState<'standard' | 'storage'>('standard');
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [loadingJob,     setLoadingJob]     = useState(!!viewJobId);
   const [loadError,      setLoadError]      = useState<string | null>(null);
@@ -46,6 +47,7 @@ export default function GPRWorkspace() {
     onComplete,
     extraFormData: toFormData,
     analysisName, analysisNotes,
+    uploadMode,
   });
 
   useEffect(() => {
@@ -96,6 +98,7 @@ export default function GPRWorkspace() {
           frequencyMhz={frequencyMhz} setFrequencyMhz={setFrequencyMhz}
           analysisName={analysisName}   setAnalysisName={setAnalysisName}
           analysisNotes={analysisNotes} setAnalysisNotes={setAnalysisNotes}
+          uploadMode={uploadMode}       setUploadMode={setUploadMode}
           onStart={() => setShowConfirm(true)}
           busy={isAnalyzing}
         />
