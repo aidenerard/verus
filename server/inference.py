@@ -104,12 +104,15 @@ def run_rebar_inference(
     model: Optional[nn.Module],
     signals: np.ndarray,
     frequency_mhz: int = 1600,
+    model_config: Optional[dict] = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Input: raw signals (n_signals, 512).
     Returns (depth_inches, twt_ns, peak_samples) all (n_signals,).
     Falls back to physics peak-time estimate when model is None or fails.
+    model_config may carry max_depth_mm to match the training constant.
     """
+    cfg      = model_config or {}
     er       = _REBAR_DIELECTRIC.get(frequency_mhz, 6.0)
     velocity = 0.3 / np.sqrt(er)  # m/ns in concrete
 
@@ -140,7 +143,7 @@ def run_rebar_inference(
                 preds.append(out)
 
         norm_depth   = np.clip(np.concatenate(preds), 0.0, 1.0)
-        depth_mm     = norm_depth * 300.0
+        depth_mm     = norm_depth * float(cfg.get("max_depth_mm", 120.0))
         depth_in     = (depth_mm / 25.4).astype(np.float32)
         twt          = (2.0 * (depth_mm / 1000.0) / velocity).astype(np.float32)
         peak_samples = np.argmax(np.abs(signals), axis=1).astype(np.int32)
