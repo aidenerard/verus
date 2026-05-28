@@ -81,7 +81,6 @@ function ResultsTabs({ tab, setTab, interactiveDisabled }:
 
 function OverviewTab({ result }: { result: AnalysisResult }) {
   const panels: PanelSpec[] = useMemo(() => [
-    { title: 'Horizon Picks',   src: resolveImageSrc(result.horizon_picks   ?? result.cscan_url ?? result.cscan_image) },
     { title: 'Rebar Depth Map', src: resolveImageSrc(result.rebar_depth_map ?? result.rebar_depth_image) },
     { title: 'Corrosion Risk',  src: resolveImageSrc(result.corrosion_map   ?? result.amplitude_image) },
   ], [result]);
@@ -128,9 +127,8 @@ function OverviewTab({ result }: { result: AnalysisResult }) {
       <style>{`
         .gpr-panel-grid {
           display: grid;
-          grid-template-columns: repeat(3, minmax(0, 1fr));
+          grid-template-columns: repeat(2, minmax(0, 1fr));
           gap: 16px;
-          min-height: 400px;
         }
         @media (max-width: 900px) {
           .gpr-panel-grid { grid-template-columns: 1fr; }
@@ -162,15 +160,31 @@ function InteractiveTabBody({ projectId }: { projectId: string | undefined }) {
 
 function ResultPanel({ title, src }: PanelSpec) {
   return (
-    <div style={{ background: PANEL, border: `1px solid ${BORDER}`, display: 'flex', flexDirection: 'column' }}>
-      <div style={{ padding: '10px 14px', borderBottom: `1px solid ${BORDER}`, fontSize: 10, fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', color: TEXT2 }}>
+    <div style={{
+      background: PANEL, border: `1px solid ${BORDER}`,
+      display: 'flex', flexDirection: 'column',
+      minHeight: 400, overflow: 'hidden', borderRadius: 8,
+    }}>
+      <div style={{
+        flexShrink: 0,
+        padding: '10px 14px', borderBottom: `1px solid ${BORDER}`,
+        fontSize: 10, fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', color: TEXT2,
+      }}>
         {title}
       </div>
-      <div style={{ flex: 1, minHeight: 350, background: RAISED, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+      <div style={{
+        flex: 1, minHeight: 0,
+        position: 'relative', overflow: 'hidden',
+        background: RAISED,
+      }}>
         {src ? (
-          <img src={src} alt={title} style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} />
+          <img
+            src={src}
+            alt={title}
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'fill', display: 'block' }}
+          />
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, color: TEXT3 }}>
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, color: TEXT3 }}>
             <ImageOff size={22} />
             <span style={{ fontSize: 11 }}>No data</span>
           </div>
