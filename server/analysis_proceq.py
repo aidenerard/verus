@@ -163,6 +163,7 @@ def build_cscan_maps(cscan_slices, output_dir, title_prefix=''):
 
 
 from analysis_proceq_utils import median_swath_length as _median_swath_length  # noqa: E402
+from analysis_proceq_utils import group_files_by_swath  # noqa: E402
 
 
 def process_proceq_dataset(
@@ -182,25 +183,16 @@ def process_proceq_dataset(
     output_dir = os.path.abspath(output_dir)
     os.makedirs(output_dir, exist_ok=True)
 
-    scan_files     = sorted(glob.glob(os.path.join(data_dir, "**", "PRC_*.scan"), recursive=True))
-    pos_files      = sorted(glob.glob(os.path.join(data_dir, "**", "Swath_*.pos"), recursive=True))
-    cscan_01_files = sorted(glob.glob(os.path.join(data_dir, "**", "CScan_01.CScan"), recursive=True))
+    # Auto-group every uploaded file into swaths. Analyst doesn't need to
+    # pre-select odd files; we split odd/even inside the helper.
+    swaths_dict = group_files_by_swath(data_dir)
+    swath_keys  = sorted(swaths_dict.keys())
+    swath_groups = [swaths_dict[k]['odd_scans'] for k in swath_keys]
+    pos_files    = [swaths_dict[k]['pos_file']   for k in swath_keys if swaths_dict[k]['pos_file']]
+    cscan_files  = [swaths_dict[k]['cscan_file'] for k in swath_keys if swaths_dict[k]['cscan_file']]
 
-    odd_scans = [
-        f for f in scan_files
-        if int(os.path.basename(f).replace("PRC_", "").replace(".scan", "")) % 2 == 1
-    ]
-    print(f"[ANALYSIS] {len(scan_files)} PRC  {len(odd_scans)} odd  "
-          f"{len(pos_files)} pos  {len(cscan_01_files)} CScan_01")
-
-    CHANNELS_PER_SWATH = 4
     DY = 0.05
-    swath_groups = [
-        odd_scans[i:i + CHANNELS_PER_SWATH]
-        for i in range(0, len(odd_scans), CHANNELS_PER_SWATH)
-    ]
-
-    cscan_raw     = load_cscan_amplitudes(cscan_01_files)
+    cscan_raw     = load_cscan_amplitudes(cscan_files)
     median_length = _median_swath_length(pos_files)
     print(f"[ANALYSIS] median GPS swath length: {median_length:.1f}m")
 
@@ -217,7 +209,9 @@ def process_proceq_dataset(
     total_traces = 0
 
     for swath_idx, swath_scans in enumerate(swath_groups):
-        pos_path = pos_files[swath_idx] if swath_idx < len(pos_files) else None
+        # Look up companion files from the grouped dict (avoids index drift
+        # when some swaths are missing pos/cscan companions).
+        pos_path = swaths_dict[swath_keys[swath_idx]]['pos_file']
         pos_df   = parse_pos_file(pos_path) if pos_path else None
 
         for ch_idx, scan_path in enumerate(swath_scans):
