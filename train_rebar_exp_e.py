@@ -337,7 +337,7 @@ def _audit_layout(bridge_name: str, layout: list, gt_csv: str) -> bool:
         rate = f"{n_matched/exp:.0%}" if isinstance(exp, int) and exp > 0 else "?"
         print(f"  {file_num:>6}  {ch_num}  {str(exp):>8}  {n_matched:>7}  {rate:>5}  "
               f"{'OK' if ok else 'FAIL'}")
-    total_exp     = sum(v for v in expected.values())
+    total_exp     = sum(v for v in expected.values()) or 1
     total_matched = sum(
         sum(1 for s in range(s0, s1) if (_dzt_key(fn, cn), s) in gt)
         for fn, cn, s0, s1, _ in layout
@@ -385,6 +385,18 @@ def main():
     )
     args = ap.parse_args()
 
+    if args.dry_run:
+        print("\n=== Dry-run: layout audit (CSV-only, no DZT files needed) ===")
+        b440_ok = _audit_layout("B440029",
+                                INFRASENSE_LAYOUT["B440029"]["layout"],
+                                INFRASENSE_LAYOUT["B440029"]["gt_csv"])
+        b170_ok = _audit_layout("B170020",
+                                INFRASENSE_LAYOUT["B170020"]["layout"],
+                                INFRASENSE_LAYOUT["B170020"]["gt_csv"])
+        status = "PASS" if b440_ok and b170_ok else "FAIL — fix layout before training"
+        print(f"\nDry-run result: {status}")
+        return
+
     print("\n=== Loading training data ===")
     sys.path.insert(0, str(Path(__file__).parent))
 
@@ -395,21 +407,6 @@ def main():
 
     cfg_val = INFRASENSE_LAYOUT["B170020"]
     X_val, y_val = load_infrasense_bridge("B170020", cfg_val["layout"], cfg_val["gt_csv"])
-
-    if args.dry_run:
-        print("\n=== --dry-run: layout audit (no DZT load needed) ===")
-        b440_ok = _audit_layout("B440029",
-                                INFRASENSE_LAYOUT["B440029"]["layout"],
-                                INFRASENSE_LAYOUT["B440029"]["gt_csv"])
-        b170_ok = _audit_layout("B170020",
-                                INFRASENSE_LAYOUT["B170020"]["layout"],
-                                INFRASENSE_LAYOUT["B170020"]["gt_csv"])
-        print("\n=== --dry-run: data load summary ===")
-        print(f"  B440029 training : {len(X_if_tr):,} GT-matched traces")
-        print(f"  B170020 val      : {len(X_val):,} GT-matched traces")
-        status = "PASS" if b440_ok and b170_ok else "FAIL — fix layout before training"
-        print(f"\nDry-run result: {status}")
-        return
 
     if len(X_if_tr) == 0:
         print("ERROR: No Infrasense training data loaded. Check paths and DZT files.")
