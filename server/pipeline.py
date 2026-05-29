@@ -21,6 +21,39 @@ from render import (
 )
 
 
+def _persist_hyperbola_picks(sb, job_id: str, swath_idx: int,
+                              traces, frequency_mhz: int) -> None:
+    """Run hyperbola apex detection on this swath's traces and insert one
+    row per pick into the picks table. Best-effort — fails silently if
+    Supabase is unconfigured or the migration adding sample_idx/swath_idx
+    columns hasn't been applied yet."""
+    if not sb or not job_id:
+        return
+    try:
+        from analysis import detect_hyperbola_picks, _epsr_for_frequency
+        picks = detect_hyperbola_picks(
+            traces=traces, epsr=_epsr_for_frequency(frequency_mhz),
+            time_range_ns=16.0,
+        )
+        if not picks:
+            return
+        rows = [{
+            "job_id":       job_id,
+            "scan_line_id": str(swath_idx),
+            "trace_index":  int(p["trace_idx"]),
+            "sample_idx":   int(p["sample_idx"]),
+            "depth_in":     float(p["depth_in"]),
+            "confidence":   float(p["confidence"]),
+            "is_edited":    False,
+            "is_manual":    False,
+            "swath_idx":    int(swath_idx),
+        } for p in picks]
+        sb.table("picks").insert(rows).execute()
+        print(f"[PICKS] persisted {len(rows)} hyperbola picks (swath {swath_idx})", flush=True)
+    except Exception as exc:
+        print(f"[PICKS] persist failed (non-fatal): {exc}", flush=True)
+
+
 def _render_depth_b64_via_unified(depth_grid, analysis_name: str) -> str:
     """
     Bridge from in-memory 2D depth_grid → base64 PNG, via the unified
@@ -55,6 +88,7 @@ def process_files(
     frequency_mhz: int,
     set_progress_fn: Callable[[int, str], None],
     set_progress_fast_fn: Callable[[int, str], None],
+    supabase_client=None,
 ) -> tuple:
     """
     Run ingestion + inference for every uploaded file.
@@ -107,6 +141,11 @@ def process_files(
         set_progress_fn(
             15 + round(65 * files_done / max(n_data_files, 1)),
             f"Preprocessing file {files_done + 1}/{max(n_data_files,1)}",
+        )
+
+        _persist_hyperbola_picks(
+            supabase_client, job_id, swath_idx=files_done, traces=signals,
+            frequency_mhz=frequency_mhz,
         )
 
         bscan_info         = extract_bscan_b64(signals)

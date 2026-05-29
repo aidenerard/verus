@@ -163,6 +163,7 @@ def run_analysis_job(
             job_id, saved_paths, manufacturer,
             model, rebar_model, model_config, frequency_mhz,
             _prog, _prog_fast,
+            supabase_client=supabase_client,
         )
 
         if total_sigs == 0:
@@ -355,6 +356,7 @@ def run_proceq_job(
             stats = process_proceq_dataset(
                 data_dir=str(tmpdir), output_dir=str(tmpdir), epsr=epsr,
                 analysis_name=analysis_name,
+                supabase_client=supabase_client, job_id=job_id,
             )
         except Exception as exc:
             proceq_error_detail = str(exc)
