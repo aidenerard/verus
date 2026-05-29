@@ -129,7 +129,7 @@ function ResultsTabs({ tab, setTab }:
 function OverviewTab({ result }: { result: AnalysisResult }) {
   const panels: PanelSpec[] = useMemo(() => [
     { title: 'Rebar Depth Map', src: resolveImageSrc(result.rebar_depth_map ?? result.rebar_depth_image) },
-    { title: 'Corrosion Risk',  src: resolveImageSrc(result.corrosion_map   ?? result.amplitude_image) },
+    { title: 'Rebar Reflection Amplitude',  src: resolveImageSrc(result.corrosion_map   ?? result.amplitude_image) },
   ], [result]);
 
   const stats = useMemo(() => {
