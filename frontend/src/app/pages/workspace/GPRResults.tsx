@@ -5,6 +5,7 @@ import { useMapbox } from '../inspect/useMapbox';
 import { SERVER } from '../inspect/constants';
 import BScanViewer from './BScanViewer';
 import ConditionMapPanel from './ConditionMapPanel';
+import DepthMapCanvas from './DepthMapCanvas';
 import { BORDER, BORDER2, PANEL, RAISED, TEXT, TEXT2, TEXT3, ACCENT, ACCENT_SOFT } from './tokens';
 
 interface Props {
@@ -33,7 +34,8 @@ function meanRebarDepth(result: AnalysisResult): number | undefined {
 }
 
 export default function GPRResults({ result, projectId }: Props) {
-  const [tab, setTab] = useState<ResultsTab>('overview');
+  const [tab,        setTab]        = useState<ResultsTab>('overview');
+  const [needsRegen, setNeedsRegen] = useState(false);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -45,8 +47,17 @@ export default function GPRResults({ result, projectId }: Props) {
       />
       <ResultsTabs tab={tab} setTab={setTab} />
       {tab === 'overview'
-        ? <OverviewTab result={result} />
-        : <InteractiveTabBody result={result} projectId={projectId} />}
+        ? <OverviewTab
+            result={result}
+            projectId={projectId}
+            needsRegen={needsRegen}
+            onRegenerated={() => setNeedsRegen(false)}
+          />
+        : <InteractiveTabBody
+            result={result}
+            projectId={projectId}
+            onPicksSaved={() => setNeedsRegen(true)}
+          />}
     </div>
   );
 }
@@ -128,11 +139,19 @@ function ResultsTabs({ tab, setTab }:
   );
 }
 
-function OverviewTab({ result }: { result: AnalysisResult }) {
-  const panels: PanelSpec[] = useMemo(() => [
-    { title: 'Rebar Depth Map', src: resolveImageSrc(result.rebar_depth_map ?? result.rebar_depth_image) },
-    { title: 'Rebar Reflection Amplitude',  src: resolveImageSrc(result.corrosion_map   ?? result.amplitude_image) },
-  ], [result]);
+interface OverviewTabProps {
+  result:        AnalysisResult;
+  projectId?:    string;
+  needsRegen:    boolean;
+  onRegenerated: () => void;
+}
+
+function OverviewTab({ result, projectId, needsRegen, onRegenerated }: OverviewTabProps) {
+  const amplitudeSrc = useMemo(
+    () => resolveImageSrc(result.corrosion_map ?? result.amplitude_image),
+    [result],
+  );
+  const staticDepthB64 = result.rebar_depth_map ?? result.rebar_depth_image;
 
   const stats = useMemo(() => {
     const mean  = result.mean_depth_inches     ?? meanRebarDepth(result);
@@ -158,7 +177,15 @@ function OverviewTab({ result }: { result: AnalysisResult }) {
         <ConditionMapPanel result={result} src={conditionSrc} />
       )}
       <div className="gpr-panel-grid">
-        {panels.map(p => <ResultPanel key={p.title} title={p.title} src={p.src} />)}
+        <DepthMapCanvas
+          jobId={projectId ?? ''}
+          serverUrl={SERVER}
+          analysisName={result.analysis_name ?? 'Analysis'}
+          staticImageB64={staticDepthB64}
+          needsRegen={needsRegen}
+          onRegenerated={onRegenerated}
+        />
+        <ResultPanel title="Rebar Reflection Amplitude" src={amplitudeSrc} />
       </div>
 
       <div style={{ background: PANEL, border: `1px solid ${BORDER}`, padding: '14px 20px', display: 'flex', flexWrap: 'wrap', gap: 24, alignItems: 'center' }}>
@@ -192,7 +219,13 @@ function OverviewTab({ result }: { result: AnalysisResult }) {
   );
 }
 
-function InteractiveTabBody({ result, projectId }: { result: AnalysisResult; projectId?: string }) {
+interface InteractiveTabBodyProps {
+  result:       AnalysisResult;
+  projectId?:   string;
+  onPicksSaved: () => void;
+}
+
+function InteractiveTabBody({ result, projectId, onPicksSaved }: InteractiveTabBodyProps) {
   if (!projectId) {
     return (
       <div style={{ background: PANEL, border: `1px dashed ${BORDER2}`, padding: '40px 24px', textAlign: 'center', color: TEXT2 }}>
@@ -207,6 +240,7 @@ function InteractiveTabBody({ result, projectId }: { result: AnalysisResult; pro
         bscanData={result.bscan_data ?? []}
         jobId={projectId}
         serverUrl={SERVER}
+        onPicksSaved={onPicksSaved}
       />
     </div>
   );
