@@ -219,7 +219,7 @@ def render_amplitude_b64(amplitude_grid: np.ndarray, dpi: int = 100) -> str:
     cbar = fig.colorbar(plt.cm.ScalarMappable(cmap=cmap_obj, norm=norm),
                         ax=ax, orientation='horizontal', pad=0.18, fraction=0.04, aspect=50)
     cbar.set_ticks([vmin, (vmin + vmax) / 2, vmax])
-    cbar.set_ticklabels(['High Attenuation (Deteriorated)', '', 'Low Attenuation (Sound)'], fontsize=8)
+    cbar.set_ticklabels(['High Attenuation', '', 'Low Attenuation'], fontsize=8)
     cbar.ax.tick_params(length=0)
     cbar.outline.set_linewidth(0.5); cbar.outline.set_edgecolor('#CCCCCC')
     return _fig_to_b64(fig, dpi)
