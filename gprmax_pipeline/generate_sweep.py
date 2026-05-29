@@ -81,7 +81,7 @@ DELAM_TEMPLATE = """#title: delaminated gap_depth={gap_depth_mm:.1f}mm thick={ga
 REBAR_PARAMS = {
     "epsr":      (4.0, 12.0),
     "sigma":     (0.001, 0.05),
-    "depth_mm":  (40.0, 180.0),
+    "depth_mm":  (40.0, 250.0),   # extended to 250mm to cover B440029 max truth (234mm)
     "diam_mm":   (10.0, 32.0),
     "freq_mhz":  [900, 1500, 2000],
     "offset_mm": (30.0, 60.0),
