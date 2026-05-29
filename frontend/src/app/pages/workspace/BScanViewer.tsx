@@ -1,18 +1,34 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { supabase } from '../../../lib/supabase';
+
+interface Pick {
+  id?:         string;
+  trace_idx:   number;
+  sample_idx:  number;
+  depth_in:    number;
+  confidence:  number;
+  is_manual:   boolean;
+  swath_idx:   number;
+}
 
 interface TraceData {
-  data:      string;   // base64 + zlib + int8
+  data:      string;
   n_traces:  number;
   n_samples: number;
   encoding:  string;
 }
 
 interface BScanViewerProps {
-  bscanData:  TraceData[];
-  picks_in?:  number[][];   // optional per-swath horizon picks in inches
-  epsr?:      number;
-  timeRangeNs?: number;
+  bscanData:     TraceData[];
+  jobId:         string;
+  serverUrl:     string;
+  onPicksSaved?: (picks: Pick[]) => void;
 }
+
+const ACCENT     = '#E8601C';
+const ACCENT_DIM = '#374151';
+const TIME_RANGE_NS = 16.0;
+const EPSILON_R     = 9.0;
 
 async function decodeTraces(encoded: TraceData): Promise<Int8Array | null> {
   try {
@@ -22,7 +38,6 @@ async function decodeTraces(encoded: TraceData): Promise<Int8Array | null> {
     const reader = ds.readable.getReader();
     writer.write(compressed);
     writer.close();
-
     const chunks: Uint8Array[] = [];
     let done = false;
     while (!done) {
@@ -30,14 +45,10 @@ async function decodeTraces(encoded: TraceData): Promise<Int8Array | null> {
       if (value) chunks.push(value);
       done = d;
     }
-
     const total  = chunks.reduce((s, c) => s + c.length, 0);
     const buffer = new Uint8Array(total);
     let offset   = 0;
-    for (const chunk of chunks) {
-      buffer.set(chunk, offset);
-      offset += chunk.length;
-    }
+    for (const chunk of chunks) { buffer.set(chunk, offset); offset += chunk.length; }
     return new Int8Array(buffer.buffer);
   } catch (e) {
     console.error('Failed to decode traces:', e);
@@ -45,85 +56,57 @@ async function decodeTraces(encoded: TraceData): Promise<Int8Array | null> {
   }
 }
 
-function renderBScan(
-  canvas: HTMLCanvasElement,
-  traces: Int8Array,
-  n_traces: number,
-  n_samples: number,
-  options: {
-    contrast?: number;
-    colormap?: 'gray' | 'seismic';
-    picks?:    number[];
-  } = {},
-) {
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
-
-  const { contrast = 1.5, colormap = 'gray', picks } = options;
-  const imageData = ctx.createImageData(n_traces, n_samples);
-  const data      = imageData.data;
-
-  for (let t = 0; t < n_traces; t++) {
-    for (let s = 0; s < n_samples; s++) {
-      const val     = traces[t * n_samples + s] / 127;
-      const boosted = Math.max(-1, Math.min(1, val * contrast));
-      const pixel   = Math.round((boosted + 1) / 2 * 255);
-      const idx     = (s * n_traces + t) * 4;
-
-      if (colormap === 'seismic') {
-        if (boosted > 0) {
-          data[idx]     = 255;
-          data[idx + 1] = Math.round(255 * (1 - boosted));
-          data[idx + 2] = Math.round(255 * (1 - boosted));
-        } else {
-          data[idx]     = Math.round(255 * (1 + boosted));
-          data[idx + 1] = Math.round(255 * (1 + boosted));
-          data[idx + 2] = 255;
-        }
-      } else {
-        data[idx]     = pixel;
-        data[idx + 1] = pixel;
-        data[idx + 2] = pixel;
-      }
-      data[idx + 3] = 255;
-    }
-  }
-
-  ctx.putImageData(imageData, 0, 0);
-
-  if (picks && picks.length > 0) {
-    ctx.strokeStyle = '#FF4400';
-    ctx.lineWidth   = 1.5;
-    ctx.beginPath();
-    for (let t = 0; t < Math.min(picks.length, n_traces); t++) {
-      const s = picks[t];
-      if (t === 0) ctx.moveTo(t, s);
-      else ctx.lineTo(t, s);
-    }
-    ctx.stroke();
-  }
+function sampleIdxToDepthIn(sample_idx: number, n_samples: number): number {
+  const nsPerSample = TIME_RANGE_NS / n_samples;
+  const velocity    = 0.15 / Math.sqrt(EPSILON_R);          // m/ns
+  const depthM      = (sample_idx * nsPerSample * velocity) / 2;
+  return Math.round(depthM * 39.3701 * 1000) / 1000;        // → inches, 3 dp
 }
 
 export default function BScanViewer({
-  bscanData,
-  picks_in,
-  epsr = 9.0,
-  timeRangeNs = 16.0,
+  bscanData, jobId, serverUrl, onPicksSaved,
 }: BScanViewerProps) {
-  const canvasRef    = useRef<HTMLCanvasElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const scrollRef    = useRef<HTMLDivElement>(null);
-  const isPanning    = useRef(false);
-  const panStart     = useRef({ x: 0, scrollLeft: 0 });
+  const canvasRef     = useRef<HTMLCanvasElement>(null);
+  const scrollRef     = useRef<HTMLDivElement>(null);
+  const isDragging    = useRef(false);
+  const dragPickIdx   = useRef<number | null>(null);
+  const isPanning     = useRef(false);
+  const panStart      = useRef({ x: 0, scrollLeft: 0 });
+  const didMoveOrPan  = useRef(false);
 
   const [activeSwath, setActiveSwath] = useState(0);
   const [zoom,        setZoom]        = useState(1.0);
   const [contrast,    setContrast]    = useState(1.5);
   const [colormap,    setColormap]    = useState<'gray' | 'seismic'>('gray');
+  const [picks,       setPicks]       = useState<Pick[]>([]);
   const [loading,     setLoading]     = useState(false);
+  const [saving,      setSaving]      = useState(false);
   const [traces,      setTraces]      = useState<Int8Array | null>(null);
   const [dims,        setDims]        = useState({ n_traces: 0, n_samples: 0 });
+  const [saveMsg,     setSaveMsg]     = useState('');
 
+  // Load picks from backend
+  useEffect(() => {
+    if (!jobId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const token = session?.access_token;
+        const res = await fetch(`${serverUrl}/job/${jobId}/picks`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled) setPicks(data.picks ?? []);
+      } catch (e) {
+        console.error('Failed to load picks:', e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [jobId, serverUrl]);
+
+  // Decode the active swath's trace blob
   useEffect(() => {
     if (!bscanData || bscanData.length === 0) return;
     const swath = bscanData[activeSwath];
@@ -138,143 +121,324 @@ export default function BScanViewer({
     });
   }, [activeSwath, bscanData]);
 
+  // Render B-scan + pick overlay to the canvas
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !traces || dims.n_traces === 0) return;
     canvas.width  = dims.n_traces;
     canvas.height = dims.n_samples;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
 
-    let pickSamples: number[] | undefined;
-    if (picks_in && picks_in[activeSwath]) {
-      const velocity    = 0.15 / Math.sqrt(epsr);
-      const nsPerSample = timeRangeNs / dims.n_samples;
-      pickSamples = picks_in[activeSwath].map(depthIn => {
-        const depthM = depthIn / 39.3701;
-        const tNs    = depthM / velocity * 2;
-        return Math.round(tNs / nsPerSample);
-      });
+    const imageData = ctx.createImageData(dims.n_traces, dims.n_samples);
+    const data      = imageData.data;
+    for (let t = 0; t < dims.n_traces; t++) {
+      for (let s = 0; s < dims.n_samples; s++) {
+        const val   = traces[t * dims.n_samples + s] / 127;
+        const boost = Math.max(-1, Math.min(1, val * contrast));
+        const pixel = Math.round((boost + 1) / 2 * 255);
+        const idx   = (s * dims.n_traces + t) * 4;
+        if (colormap === 'seismic') {
+          data[idx]     = boost > 0 ? 255 : Math.round(255 * (1 + boost));
+          data[idx + 1] = Math.round(255 * (1 - Math.abs(boost)));
+          data[idx + 2] = boost < 0 ? 255 : Math.round(255 * (1 - boost));
+        } else {
+          data[idx] = data[idx + 1] = data[idx + 2] = pixel;
+        }
+        data[idx + 3] = 255;
+      }
     }
+    ctx.putImageData(imageData, 0, 0);
 
-    renderBScan(canvas, traces, dims.n_traces, dims.n_samples, {
-      contrast, colormap, picks: pickSamples,
+    const swathPicks = picks.filter(p => p.swath_idx === activeSwath);
+    ctx.fillStyle   = 'rgba(196, 181, 253, 0.85)';   // light purple — auto picks
+    ctx.strokeStyle = 'rgba(124,  58, 237, 0.95)';   // darker purple ring
+    ctx.lineWidth   = 1;
+    for (const pick of swathPicks) {
+      if (pick.trace_idx >= dims.n_traces || pick.sample_idx >= dims.n_samples) continue;
+      const r = pick.is_manual ? 5 : 4;
+      if (pick.is_manual) {
+        ctx.fillStyle   = 'rgba(167, 139, 250, 0.95)';
+        ctx.strokeStyle = 'rgba(91,  33, 182, 1)';
+      } else {
+        ctx.fillStyle   = 'rgba(196, 181, 253, 0.85)';
+        ctx.strokeStyle = 'rgba(124,  58, 237, 0.95)';
+      }
+      ctx.beginPath();
+      ctx.arc(pick.trace_idx, pick.sample_idx, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+  }, [traces, dims, contrast, colormap, picks, activeSwath]);
+
+  const canvasToPickCoords = useCallback((clientX: number, clientY: number) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return { trace_idx: 0, sample_idx: 0 };
+    const rect = canvas.getBoundingClientRect();
+    return {
+      trace_idx:  Math.round((clientX - rect.left) / zoom),
+      sample_idx: Math.round((clientY - rect.top)  / zoom),
+    };
+  }, [zoom]);
+
+  const findNearestPick = useCallback((
+    trace_idx: number, sample_idx: number, threshold = 10,
+  ): number | null => {
+    let nearest: number | null = null;
+    let minDist = Infinity;
+    picks.forEach((p, i) => {
+      if (p.swath_idx !== activeSwath) return;
+      const dist = Math.hypot(p.trace_idx - trace_idx, p.sample_idx - sample_idx);
+      if (dist < minDist && dist < threshold / zoom) {
+        minDist = dist;
+        nearest = i;
+      }
     });
-  }, [traces, dims, contrast, colormap, picks_in, activeSwath, epsr, timeRangeNs]);
+    return nearest;
+  }, [picks, activeSwath, zoom]);
 
-  const handleWheel = useCallback((e: React.WheelEvent) => {
-    e.preventDefault();
-    if (e.ctrlKey || e.metaKey) {
-      setZoom(z => Math.min(8, Math.max(0.25, z + (e.deltaY < 0 ? 0.15 : -0.15))));
-    } else if (scrollRef.current) {
-      scrollRef.current.scrollLeft += e.deltaY;
-    }
+  // Native non-passive wheel listener — React's onWheel is passive, which
+  // logs "Unable to preventDefault inside passive event listener" any time
+  // we swallow the page scroll for Ctrl-wheel zoom or horizontal panning.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      if (e.ctrlKey || e.metaKey) {
+        setZoom(z => Math.min(8, Math.max(0.25, z + (e.deltaY < 0 ? 0.15 : -0.15))));
+      } else {
+        el.scrollLeft += e.deltaY;
+      }
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
   }, []);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    isPanning.current = true;
-    panStart.current  = { x: e.clientX, scrollLeft: scrollRef.current?.scrollLeft ?? 0 };
-  }, []);
+    didMoveOrPan.current = false;
+    const { trace_idx, sample_idx } = canvasToPickCoords(e.clientX, e.clientY);
+
+    if (e.button === 2) {
+      e.preventDefault();
+      const idx = findNearestPick(trace_idx, sample_idx);
+      if (idx !== null) setPicks(prev => prev.filter((_, i) => i !== idx));
+      return;
+    }
+
+    const nearIdx = findNearestPick(trace_idx, sample_idx);
+    if (nearIdx !== null) {
+      isDragging.current  = true;
+      dragPickIdx.current = nearIdx;
+    } else {
+      isPanning.current = true;
+      panStart.current  = { x: e.clientX, scrollLeft: scrollRef.current?.scrollLeft ?? 0 };
+    }
+  }, [canvasToPickCoords, findNearestPick]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    if (!isPanning.current || !scrollRef.current) return;
-    const dx = e.clientX - panStart.current.x;
-    scrollRef.current.scrollLeft = panStart.current.scrollLeft - dx;
+    if (isDragging.current && dragPickIdx.current !== null) {
+      didMoveOrPan.current = true;
+      const { trace_idx, sample_idx } = canvasToPickCoords(e.clientX, e.clientY);
+      const ti = Math.max(0, Math.min(dims.n_traces - 1, trace_idx));
+      const si = Math.max(0, Math.min(dims.n_samples - 1, sample_idx));
+      setPicks(prev => prev.map((p, i) => i !== dragPickIdx.current ? p : {
+        ...p,
+        trace_idx:  ti,
+        sample_idx: si,
+        depth_in:   sampleIdxToDepthIn(si, dims.n_samples),
+        is_manual:  true,
+      }));
+    } else if (isPanning.current && scrollRef.current) {
+      didMoveOrPan.current = true;
+      scrollRef.current.scrollLeft = panStart.current.scrollLeft - (e.clientX - panStart.current.x);
+    }
+  }, [canvasToPickCoords, dims]);
+
+  const handleMouseUp = useCallback((e: React.MouseEvent) => {
+    const wasInteraction = isDragging.current || isPanning.current;
+    isDragging.current  = false;
+    dragPickIdx.current = null;
+    isPanning.current   = false;
+    if (wasInteraction && didMoveOrPan.current) return;
+    if (e.button !== 0) return;
+
+    // Left click without drag/pan: add a new pick if not on an existing one
+    const { trace_idx, sample_idx } = canvasToPickCoords(e.clientX, e.clientY);
+    if (trace_idx < 0 || trace_idx >= dims.n_traces) return;
+    if (sample_idx < 0 || sample_idx >= dims.n_samples) return;
+    if (findNearestPick(trace_idx, sample_idx) !== null) return;
+    setPicks(prev => [...prev, {
+      trace_idx, sample_idx,
+      depth_in:   sampleIdxToDepthIn(sample_idx, dims.n_samples),
+      confidence: 1.0,
+      is_manual:  true,
+      swath_idx:  activeSwath,
+    }]);
+  }, [canvasToPickCoords, findNearestPick, dims, activeSwath]);
+
+  const handleMouseLeave = useCallback(() => {
+    isDragging.current = false; isPanning.current = false; dragPickIdx.current = null;
   }, []);
 
-  const handleMouseUp = useCallback(() => { isPanning.current = false; }, []);
+  const savePicks = useCallback(async () => {
+    if (!jobId) { setSaveMsg('No job id'); return; }
+    setSaving(true); setSaveMsg('');
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      const res = await fetch(`${serverUrl}/job/${jobId}/picks`, {
+        method:  'POST',
+        headers: {
+          'Content-Type':  'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ picks }),
+      });
+      if (!res.ok) throw new Error(`Save failed: ${res.status}`);
+      setSaveMsg(`✓ ${picks.length} picks saved`);
+      onPicksSaved?.(picks);
+    } catch (e) {
+      setSaveMsg(`✗ ${e instanceof Error ? e.message : 'Save failed'}`);
+    } finally {
+      setSaving(false);
+    }
+  }, [picks, jobId, serverUrl, onPicksSaved]);
 
   if (!bscanData || bscanData.length === 0) {
     return (
-      <div style={{ padding: '40px', textAlign: 'center', color: '#9ca3af', background: '#111', borderRadius: '8px' }}>
-        <p>No B-scan data available.</p>
-        <p style={{ fontSize: '12px', marginTop: '8px' }}>
-          Upload Proceq .scan files to enable the interactive B-scan viewer.
+      <div style={{ padding: 40, textAlign: 'center', color: '#9ca3af', background: '#111', borderRadius: 8 }}>
+        <p style={{ margin: 0 }}>No B-scan data available.</p>
+        <p style={{ fontSize: 12, marginTop: 8 }}>
+          Upload Proceq .scan or GSSI .dzt files to enable the interactive B-scan viewer.
         </p>
       </div>
     );
   }
 
+  const swathPicks = picks.filter(p => p.swath_idx === activeSwath);
+
   return (
-    <div ref={containerRef} style={{
-      display: 'flex', flexDirection: 'column', gap: '8px',
-      background: '#111', borderRadius: '8px', padding: '12px',
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', paddingBottom: '8px', borderBottom: '1px solid #374151' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <span style={{ color: '#9ca3af', fontSize: '12px' }}>Swath:</span>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, background: '#111', borderRadius: 8, padding: 12 }}>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', paddingBottom: 8, borderBottom: '1px solid #374151' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ color: '#9ca3af', fontSize: 12 }}>Swath:</span>
           <select value={activeSwath} onChange={e => setActiveSwath(Number(e.target.value))} style={selectStyle}>
             {bscanData.map((_, i) => <option key={i} value={i}>Swath {i + 1}</option>)}
           </select>
         </div>
-        <div style={{ width: '1px', height: '20px', background: '#374151' }} />
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <span style={{ color: '#9ca3af', fontSize: '12px' }}>Zoom:</span>
+
+        <div style={divider} />
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <button onClick={() => setZoom(z => Math.max(0.25, z - 0.25))} style={btnStyle}>−</button>
-          <span style={{ color: '#f9fafb', fontSize: '12px', minWidth: '40px', textAlign: 'center' }}>{Math.round(zoom * 100)}%</span>
+          <span style={{ color: '#f9fafb', fontSize: 12, minWidth: 40, textAlign: 'center' }}>{Math.round(zoom * 100)}%</span>
           <button onClick={() => setZoom(z => Math.min(8, z + 0.25))} style={btnStyle}>+</button>
           <button onClick={() => setZoom(1)} style={btnStyle}>1:1</button>
-          <button onClick={() => setZoom(0.5)} style={btnStyle}>Fit</button>
         </div>
-        <div style={{ width: '1px', height: '20px', background: '#374151' }} />
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <span style={{ color: '#9ca3af', fontSize: '12px' }}>Gain:</span>
-          <input type="range" min="0.5" max="4" step="0.1" value={contrast} onChange={e => setContrast(Number(e.target.value))} style={{ width: '80px', accentColor: '#E8572A' }} />
-          <span style={{ color: '#f9fafb', fontSize: '11px', minWidth: '24px' }}>{contrast.toFixed(1)}×</span>
+
+        <div style={divider} />
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ color: '#9ca3af', fontSize: 12 }}>Gain:</span>
+          <input type="range" min={0.5} max={4} step={0.1} value={contrast}
+            onChange={e => setContrast(Number(e.target.value))}
+            style={{ width: 80, accentColor: ACCENT }} />
+          <span style={{ color: '#f9fafb', fontSize: 11, minWidth: 24 }}>{contrast.toFixed(1)}×</span>
         </div>
-        <div style={{ width: '1px', height: '20px', background: '#374151' }} />
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <span style={{ color: '#9ca3af', fontSize: '12px' }}>Color:</span>
-          <button onClick={() => setColormap('gray')} style={{ ...btnStyle, background: colormap === 'gray' ? '#E8572A' : '#374151' }}>Gray</button>
-          <button onClick={() => setColormap('seismic')} style={{ ...btnStyle, background: colormap === 'seismic' ? '#E8572A' : '#374151' }}>Seismic</button>
+
+        <div style={divider} />
+
+        <div style={{ display: 'flex', gap: 4 }}>
+          <button onClick={() => setColormap('gray')}    style={{ ...btnStyle, background: colormap === 'gray'    ? ACCENT : ACCENT_DIM }}>Gray</button>
+          <button onClick={() => setColormap('seismic')} style={{ ...btnStyle, background: colormap === 'seismic' ? ACCENT : ACCENT_DIM }}>Seismic</button>
         </div>
+
         <div style={{ flex: 1 }} />
-        <span style={{ color: '#6b7280', fontSize: '11px' }}>Drag to pan · Ctrl+scroll to zoom</span>
+
+        <span style={{ color: '#9ca3af', fontSize: 11 }}>
+          {swathPicks.length} pick{swathPicks.length === 1 ? '' : 's'} on swath {activeSwath + 1}
+        </span>
+
+        <button
+          onClick={savePicks}
+          disabled={saving || !jobId}
+          style={{ ...btnStyle, background: '#16a34a', padding: '4px 16px', fontWeight: 600, opacity: !jobId ? 0.5 : 1 }}
+          title={!jobId ? 'Save the project first to persist picks' : 'Save picks to the server'}
+        >
+          {saving ? 'Saving…' : 'Save Picks'}
+        </button>
+
+        {saveMsg && (
+          <span style={{ fontSize: 11, color: saveMsg.startsWith('✓') ? '#4ade80' : '#f87171' }}>
+            {saveMsg}
+          </span>
+        )}
+      </div>
+
+      <div style={{ fontSize: 11, color: '#6b7280', display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+        <span>• Click to add pick</span>
+        <span>• Drag to move pick</span>
+        <span>• Right-click to remove</span>
+        <span>• Ctrl+scroll to zoom</span>
+        <span style={{ color: '#c4b5fd' }}>● Automated picks</span>
+        <span style={{ color: '#a78bfa' }}>● Manual picks</span>
       </div>
 
       <div
         ref={scrollRef}
-        onWheel={handleWheel}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
         style={{
-          overflow: 'auto', cursor: isPanning.current ? 'grabbing' : 'crosshair',
-          background: '#000', borderRadius: '4px', minHeight: '300px', maxHeight: '65vh', position: 'relative',
+          overflow: 'auto', background: '#000', borderRadius: 4, border: '1px solid #374151',
+          minHeight: 300, maxHeight: '65vh', position: 'relative', touchAction: 'none',
         }}
       >
         {loading && (
-          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.7)', color: '#fff', zIndex: 10 }}>
-            Loading B-scan data...
+          <div style={{
+            position: 'absolute', inset: 0, display: 'flex',
+            alignItems: 'center', justifyContent: 'center',
+            background: 'rgba(0,0,0,0.7)', color: '#fff', zIndex: 10, fontSize: 13,
+          }}>
+            Loading B-scan…
           </div>
         )}
         <canvas
           ref={canvasRef}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseLeave}
+          onContextMenu={e => e.preventDefault()}
           style={{
             display: 'block',
             imageRendering: zoom > 2 ? 'pixelated' : 'auto',
             width:  dims.n_traces  > 0 ? `${dims.n_traces  * zoom}px` : '100%',
             height: dims.n_samples > 0 ? `${dims.n_samples * zoom}px` : 'auto',
+            cursor: 'crosshair',
+            userSelect: 'none',
           }}
         />
       </div>
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#6b7280', padding: '0 4px' }}>
-        <span>← Distance along scan (m) →</span>
-        <span>{dims.n_traces} traces × {dims.n_samples} samples | Swath {activeSwath + 1} of {bscanData.length}</span>
-        <span>↕ Two-way travel time (ns) / Depth (in)</span>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#6b7280', padding: '0 4px' }}>
+        <span>← Distance along scan (traces) →</span>
+        <span>{dims.n_traces} × {dims.n_samples} · Swath {activeSwath + 1}/{bscanData.length}</span>
+        <span>↕ Depth (in)</span>
       </div>
     </div>
   );
 }
 
 const btnStyle: React.CSSProperties = {
-  padding: '3px 10px', fontSize: '12px',
-  border: '1px solid #4b5563', borderRadius: '4px',
+  padding: '3px 10px', fontSize: 12,
+  border: '1px solid #4b5563', borderRadius: 4,
   background: '#374151', color: '#f9fafb', cursor: 'pointer',
 };
-
 const selectStyle: React.CSSProperties = {
-  padding: '3px 8px', fontSize: '12px',
-  border: '1px solid #4b5563', borderRadius: '4px',
-  background: '#374151', color: '#f9fafb', cursor: 'pointer',
+  padding: '3px 8px', fontSize: 12,
+  border: '1px solid #4b5563', borderRadius: 4,
+  background: '#374151', color: '#f9fafb',
+};
+const divider: React.CSSProperties = {
+  width: 1, height: 20, background: '#374151',
 };

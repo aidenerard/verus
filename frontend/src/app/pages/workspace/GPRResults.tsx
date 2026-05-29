@@ -2,9 +2,10 @@ import { useMemo, useState } from 'react';
 import { ImageOff, LayoutGrid, Activity } from 'lucide-react';
 import type { AnalysisResult } from '../inspect/types';
 import { useMapbox } from '../inspect/useMapbox';
+import { SERVER } from '../inspect/constants';
 import BScanViewer from './BScanViewer';
 import ConditionMapPanel from './ConditionMapPanel';
-import { BORDER, PANEL, RAISED, TEXT, TEXT2, TEXT3, ACCENT, ACCENT_SOFT } from './tokens';
+import { BORDER, BORDER2, PANEL, RAISED, TEXT, TEXT2, TEXT3, ACCENT, ACCENT_SOFT } from './tokens';
 
 interface Props {
   result:     AnalysisResult;
@@ -31,7 +32,7 @@ function meanRebarDepth(result: AnalysisResult): number | undefined {
   return samples.reduce((a, b) => a + b, 0) / samples.length;
 }
 
-export default function GPRResults({ result }: Props) {
+export default function GPRResults({ result, projectId }: Props) {
   const [tab, setTab] = useState<ResultsTab>('overview');
 
   return (
@@ -45,7 +46,7 @@ export default function GPRResults({ result }: Props) {
       <ResultsTabs tab={tab} setTab={setTab} />
       {tab === 'overview'
         ? <OverviewTab result={result} />
-        : <InteractiveTabBody result={result} />}
+        : <InteractiveTabBody result={result} projectId={projectId} />}
     </div>
   );
 }
@@ -191,10 +192,22 @@ function OverviewTab({ result }: { result: AnalysisResult }) {
   );
 }
 
-function InteractiveTabBody({ result }: { result: AnalysisResult }) {
+function InteractiveTabBody({ result, projectId }: { result: AnalysisResult; projectId?: string }) {
+  if (!projectId) {
+    return (
+      <div style={{ background: PANEL, border: `1px dashed ${BORDER2}`, padding: '40px 24px', textAlign: 'center', color: TEXT2 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: TEXT, marginBottom: 6 }}>Save the project first</div>
+        <div style={{ fontSize: 12 }}>The interactive pick editor needs a saved job id to load and persist picks.</div>
+      </div>
+    );
+  }
   return (
     <div style={{ padding: 16, background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 8 }}>
-      <BScanViewer bscanData={result.bscan_data ?? []} />
+      <BScanViewer
+        bscanData={result.bscan_data ?? []}
+        jobId={projectId}
+        serverUrl={SERVER}
+      />
     </div>
   );
 }
