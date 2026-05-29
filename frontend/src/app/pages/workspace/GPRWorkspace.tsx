@@ -41,7 +41,7 @@ export default function GPRWorkspace() {
   }, [analysisName, analysisNotes, company, project]);
 
   const {
-    jobStatus, errorMsg, showConfirm, setShowConfirm,
+    jobId, jobStatus, errorMsg, showConfirm, setShowConfirm,
     estimatedSecs, showProgressOverlay, onConfirmAnalysis, isAnalyzing,
   } = useAnalysisJob({
     files, session, manufacturer, frequencyMhz,
@@ -52,6 +52,19 @@ export default function GPRWorkspace() {
     analysisName, analysisNotes,
     company, project,
   });
+
+  // Backend auto-saves the analysis on submit (creates the analysis_jobs row
+  // and returns a job_id). Pushing that id into the URL means a refresh
+  // restores the same view and the analyst can share a link to it. Both
+  // sources funnel into `currentJobId` so GPRResults / BScanViewer see a
+  // jobId immediately, not only after a manual save.
+  const currentJobId = jobId ?? viewJobId ?? undefined;
+  const setSearchParams = useSearchParams()[1];
+  useEffect(() => {
+    if (jobId && jobId !== viewJobId) {
+      setSearchParams({ project_id: jobId }, { replace: true });
+    }
+  }, [jobId, viewJobId, setSearchParams]);
 
   // Pre-fill Company from the user's profile so analysts never re-type it.
   // Only runs when the field is still empty, so user-typed values are never
@@ -77,6 +90,10 @@ export default function GPRWorkspace() {
 
   useEffect(() => {
     if (!viewJobId) return;
+    // Skip the refetch when the URL just became this jobId because we
+    // pushed it ourselves after a local analysis run — the result is
+    // already in state and refetching just blanks the UI with a spinner.
+    if (jobId && jobId === viewJobId && analysisResult) return;
     setLoadingJob(true);
     supabase.from('analysis_jobs').select('*').eq('id', viewJobId).single()
       .then(({ data, error }) => {
@@ -119,7 +136,7 @@ export default function GPRWorkspace() {
       {loadingJob ? (
         <LoadingCard />
       ) : analysisResult ? (
-        <GPRResults result={analysisResult} projectId={viewJobId ?? undefined} />
+        <GPRResults result={analysisResult} projectId={currentJobId} />
       ) : (
         <GPRUploadCard
           files={files} setFiles={setFiles}
