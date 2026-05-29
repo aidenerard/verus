@@ -31,7 +31,7 @@ warnings.filterwarnings("ignore")
 # ── Paths ──────────────────────────────────────────────────────────────────────
 TERRACON_DIR   = r"C:\Users\quack\Documents\Projects\Verus\Data\Stephen Terracon Cornbread\Data"
 INFRASENSE_DIR = r"C:\Users\quack\Documents\Projects\Verus\Data\Ken Infrasense Data #1"
-PRETRAIN_PATH  = Path(__file__).parent / "server" / "models" / "horizon_model_depth_fix.pth"
+PRETRAIN_PATH  = Path(__file__).parent / "server" / "models" / "horizon_model_pretrained.pth"
 MODEL_OUT      = Path(__file__).parent / "server" / "models" / "horizon_model_exp_e.pth"
 
 # ── Hyper-parameters ───────────────────────────────────────────────────────────
@@ -72,6 +72,20 @@ class HorizonCNN(nn.Module):
         )
     def forward(self, x):
         return self.depth_head(self.attn(self.conv(x))).squeeze(-1)
+
+
+def reinit_head(model: "HorizonCNN") -> None:
+    """Re-initialize depth_head to random weights.
+
+    gprMax synthetic amplitudes are unreliable (no antenna coupling, no 3D
+    spreading). The head must always be retrained on real labels; only conv
+    feature extractors transfer.
+    """
+    for layer in model.depth_head:
+        if hasattr(layer, "reset_parameters"):
+            layer.reset_parameters()
+    print("depth_head re-initialized — conv weights retained, head weights discarded")
+
 
 # ── Preprocessing (matches run_rebar_inference exactly) ────────────────────────
 def preprocess(arr: np.ndarray) -> np.ndarray:
@@ -263,27 +277,74 @@ INFRASENSE_LAYOUT = {
     "B440029": {
         "gt_csv": str(Path(INFRASENSE_DIR) / "B440029 Rebar Depth Report.csv"),
         "layout": [
+            # Scan ranges verified against B440029 Rebar Depth Report.csv.
+            # Each DZT file uses a session-local scan counter; ranges are not
+            # contiguous across files. Prior bug: all 9 entries used file-799's
+            # range [3535,4163], so files 801/803/805/807 loaded wrong DZT columns
+            # with zero GT matches (~959 traces vs ~3,875 expected).
             (799, 1, 3535, 4163, False),
             (799, 2, 3535, 4163, False),
-            (801, 1, 3535, 4163, False),
-            (801, 2, 3535, 4163, False),
-            (803, 1, 3535, 4163, False),
-            (803, 2, 3535, 4163, False),
-            (805, 1, 3535, 4163, False),
-            (805, 2, 3535, 4163, False),
-            (807, 2, 3535, 4163, False),
+            (801, 1, 4737, 5373, False),
+            (801, 2, 4737, 5373, False),
+            (803, 1, 4835, 5462, False),
+            (803, 2, 4835, 5462, False),
+            (805, 1, 4984, 5614, False),
+            (805, 2, 4984, 5614, False),
+            (807, 2, 4016, 4643, False),
         ],
     },
     "B170020": {
         "gt_csv": str(Path(INFRASENSE_DIR) / "B170020 Rebar Depth Report.csv"),
         "layout": [
+            # Ranges match test_rebar_validation.py exactly.
+            # Files 096/098 (_r suffix in GT CSV) omitted: _dzt_key cannot generate
+            # the _r filename, so adding them without fixing key generation would
+            # corrupt depth labels for reversed traversals.
             (95,  1,  610, 1802, False),
-            (95,  2,  610, 1802, False),
-            (97,  1,  610, 1802, False),
-            (97,  2,  610, 1802, False),
+            (95,  2,  617, 1806, False),
+            (97,  1,  437, 1623, False),
+            (97,  2,  443, 1645, False),
         ],
     },
 }
+
+# Expected GT match counts (from Rebar Depth Report CSVs). Used by --dry-run.
+_EXPECTED_GT: dict = {
+    "B440029": {(799, 1): 429, (799, 2): 431, (801, 1): 430, (801, 2): 431,
+                (803, 1): 431, (803, 2): 431, (805, 1): 430, (805, 2): 431,
+                (807, 2): 431},
+    "B170020": {(95, 1): 817, (95, 2): 818, (97, 1): 817, (97, 2): 816},
+}
+
+
+def _audit_layout(bridge_name: str, layout: list, gt_csv: str) -> bool:
+    """Verify layout scan ranges against the GT CSV without loading DZTs.
+    Returns True if every file-channel pair has ≥90% of expected GT matches."""
+    gt       = _load_gt_csv(gt_csv)
+    expected = _EXPECTED_GT.get(bridge_name, {})
+    all_ok   = True
+    print(f"\n  {bridge_name} layout audit (GT CSV scan-range check):")
+    print(f"  {'file':>6} ch  expected  matched  rate   status")
+    for file_num, ch_num, start_scan, end_scan, _ in layout:
+        prefix    = _dzt_key(file_num, ch_num)
+        n_matched = sum(1 for s in range(start_scan, end_scan) if (prefix, s) in gt)
+        exp       = expected.get((file_num, ch_num), "?")
+        thresh    = int(exp * 0.9) if isinstance(exp, int) else 1
+        ok        = n_matched >= thresh
+        if not ok:
+            all_ok = False
+        rate = f"{n_matched/exp:.0%}" if isinstance(exp, int) and exp > 0 else "?"
+        print(f"  {file_num:>6}  {ch_num}  {str(exp):>8}  {n_matched:>7}  {rate:>5}  "
+              f"{'OK' if ok else 'FAIL'}")
+    total_exp     = sum(v for v in expected.values())
+    total_matched = sum(
+        sum(1 for s in range(s0, s1) if (_dzt_key(fn, cn), s) in gt)
+        for fn, cn, s0, s1, _ in layout
+    )
+    print(f"  Total: {total_matched}/{total_exp} "
+          f"({total_matched/total_exp:.0%})  "
+          f"{'PASS' if all_ok else 'FAIL — fix scan ranges before training'}")
+    return all_ok
 
 # ── Dataset ────────────────────────────────────────────────────────────────────
 class GPRDataset(Dataset):
@@ -310,8 +371,21 @@ class GPRDataset(Dataset):
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 def main():
+    import argparse, sys
+    ap = argparse.ArgumentParser()
+    ap.add_argument(
+        "--reinit-head", action=argparse.BooleanOptionalAction, default=True,
+        help="Re-initialize depth_head after loading pretrain checkpoint (default: True). "
+             "Always True when loading from gprMax pretrained weights — set False only "
+             "when resuming a fine-tune run mid-training.",
+    )
+    ap.add_argument(
+        "--dry-run", action="store_true",
+        help="Audit GT scan-range match counts and print data stats without training.",
+    )
+    args = ap.parse_args()
+
     print("\n=== Loading training data ===")
-    import sys
     sys.path.insert(0, str(Path(__file__).parent))
 
     X_tc, y_tc = load_terracon()
@@ -321,6 +395,21 @@ def main():
 
     cfg_val = INFRASENSE_LAYOUT["B170020"]
     X_val, y_val = load_infrasense_bridge("B170020", cfg_val["layout"], cfg_val["gt_csv"])
+
+    if args.dry_run:
+        print("\n=== --dry-run: layout audit (no DZT load needed) ===")
+        b440_ok = _audit_layout("B440029",
+                                INFRASENSE_LAYOUT["B440029"]["layout"],
+                                INFRASENSE_LAYOUT["B440029"]["gt_csv"])
+        b170_ok = _audit_layout("B170020",
+                                INFRASENSE_LAYOUT["B170020"]["layout"],
+                                INFRASENSE_LAYOUT["B170020"]["gt_csv"])
+        print("\n=== --dry-run: data load summary ===")
+        print(f"  B440029 training : {len(X_if_tr):,} GT-matched traces")
+        print(f"  B170020 val      : {len(X_val):,} GT-matched traces")
+        status = "PASS" if b440_ok and b170_ok else "FAIL — fix layout before training"
+        print(f"\nDry-run result: {status}")
+        return
 
     if len(X_if_tr) == 0:
         print("ERROR: No Infrasense training data loaded. Check paths and DZT files.")
@@ -353,7 +442,11 @@ def main():
     if PRETRAIN_PATH.exists():
         state = torch.load(str(PRETRAIN_PATH), map_location=DEVICE, weights_only=False)
         model.load_state_dict(state)
-        print(f"Warm-start from {PRETRAIN_PATH.name}")
+        print(f"Loaded pretrain checkpoint: {PRETRAIN_PATH.name}")
+        if args.reinit_head:
+            reinit_head(model)
+        else:
+            print("WARNING: --no-reinit-head set — depth_head weights from synthetic pretrain retained")
     else:
         print("WARNING: pretrain checkpoint not found, training from scratch")
 
