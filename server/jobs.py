@@ -155,7 +155,7 @@ def run_analysis_job(
 
         (
             file_preds, file_confs, file_names,
-            file_peak_idxs, file_peak_amps,
+            file_peak_idxs, file_peak_amps, file_atten_arrs,
             rebar_depth_arrs, rebar_twt_arrs, rebar_peak_arrs,
             per_file_summary, total_sigs,
         ) = process_files(
@@ -172,7 +172,7 @@ def run_analysis_job(
         result, cscan_b64, rebar_cscan_b64, amp_b64 = build_result_payload(
             job_id,
             file_preds, file_confs, file_names,
-            file_peak_idxs, file_peak_amps,
+            file_peak_idxs, file_peak_amps, file_atten_arrs,
             rebar_depth_arrs, rebar_twt_arrs, rebar_peak_arrs,
             per_file_summary, total_sigs,
             frequency_mhz, manufacturer, rebar_model,

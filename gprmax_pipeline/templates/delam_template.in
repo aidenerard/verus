@@ -1,0 +1,14 @@
+﻿#title: delamination label={label} gap_depth={gap_depth_mm}mm thick={gap_thick_mm}mm fill={fill} epsr={epsr}
+#domain: 0.60 0.50 0.002
+#dx_dy_dz: 0.002 0.002 0.002
+#time_window: 8e-9
+
+#material: {epsr} {sigma} 1 0 concrete
+#material: {fill_epsr} {fill_sigma} 1 0 gap_fill
+
+#waveform: ricker 1 {freq_hz} src_wave
+#hertzian_dipole: z 0.300 0.450 0 src_wave
+#rx: 0.340 0.450 0
+
+#box: 0 0 0 0.60 0.50 0.002 concrete
+{gap_box}

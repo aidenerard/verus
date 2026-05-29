@@ -94,29 +94,35 @@ def extract_peak_info(
 def build_prob_grid(
     file_preds: list[np.ndarray],
     file_confs: list[np.ndarray],
-) -> tuple[np.ndarray, float]:
+) -> tuple[np.ndarray, np.ndarray, float]:
     """
-    Build downsampled P(sound) grid and Otsu threshold.
+    Build downsampled P(sound) grid, confidence grid, and Otsu threshold.
 
     Returns
     -------
-    prob_grid : float32 (rows, cols) — NaN for padding
+    prob_grid : float32 (rows, cols) — P(sound), NaN for padding
+    conf_grid : float32 (rows, cols) — model confidence in predicted class, NaN for padding
     otsu_T    : Otsu threshold float
     """
     n_files  = len(file_preds)
     max_sigs = max(len(p) for p in file_preds)
 
-    grid = np.full((n_files, max_sigs), np.nan, dtype=np.float32)
+    grid      = np.full((n_files, max_sigs), np.nan, dtype=np.float32)
+    conf_grid = np.full((n_files, max_sigs), np.nan, dtype=np.float32)
     for row, (preds, confs) in enumerate(zip(file_preds, file_confs)):
         for col, (pred, conf) in enumerate(zip(preds, confs)):
-            grid[row, col] = conf if pred == 1 else 1.0 - conf
+            grid[row, col]      = conf if pred == 1 else 1.0 - conf
+            conf_grid[row, col] = float(conf)
 
-    grid = _downsample(grid)
+    grid      = _downsample(grid)
+    conf_grid = _downsample(conf_grid)
     _fill_trailing_nan(grid)
+    _fill_trailing_nan(conf_grid)
 
     if grid.shape[1] < 50:
-        scale = max(1, 50 // grid.shape[1])
-        grid  = zoom(grid, (1, scale), order=1)
+        scale     = max(1, 50 // grid.shape[1])
+        grid      = zoom(grid, (1, scale), order=1)
+        conf_grid = zoom(conf_grid, (1, scale), order=1)
 
     all_preds  = np.concatenate(file_preds)
     all_confs  = np.concatenate(file_confs)
@@ -124,7 +130,7 @@ def build_prob_grid(
     T = _otsu_threshold(all_psound)
     del all_psound, all_confs, all_preds
 
-    return grid.astype(np.float32), T
+    return grid.astype(np.float32), conf_grid.astype(np.float32), T
 
 
 def build_extra_grids(

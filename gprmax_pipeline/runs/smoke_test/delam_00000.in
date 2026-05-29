@@ -1,0 +1,12 @@
+#title: sound epsr=4.15 freq=900MHz
+#domain: 0.60 0.50 0.002
+#dx_dy_dz: 0.002 0.002 0.002
+#time_window: 8e-9
+
+#material: 4.1501 0.0145 1 0 concrete
+
+#waveform: ricker 1 900000000 src_wave
+#hertzian_dipole: z 0.300 0.450 0 src_wave
+#rx: 0.340 0.450 0
+
+#box: 0 0 0 0.60 0.50 0.002 concrete
