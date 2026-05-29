@@ -33,8 +33,42 @@ def preprocess_for_display(traces, frequency_mhz: float = 2000):
     from scipy import signal as sp_signal
     from scipy.signal import hilbert
 
-    processed = traces.copy().astype(np.float32)
-    n_traces, n_samples = processed.shape
+    raw = traces.astype(np.float32)
+    n_in, n_samples = raw.shape
+    print(f"[PREPROCESS] input shape={raw.shape} "
+          f"range=[{float(raw.min()):.4g}, {float(raw.max()):.4g}] "
+          f"mean={float(raw.mean()):.4g} std={float(raw.std()):.4g}", flush=True)
+
+    # Dead-trace filter. Calibration / dead traces (constant or near-constant)
+    # poison the global percentile stretch in Step 6 by yanking p1/p99 toward
+    # their plateau value. Spec calls for std<1.0, which is correct for
+    # unscaled DZT readgssi output (millions-range) but would drop every
+    # trace for Proceq data already normalized to [-1, 1] on ingest. Gate on
+    # the input scale and fall back to a relative floor.
+    trace_stds = raw.std(axis=1)
+    amp_max = float(np.abs(raw).max())
+    if amp_max > 100.0:
+        std_threshold = 1.0
+    else:
+        std_threshold = max(float(raw.std()) * 0.01, 1e-6)
+    valid_mask = trace_stds >= std_threshold
+    n_valid = int(valid_mask.sum())
+    print(f"[PREPROCESS] trace stdev range=[{float(trace_stds.min()):.4g}, "
+          f"{float(trace_stds.max()):.4g}], threshold={std_threshold:.4g}, "
+          f"dropping {n_in - n_valid} of {n_in} traces", flush=True)
+    if n_valid < 10:
+        raise ValueError(
+            f"only {n_valid} valid traces remain after std<{std_threshold:.4g} "
+            f"filter (need ≥10) — input appears to be all-zero, calibration-only, "
+            f"or corrupted"
+        )
+    processed = raw[valid_mask].copy()
+    n_traces = processed.shape[0]
+
+    # Explicit per-trace DC mean subtraction (axis=1, keepdims=True). Belt-and-
+    # suspenders before the sliding-window dewow that follows — guarantees the
+    # whole trace is centred on zero regardless of dewow window edge effects.
+    processed = processed - processed.mean(axis=1, keepdims=True)
 
     # Step 1 — DC removal (dewow): subtract a sliding mean per trace to kill
     # low-frequency drift / DC bias without flattening reflectors.
@@ -94,6 +128,10 @@ def preprocess_for_display(traces, frequency_mhz: float = 2000):
         processed = (processed - p1) / (p99 - p1) * 2 - 1
     else:
         processed = np.zeros_like(processed)
+
+    print(f"[PREPROCESS] output shape={processed.shape} "
+          f"range=[{float(processed.min()):.4g}, {float(processed.max()):.4g}] "
+          f"mean={float(processed.mean()):.4g} std={float(processed.std()):.4g}", flush=True)
     return processed
 
 
