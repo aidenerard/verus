@@ -3,6 +3,7 @@ import { ImageOff, LayoutGrid, Activity } from 'lucide-react';
 import type { AnalysisResult } from '../inspect/types';
 import { useMapbox } from '../inspect/useMapbox';
 import BScanViewer from './BScanViewer';
+import ConditionMapPanel from './ConditionMapPanel';
 import { BORDER, PANEL, RAISED, TEXT, TEXT2, TEXT3, ACCENT, ACCENT_SOFT } from './tokens';
 
 interface Props {
@@ -148,8 +149,13 @@ function OverviewTab({ result }: { result: AnalysisResult }) {
   // per_file_summary is DZT-only; Proceq results don't carry it.
   const hasGps = (result.per_file_summary ?? []).some(f => f.gps);
 
+  const conditionSrc = resolveImageSrc(result.cscan_url ?? result.cscan_image);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      {conditionSrc && (
+        <ConditionMapPanel result={result} src={conditionSrc} />
+      )}
       <div className="gpr-panel-grid">
         {panels.map(p => <ResultPanel key={p.title} title={p.title} src={p.src} />)}
       </div>
