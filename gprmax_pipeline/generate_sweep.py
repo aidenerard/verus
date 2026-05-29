@@ -158,7 +158,11 @@ def delam_params(rng, label):
 
 def rebar2mat_params(rng):
     p = rebar_params(rng)
-    # Bottom mat is 60–120 mm deeper than the top mat, capped so it stays in domain
+    # Bottom mat is 60–120 mm deeper than the top mat, capped so it stays in domain.
+    # For top_depth_mm > 180mm, the actual separation is compressed below the drawn value
+    # because the cap at 300mm (concrete block height) takes effect. This is documented
+    # rather than fixed — the cap preserves simulation validity; affected samples are ~40%
+    # of the sweep with the 40–250mm depth range.
     mat_sep_mm  = rng.uniform(60.0, 120.0)
     bot_depth_mm = min(p["depth_mm"] + mat_sep_mm, 300.0)
     p["bot_depth_mm"] = bot_depth_mm

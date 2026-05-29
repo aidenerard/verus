@@ -6,18 +6,19 @@ Key changes vs colab_train_horizon.py:
   - B170020 is held out as the validation bridge (same bridge used for all prior baselines)
   - MAX_DEPTH_MM raised to 250 (covers B440029 max truth 9.22" = 234mm)
   - Infrasense samples weighted 3× in WeightedRandomSampler
-  - Warm-start from Exp D checkpoint (horizon_model_depth_fix.pth)
-  - Uses depth_head attribute name to match Exp D checkpoint
+  - Warm-start from gprMax pretrain checkpoint (horizon_model_pretrained.pth)
+  - depth_head always re-initialized after loading pretrain (--reinit-head default True)
 
 Run locally:
-    python train_rebar_exp_e.py
+    python train_rebar_exp_e.py          # reinit-head=True by default
+    python train_rebar_exp_e.py --no-reinit-head  # resume only; never for fresh pretrain load
 
 Run on Kaggle:
-  - Upload as script with horizon_model_depth_fix.pth attached as dataset
+  - Upload as script with horizon_model_pretrained.pth attached as dataset
   - Set TERRACON_DIR and INFRASENSE_DIR to Kaggle input paths
   - GPU runtime recommended (T4/P100)
 """
-import os, glob, csv, warnings, time
+import argparse, os, glob, csv, sys, warnings, time
 import numpy as np
 import torch
 import torch.nn as nn
@@ -371,7 +372,6 @@ class GPRDataset(Dataset):
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 def main():
-    import argparse, sys
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--reinit-head", action=argparse.BooleanOptionalAction, default=True,

@@ -7,9 +7,10 @@ Input is either:
 
 Output: server/models/horizon_model_pretrained.pth  (conv + attn + depth_head weights)
 
-Critical: depth_head from this checkpoint must be re-initialized before fine-tuning on
-real data. Amplitude statistics in gprMax synthetics are physically unreliable (no antenna
-coupling, no 3D spreading). Only the conv feature extractors are worth transferring.
+Depth labels normalized by MAX_DEPTH_MM=250 (matches train_rebar_exp_e.py). Critical:
+depth_head from this checkpoint must be re-initialized before fine-tuning on real data.
+Amplitude statistics in gprMax synthetics are physically unreliable (no antenna coupling,
+no 3D spreading). Only the conv feature extractors are worth transferring.
 
 Usage:
     python train_rebar_pretrain.py gprmax_pipeline/runs/rebar2mat_test
@@ -25,7 +26,7 @@ from torch.utils.data import Dataset, DataLoader
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from pathlib import Path
 
-MAX_DEPTH_MM   = 120.0   # normalization ceiling; depths >120mm are clipped to 1.0
+MAX_DEPTH_MM   = 250.0   # matches train_rebar_exp_e.py and covers B440029 max truth (234mm)
 TARGET_SAMPLES = 512
 BATCH_SIZE     = 512
 EPOCHS         = 50
@@ -43,7 +44,10 @@ def _extract_ez(out_path: str) -> np.ndarray:
 
 
 def _process(ez: np.ndarray) -> np.ndarray:
-    """DC-remove → resample to 512 → max-abs normalize. Matches colab_train_horizon.py."""
+    """DC-remove → resample to 512 → max-abs normalize.
+    Order differs from colab_train_horizon.py (DC-remove before resample vs after);
+    numerically equivalent for GPR A-scans.
+    """
     ez = ez - ez.mean()
     ez = scipy_resample(ez, TARGET_SAMPLES).astype(np.float32)
     peak = float(np.abs(ez).max())
@@ -62,7 +66,7 @@ def _load_from_dir(input_dir: str):
     X_list, y_list = [], []
     n_missing = 0
     for row in rows:
-        out_name = row["filename"].replace(".in", ".out")
+        out_name = os.path.splitext(row["filename"])[0] + ".out"
         out_path = os.path.join(input_dir, out_name)
         if not os.path.exists(out_path):
             n_missing += 1
