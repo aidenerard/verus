@@ -124,7 +124,7 @@ def process_files(
             "signals":           n,
             "delam_pct":         delam_pct,
             "gps":               gps,
-            "bscan":             bscan_info,
+            "bscan_data":        bscan_info,
             "rebar_depth_mean":  rdm,
             "rebar_depth_min":   rdmn,
             "rebar_depth_max":   rdmx,
@@ -263,11 +263,18 @@ def build_result_payload(
     except Exception as exc:
         print(f"[job:{job_id}] Extra grids failed: {exc}", flush=True)
 
+    # Aggregate per-file B-scan blobs into a top-level array so the frontend
+    # BScanViewer (which reads result.bscan_data) finds them at the same path
+    # as the Proceq path. Each entry is one swath/file's preprocessed traces.
+    bscan_list = [f["bscan_data"] for f in per_file_summary if f.get("bscan_data")]
+
     result = {
         "signals_analyzed":    total_sigs,
         "delamination_pct":    delam_pct_total,
         "sound_pct":           sound_pct_total,
         "per_file_summary":    per_file_summary,
+        "bscan_data":          bscan_list,
+        "bscan_count":         len(bscan_list),
         "rebar_model_used":    rebar_model is not None,
         "prob_grid_data":      prob_grid_data_j,
         "amplitude_grid_data": amplitude_grid_data_j,
