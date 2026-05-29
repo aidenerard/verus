@@ -171,6 +171,34 @@ from analysis_proceq_utils import median_swath_length as _median_swath_length  #
 from analysis_proceq_utils import group_files_by_swath  # noqa: E402
 
 
+def _persist_proceq_hyperbola_picks(sb, job_id, swath_idx: int, traces, epsr: float) -> None:
+    """Detect hyperbola apex picks for this swath's first-channel traces and
+    insert them into the picks table. Best-effort — silent failure if the
+    pending migration adding sample_idx/swath_idx columns hasn't run yet."""
+    if not sb or not job_id:
+        return
+    try:
+        from analysis import detect_hyperbola_picks
+        picks = detect_hyperbola_picks(traces=traces, epsr=epsr, time_range_ns=16.0)
+        if not picks:
+            return
+        rows = [{
+            "job_id":       job_id,
+            "scan_line_id": str(swath_idx),
+            "trace_index":  int(p["trace_idx"]),
+            "sample_idx":   int(p["sample_idx"]),
+            "depth_in":     float(p["depth_in"]),
+            "confidence":   float(p["confidence"]),
+            "is_edited":    False,
+            "is_manual":    False,
+            "swath_idx":    int(swath_idx),
+        } for p in picks]
+        sb.table("picks").insert(rows).execute()
+        print(f"[PICKS] persisted {len(rows)} hyperbola picks (swath {swath_idx + 1})", flush=True)
+    except Exception as exc:
+        print(f"[PICKS] persist failed (non-fatal): {exc}", flush=True)
+
+
 def process_proceq_dataset(
     data_dir: str,
     output_dir: str,
@@ -179,6 +207,8 @@ def process_proceq_dataset(
     search_end: int = 150,
     inference_sample_rate: int = 16,
     analysis_name: str = "Untitled Analysis",
+    supabase_client=None,
+    job_id: str | None = None,
 ) -> dict | None:
     import sys
     sys.path.insert(0, os.path.dirname(__file__))
@@ -258,6 +288,9 @@ def process_proceq_dataset(
                 ts_data['rebar_in'].append(depth_result['depths_in'])
                 from analysis_bscan import encode_traces_for_frontend
                 ts_data['bscan_data'].append(encode_traces_for_frontend(traces))
+                _persist_proceq_hyperbola_picks(
+                    supabase_client, job_id, swath_idx, traces, epsr,
+                )
 
             print(f"[ANALYSIS]   swath {swath_idx+1:02d} ch {ch_idx+1}: "
                   f"{n_traces} traces  depth {depth_result['depths_in'].mean():.2f}\"")

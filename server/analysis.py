@@ -290,6 +290,101 @@ def build_model_depth_map(
     return out
 
 
+def _epsr_for_frequency(frequency_mhz: int) -> float:
+    """Rebar dielectric constant by GPR centre frequency. Mirrors inference.py."""
+    return {400: 8.0, 900: 7.0, 1600: 6.0, 2000: 5.5, 2600: 5.0}.get(frequency_mhz, 6.0)
+
+
+def detect_hyperbola_picks(
+    traces,
+    epsr: float = 9.0,
+    time_range_ns: float = 16.0,
+    min_distance_traces: int = 20,
+    min_depth_in: float = 0.5,
+    max_depth_in: float = 10.0,
+) -> list[dict]:
+    """
+    Detect hyperbola apex positions in a GPR B-scan. One pick per rebar event.
+
+    Algorithm:
+      1. Hilbert envelope per trace
+      2. Argmax per trace within [min_depth_in, max_depth_in] window
+      3. Cluster picks that are within `min_distance_traces` columns of
+         each other (single rebar = one hyperbola = one cluster)
+      4. Pick the shallowest sample in each cluster (the apex)
+
+    Returns list[{trace_idx, sample_idx, depth_in, confidence}].
+    """
+    from scipy.signal import hilbert as _hilbert
+
+    n_traces, n_samples = traces.shape
+    velocity = 0.15 / np.sqrt(epsr)            # m/ns in concrete
+    ns_per_sample = time_range_ns / n_samples
+
+    def depth_to_sample(depth_in: float, round_up: bool = False) -> int:
+        depth_m = depth_in / 39.3701
+        t_ns = depth_m / velocity * 2.0
+        raw = t_ns / ns_per_sample
+        return int(np.ceil(raw)) if round_up else int(raw)
+
+    # Ceil the min bound so the post-hoc `depth_in >= min_depth_in` filter
+    # doesn't reject picks at the boundary sample (int truncation puts them
+    # ~half a sample short).
+    sample_min = max(0, depth_to_sample(min_depth_in, round_up=True))
+    sample_max = min(depth_to_sample(max_depth_in), n_samples - 1)
+    if sample_max - sample_min < 2:
+        return []
+
+    envelope = np.abs(_hilbert(traces, axis=1))
+
+    raw_picks: list[dict] = []
+    for t in range(n_traces):
+        window = envelope[t, sample_min:sample_max]
+        if window.max() < 1e-6:
+            continue
+        peak_sample = int(np.argmax(window)) + sample_min
+        raw_picks.append({
+            'trace_idx':  t,
+            'sample_idx': peak_sample,
+            'amplitude':  float(envelope[t, peak_sample]),
+        })
+
+    if not raw_picks:
+        return []
+
+    # Pre-filter: keep only the top ~30% of picks by amplitude. Real rebar
+    # reflections sit well above the noise floor; without this filter every
+    # trace contributes a raw pick (noise included) and clustering collapses
+    # to one giant cluster spanning the whole scan.
+    amp_threshold = float(np.percentile([p['amplitude'] for p in raw_picks], 70))
+    raw_picks = [p for p in raw_picks if p['amplitude'] >= amp_threshold]
+    if not raw_picks:
+        return []
+
+    # Cluster sequential picks within min_distance_traces.
+    clusters: list[list[dict]] = [[raw_picks[0]]]
+    for pick in raw_picks[1:]:
+        if pick['trace_idx'] - clusters[-1][-1]['trace_idx'] <= min_distance_traces:
+            clusters[-1].append(pick)
+        else:
+            clusters.append([pick])
+
+    max_amp = max(p['amplitude'] for p in raw_picks) or 1.0
+    result: list[dict] = []
+    for cluster in clusters:
+        apex = min(cluster, key=lambda p: p['sample_idx'])
+        depth_m = (apex['sample_idx'] * ns_per_sample * velocity) / 2.0
+        depth_in = depth_m * 39.3701
+        if min_depth_in <= depth_in <= max_depth_in:
+            result.append({
+                'trace_idx':  int(apex['trace_idx']),
+                'sample_idx': int(apex['sample_idx']),
+                'depth_in':   round(float(depth_in), 3),
+                'confidence': round(float(apex['amplitude'] / max_amp), 3),
+            })
+    return result
+
+
 def safe_filename(name: str) -> str:
     """Convert an analysis name to a filesystem-safe filename token.
     'Bridge B440029 Oct 2024' → 'Bridge_B440029_Oct_2024'.
@@ -457,6 +552,7 @@ __all__ = [
     "build_model_depth_map",
     "build_unified_depth_map",
     "safe_filename",
+    "detect_hyperbola_picks",
     "build_bscan_image",
     "load_cscan_amplitudes",
     "build_cscan_maps",
