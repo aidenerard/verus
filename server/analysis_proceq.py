@@ -178,6 +178,7 @@ def process_proceq_dataset(
     search_start: int = 55,
     search_end: int = 150,
     inference_sample_rate: int = 16,
+    analysis_name: str = "Untitled Analysis",
 ) -> dict | None:
     import sys
     sys.path.insert(0, os.path.dirname(__file__))
@@ -286,9 +287,15 @@ def process_proceq_dataset(
     north_valid = np.concatenate(north_valid_chunks) if north_valid_chunks else np.array([])
     depth_valid = np.concatenate(depth_valid_chunks) if depth_valid_chunks else np.array([])
     if len(east_valid) > 100:
-        from analysis import build_model_depth_map
-        build_model_depth_map(east_valid, north_valid, depth_valid,
-                              output_dir, title='Rebar Depth Map')
+        from analysis import build_unified_depth_map, safe_filename
+        out_path = os.path.join(output_dir, f"{safe_filename(analysis_name)}_rebar_depth.png")
+        build_unified_depth_map(
+            depths_in     = depth_valid,
+            output_path   = out_path,
+            analysis_name = analysis_name,
+            x_coords      = east_valid,
+            y_coords      = north_valid,
+        )
         print(f"[DEPTH MAP] built from {len(east_valid):,} GPS-valid traces")
     else:
         print("[DEPTH MAP] insufficient GPS traces, skipping depth map")

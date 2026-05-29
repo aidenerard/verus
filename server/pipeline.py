@@ -17,9 +17,33 @@ from grids import (
 )
 from render_cscan import render_cscan_b64
 from render import (
-    render_rebar_depth_b64, render_amplitude_b64,
+    render_amplitude_b64,
     render_rebar_cscan_b64, compute_confidence_metrics,
 )
+
+
+def _render_depth_b64_via_unified(depth_grid, analysis_name: str) -> str:
+    """
+    Bridge from in-memory 2D depth_grid → base64 PNG, via the unified
+    file-based renderer in analysis.py. Writes to a tempfile, reads back,
+    deletes. Used by the DZT path so both pipelines share the same
+    rendering function and visual output.
+    """
+    import os, tempfile
+    from analysis import build_unified_depth_map
+    tf = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+    tf.close()
+    try:
+        ok = build_unified_depth_map(
+            depths_in=depth_grid, output_path=tf.name, analysis_name=analysis_name,
+        )
+        if not ok:
+            return ""
+        with open(tf.name, 'rb') as f:
+            return _b64.b64encode(f.read()).decode()
+    finally:
+        try: os.unlink(tf.name)
+        except OSError: pass
 
 
 def process_files(
@@ -174,6 +198,7 @@ def build_result_payload(
     rebar_model,
     swath_spacing_ft: float,
     structure_name: str,
+    analysis_name: str = "Untitled Analysis",
 ) -> tuple[dict, str, str, str]:
     """Build grids, render images, assemble result dict.
     Returns (result_dict, cscan_b64, rebar_cscan_b64, amp_b64). result_dict excludes analysis_time_sec."""
@@ -260,7 +285,7 @@ def build_result_payload(
             file_atten_arrs,
             frequency_mhz,
         )
-        rebar_b64             = render_rebar_depth_b64(depth_grid)
+        rebar_b64 = _render_depth_b64_via_unified(depth_grid, analysis_name)
         amp_b64               = render_amplitude_b64(amp_grid)
         amplitude_grid_data_j = grid_to_list(amp_grid)
         twt_b64               = _b64.b64encode(twt_grid.tobytes()).decode()
