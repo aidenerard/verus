@@ -290,6 +290,156 @@ def build_model_depth_map(
     return out
 
 
+def safe_filename(name: str) -> str:
+    """Convert an analysis name to a filesystem-safe filename token.
+    'Bridge B440029 Oct 2024' → 'Bridge_B440029_Oct_2024'.
+    Preserves alphanumerics + hyphens + underscores; spaces collapse to '_'."""
+    import re
+    safe = re.sub(r'[^\w\s\-]', '', name or 'Untitled Analysis')
+    safe = re.sub(r'\s+', '_', safe.strip())
+    return safe or 'Untitled_Analysis'
+
+
+def build_unified_depth_map(
+    depths_in,
+    output_path: str,
+    analysis_name: str,
+    x_coords=None,
+    y_coords=None,
+    vmin: float = 3.0,
+    vmax: float = 8.5,
+) -> str | None:
+    """
+    Unified rebar cover-depth map renderer used by both Proceq and DZT
+    pipelines. Output matches the Infrasense / ASTM presentation:
+      - Title = analysis_name (verbatim)
+      - Fixed 0.5" YlOrRd_r colour bands across the reference 3.0–8.5"
+        range so every dataset uses the same palette mapping
+      - Depths snapped to nearest whole inch — cleaner integer transitions,
+        less label clutter
+      - Black isolines on integer inches only; **each** integer-level path
+        gets its own label (one per disconnected region) placed in fixed
+        horizontal orientation so "6" never reads as "9"
+      - Bare integer ticks, no axis labels
+      - Rectangular horizontal colorbar at the bottom (no extend arrows)
+
+    Input modes:
+      • 1D `depths_in` + (`x_coords`, `y_coords`)  → griddata onto 500×150
+        regular UTM grid (Proceq with GPS)
+      • 2D `depths_in`                            → used as (swath, trace) grid
+
+    Raises ValueError on 1D depths with no GPS coordinates — that input
+    shape has no spatial coherence and the previous tile-to-40-rows
+    fallback only produced a vertical-stripe artifact.
+    """
+    import os
+    from matplotlib.colors import BoundaryNorm, ListedColormap
+    from scipy.interpolate import griddata as _griddata
+    from scipy.ndimage import gaussian_filter, median_filter, zoom as nd_zoom
+
+    arr = np.asarray(depths_in, dtype=np.float32)
+    if arr.size == 0 or np.all(np.isnan(arr)):
+        print("[DEPTH MAP] empty input — skipping"); return None
+
+    # Snap to nearest whole inch and clip to the fixed reference range so
+    # everything maps inside the rectangular colorbar.
+    arr_clip = np.clip(np.round(arr), vmin, vmax)
+
+    # ── Assemble Z grid + X/Y meshgrid ───────────────────────────────────
+    have_gps = (
+        x_coords is not None and y_coords is not None and arr.ndim == 1
+        and len(x_coords) == len(arr) == len(y_coords)
+        and np.ptp(x_coords) > 0 and np.ptp(y_coords) > 0
+    )
+    if have_gps:
+        xc = np.asarray(x_coords, dtype=np.float64)
+        yc = np.asarray(y_coords, dtype=np.float64)
+        gx, gy = np.mgrid[xc.min():xc.max():500j, yc.min():yc.max():150j]
+        Z = _griddata((xc, yc), arr_clip, (gx, gy), method="cubic")
+        Z_nn = _griddata((xc, yc), arr_clip, (gx, gy), method="nearest")
+        Z[np.isnan(Z)] = Z_nn[np.isnan(Z)]
+        Z = median_filter(Z, size=9)
+        Z = gaussian_filter(Z, sigma=3)
+        Z = np.clip(np.round(Z), vmin, vmax)
+        X, Y = gx, gy
+        x_lim, y_lim = (xc.min(), xc.max()), (yc.min(), yc.max())
+    else:
+        if arr_clip.ndim != 2:
+            raise ValueError(
+                "build_unified_depth_map requires either a 2D depth grid OR "
+                "1D depths_in paired with x_coords/y_coords. Got 1D-only input "
+                f"of shape {arr.shape} — no spatial layout to render."
+            )
+        grid_src = arr_clip
+        n_rows, n_cols = grid_src.shape
+        nan_mask = np.isnan(grid_src)
+        filled = np.where(nan_mask, float(np.nanmean(grid_src)), grid_src)
+        target_rows = max(n_rows, 40)
+        upsampled = (nd_zoom(filled, (target_rows / n_rows, 1.0), order=1)
+                     if target_rows != n_rows else filled)
+        sigma_y = max(0.8, target_rows / 50.0)
+        sigma_x = max(1.2, n_cols / 200.0)
+        Z = gaussian_filter(upsampled, sigma=(sigma_y, sigma_x))
+        Z = np.clip(np.round(Z), vmin, vmax)
+        X, Y = np.meshgrid(np.arange(n_cols), np.linspace(0, n_rows - 1, target_rows))
+        x_lim, y_lim = (0, max(1, n_cols - 1)), (n_rows - 1, 0)
+
+    # ── Fixed reference palette: 0.5" bands across the full vmin→vmax range ──
+    levels = np.arange(vmin, vmax + 0.5, 0.5)
+    integer_levels = [float(l) for l in levels if abs(l - round(l)) < 1e-6]
+    n_bands = max(1, len(levels) - 1)
+    cmap = ListedColormap(plt.cm.YlOrRd_r(np.linspace(0, 1, n_bands)))  # type: ignore[attr-defined]
+    norm = BoundaryNorm(levels, cmap.N)
+
+    # ── Render ─────────────────────────────────────────────────────────
+    fig, ax = plt.subplots(figsize=(14, 4.5), facecolor='white')
+    cf = ax.contourf(X, Y, Z, levels=levels, cmap=cmap, norm=norm)
+    # Integer-inch isolines only — no half-inch lines clutter the map.
+    cs_int = ax.contour(X, Y, Z, levels=integer_levels, colors='black', linewidths=0.8)
+    # Multiple labels per integer level — one per connected path. Skip very
+    # short paths (artifacts) and drop labels that fall within `min_sep` of
+    # an existing label so the result is dense but not piled up.
+    x_span = abs(x_lim[1] - x_lim[0]) or 1.0
+    y_span = abs(y_lim[1] - y_lim[0]) or 1.0
+    min_sep_x = x_span / 12.0
+    min_sep_y = y_span / 6.0
+    placed: list[tuple[float, float]] = []
+    for li, lv in enumerate(cs_int.levels):
+        if li >= len(cs_int.collections): continue
+        for path in cs_int.collections[li].get_paths():
+            v = path.vertices
+            if len(v) < 30: continue
+            mid = v[len(v) // 2]
+            if any(abs(mid[0] - px) < min_sep_x and abs(mid[1] - py) < min_sep_y
+                   for px, py in placed):
+                continue
+            ax.text(mid[0], mid[1], f'{int(round(lv))}',
+                    fontsize=10, ha='center', va='center', color='black',
+                    fontweight='normal')
+            placed.append((float(mid[0]), float(mid[1])))
+
+    ax.set_xlim(*x_lim); ax.set_ylim(*y_lim)
+    ax.set_title(analysis_name, fontsize=13, pad=10)
+    ax.tick_params(colors='black', length=4, width=0.7, labelsize=10)
+    for sp in ax.spines.values():
+        sp.set_linewidth(0.9); sp.set_color('black')
+
+    # Rectangular colorbar — explicit extend='neither' overrides the
+    # arrows contourf would otherwise propagate.
+    cbar = fig.colorbar(cf, ax=ax, orientation='horizontal', ticks=levels,
+                        spacing='proportional', shrink=0.6, pad=0.13, aspect=40,
+                        extend='neither')
+    cbar.ax.tick_params(labelsize=9, length=3, colors='black')
+    cbar.outline.set_linewidth(0.5); cbar.outline.set_edgecolor('black')
+
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
+    plt.savefig(output_path, dpi=150, bbox_inches='tight', facecolor='white')
+    plt.close(fig); plt.close('all'); gc.collect()
+    print(f"[DEPTH MAP] saved → {output_path}")
+    return output_path
+
+
 # Re-export Proceq pipeline so existing callers (jobs.py, diagnostics.py) keep working.
 from analysis_proceq import (  # noqa: E402
     load_cscan_amplitudes,
@@ -305,6 +455,8 @@ __all__ = [
     "build_depth_map",
     "build_corrosion_map",
     "build_model_depth_map",
+    "build_unified_depth_map",
+    "safe_filename",
     "build_bscan_image",
     "load_cscan_amplitudes",
     "build_cscan_maps",

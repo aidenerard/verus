@@ -297,7 +297,7 @@ async def analyze(
         run_analysis_job,
         job_id, file_data, user_id, tmpdir,
         manufacturer, frequency_mhz, project_id, _model, _rebar_model, _model_config, _supabase,
-        "Bridge Deck", 1.0, company_clean, project_clean,
+        "Bridge Deck", 1.0, company_clean, project_clean, name_clean,
     )
     print(f"[analyze] Queued job {job_id}", flush=True)
 
@@ -436,7 +436,7 @@ async def analyze_proceq(
 
     _executor.submit(
         run_proceq_job, job_id, file_data, tmpdir, epsr, user_id, _supabase,
-        company_clean, project_clean,
+        company_clean, project_clean, name_clean,
     )
     print(f"[analyze-proceq] Queued job {job_id} ({len(file_data)} files, zip={is_zip})", flush=True)
 
@@ -494,7 +494,7 @@ async def analyze_proceq_zip(
 
     _executor.submit(
         run_proceq_zip_job, job_id, storage_path, epsr, user_id, _supabase,
-        company_clean, project_clean,
+        company_clean, project_clean, name_clean,
     )
     return JSONResponse({"job_id": job_id, "status": "pending"})
 
