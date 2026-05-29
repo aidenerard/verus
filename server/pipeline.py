@@ -15,8 +15,9 @@ from grids import (
     extract_peak_info, build_prob_grid, build_extra_grids,
     build_rebar_grids, build_peak_grid, grid_to_list,
 )
+from render_cscan import render_cscan_b64
 from render import (
-    render_cscan_b64, render_rebar_depth_b64, render_amplitude_b64,
+    render_rebar_depth_b64, render_amplitude_b64,
     render_rebar_cscan_b64, compute_confidence_metrics,
 )
 
@@ -35,7 +36,7 @@ def process_files(
     """
     Run ingestion + inference for every uploaded file.
     set_progress_fn triggers Supabase; set_progress_fast_fn is memory-only (tight loop).
-    Returns: (file_preds, file_confs, file_names, file_peak_idxs, file_peak_amps,
+    Returns: (file_preds, file_confs, file_names, file_peak_idxs, file_peak_amps, file_atten_arrs,
               rebar_depth_arrs, rebar_twt_arrs, rebar_peak_arrs, per_file_summary, total_sigs)
     """
     file_preds:       list[np.ndarray] = []
@@ -43,6 +44,7 @@ def process_files(
     file_names:       list[str]        = []
     file_peak_idxs:   list[np.ndarray] = []
     file_peak_amps:   list[np.ndarray] = []
+    file_atten_arrs:  list[np.ndarray] = []
     rebar_depth_arrs: list[np.ndarray] = []
     rebar_twt_arrs:   list[np.ndarray] = []
     rebar_peak_arrs:  list[np.ndarray] = []
@@ -99,6 +101,15 @@ def process_files(
         preds, confs                 = run_inference(model, signals, model_config=model_config,
                                                       progress_callback=_infer_cb)
         depth_arr, twt_arr, peak_arr = run_rebar_inference(rebar_model, signals, frequency_mhz)
+
+        # Depth-normalised attenuation: rebar return amplitude / surface wave amplitude.
+        # Surface wave amplitude uses first 20 samples (matches extract_peak_info skip boundary,
+        # keeping surface and rebar windows non-overlapping for shallow slabs).
+        # Lower ratio = more attenuation at rebar depth = potential deterioration.
+        surface_amp = np.abs(signals[:, :20]).max(axis=1).astype(np.float32)
+        surface_amp = np.where(surface_amp == 0, 1.0, surface_amp)
+        atten_arr   = np.clip(peak_amp / surface_amp, 0.0, 2.0)
+
         del signals
         if csv_path != dest:
             csv_path.unlink(missing_ok=True)
@@ -116,6 +127,7 @@ def process_files(
         file_names.append(fname)
         file_peak_idxs.append(peak_idx)
         file_peak_amps.append(peak_amp)
+        file_atten_arrs.append(atten_arr)
         rebar_depth_arrs.append(depth_arr)
         rebar_twt_arrs.append(twt_arr)
         rebar_peak_arrs.append(peak_arr)
@@ -138,7 +150,7 @@ def process_files(
 
     return (
         file_preds, file_confs, file_names,
-        file_peak_idxs, file_peak_amps,
+        file_peak_idxs, file_peak_amps, file_atten_arrs,
         rebar_depth_arrs, rebar_twt_arrs, rebar_peak_arrs,
         per_file_summary, total_sigs,
     )
@@ -151,6 +163,7 @@ def build_result_payload(
     file_names: list[str],
     file_peak_idxs: list[np.ndarray],
     file_peak_amps: list[np.ndarray],
+    file_atten_arrs: list[np.ndarray],
     rebar_depth_arrs: list[np.ndarray],
     rebar_twt_arrs: list[np.ndarray],
     rebar_peak_arrs: list[np.ndarray],
@@ -172,26 +185,23 @@ def build_result_payload(
 
     gc.collect()
 
+    cscan_b64 = ""; class_area_pcts: dict = {}
+    prob_b64 = ""; prob_grid_data_j: list = []; pg_rows = pg_cols = 0; otsu_T = 0.65
     try:
-        cscan_b64 = render_cscan_b64(
-            file_preds, file_confs, file_names,
+        _pg, _cg, otsu_T = build_prob_grid(file_preds, file_confs)
+        prob_b64         = _b64.b64encode(_pg.tobytes()).decode()
+        prob_grid_data_j = grid_to_list(_pg)
+        pg_rows, pg_cols = _pg.shape
+        cscan_b64, class_area_pcts = render_cscan_b64(
+            _pg, _cg,
             swath_spacing_ft=swath_spacing_ft,
             structure_name=structure_name,
         )
-        print(f"[job:{job_id}] C-scan rendered ({len(cscan_b64)//1024} KB b64)", flush=True)
+        print(f"[job:{job_id}] Condition map rendered ({len(cscan_b64)//1024} KB b64)", flush=True)
+        del _pg, _cg
+        gc.collect()
     except Exception as exc:
-        print(f"[job:{job_id}] C-scan render failed: {exc}", flush=True)
-        cscan_b64 = ""
-
-    try:
-        prob_grid, otsu_T = build_prob_grid(file_preds, file_confs)
-        prob_b64         = _b64.b64encode(prob_grid.tobytes()).decode()
-        prob_grid_data_j = grid_to_list(prob_grid)
-        pg_rows, pg_cols = prob_grid.shape
-        del prob_grid
-    except Exception as exc:
-        print(f"[job:{job_id}] prob_grid failed: {exc}", flush=True)
-        prob_b64 = ""; prob_grid_data_j = []; pg_rows = pg_cols = 0; otsu_T = 0.65
+        print(f"[job:{job_id}] Condition map/grid failed: {exc}", flush=True)
 
     rebar_cscan_b64 = ""
     rebar_depth_grid_j: list = []; rebar_twt_grid_j: list = []; rebar_peak_grid_j: list = []
@@ -246,7 +256,9 @@ def build_result_payload(
     conf_pct = depth_acc_in = 0.0; sig_quality = "Fair"
     try:
         depth_grid, amp_grid, twt_grid = build_extra_grids(
-            file_peak_idxs, file_peak_amps, frequency_mhz
+            file_peak_idxs,
+            file_atten_arrs,
+            frequency_mhz,
         )
         rebar_b64             = render_rebar_depth_b64(depth_grid)
         amp_b64               = render_amplitude_b64(amp_grid)
@@ -288,6 +300,7 @@ def build_result_payload(
         "model_confidence_pct": conf_pct,
         "depth_accuracy_in":   depth_acc_in,
         "signal_quality":      sig_quality,
+        "condition_class_pcts": class_area_pcts,
     }
 
     return result, cscan_b64, rebar_cscan_b64, amp_b64

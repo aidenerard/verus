@@ -68,6 +68,12 @@ export interface AnalysisResult {
   mean_depth_inches?:       number;
   deck_thickness_inches?:   number;
   high_risk_pct?:           number;
+  condition_class_pcts?: {
+    sound:                number;
+    monitor:              number;
+    anomalous_response:   number;
+    significant_anomaly:  number;
+  };
   // User-supplied metadata, mirrored from the analysis_jobs row
   analysis_name?:           string;
   analysis_notes?:          string;

@@ -16,3 +16,9 @@ export const TOPBAR_HEIGHT        = 52;
 
 export const FONT_FAMILY =
   'Inter, -apple-system, BlinkMacSystemFont, sans-serif';
+
+// Condition map 4-class palette (matches render_cscan.py _COLORS)
+export const COND_SOUND    = '#27AE60';
+export const COND_MONITOR  = '#F1C40F';
+export const COND_ELEVATED = '#E67E22';
+export const COND_HIGH     = '#C0392B';

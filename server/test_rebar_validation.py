@@ -5,13 +5,14 @@ Run from server/ directory:
     python test_rebar_validation.py
 
 What it tests:
-  1. Model loads from models/rebar_model.pth
-  2. Full ingest pipeline (DZT -> zscore CSV) matches training preprocessing
-  3. run_rebar_inference() MAE vs L2Depth_inches from the depth-report CSVs
+  1. HorizonCNN loads from models/horizon_model.pth
+  2. DZT traces resampled to 512 samples, then run through run_rebar_inference()
+     (which applies per-trace DC-remove + max-abs normalize internally)
+  3. MAE vs L2Depth_inches from the Infrasense depth-report CSVs
   4. Per-file and per-lane breakdown
 """
 
-import sys, csv, tempfile, warnings
+import sys, csv, warnings
 from pathlib import Path
 import numpy as np
 
@@ -28,21 +29,21 @@ for mod_name in ["fastapi", "fastapi.middleware.cors", "fastapi.responses",
 
 # ── Real imports ─────────────────────────────────────────────────────────────
 import torch
-from model import RebarDepthCNN, DEVICE, INFER_BATCH
+from model import HorizonCNN, DEVICE, INFER_BATCH
 from inference import run_rebar_inference
-from ingest_utils import resample_to_512, zscore_normalize, write_csv
-from scipy.signal import hilbert as _hilbert
+from ingest_utils import resample_to_512
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 ROOT       = Path(__file__).parent
 DATA_DIR   = Path(r"C:\Users\quack\Documents\Projects\Verus\Data\Ken Infrasense Data #1")
-MODEL_PATH = ROOT / "models" / "rebar_model.pth"
+MODEL_PATH = ROOT / "models" / "horizon_model.pth"
 
 BRIDGES = {
     "B170020": {
         "data_dir": DATA_DIR / "B170020" / "raw data",
         "csv":      DATA_DIR / "B170020 Rebar Depth Report.csv",
         "ns_total": 15.0,
+        "freq_mhz": 1600,
         "layout": [
             # (file_num, ch, start_scan, end_scan, reversed)
             (95, 1,  610, 1802, False),
@@ -58,6 +59,7 @@ BRIDGES = {
         "data_dir": DATA_DIR / "B440029" / "raw data",
         "csv":      DATA_DIR / "B440029 Rebar Depth Report.csv",
         "ns_total": 15.0,
+        "freq_mhz": 1600,
         "layout": [
             (799, 1, 3535, 4163, False),
             (799, 2, 3535, 4163, False),
@@ -74,13 +76,14 @@ BRIDGES = {
 
 
 def load_rebar_model():
-    assert MODEL_PATH.exists(), f"rebar_model.pth not found at {MODEL_PATH}"
-    rm = RebarDepthCNN(in_channels=2).to(DEVICE)
+    assert MODEL_PATH.exists(), f"horizon_model.pth not found at {MODEL_PATH}"
+    rm = HorizonCNN().to(DEVICE)
     rm.load_state_dict(torch.load(str(MODEL_PATH), map_location=DEVICE, weights_only=False))
     rm.eval()
     n = sum(p.numel() for p in rm.parameters() if p.requires_grad)
-    print(f"  Loaded rebar model: {n:,} params, device={DEVICE}")
-    return rm
+    print(f"  Loaded HorizonCNN: {n:,} params, device={DEVICE}")
+    model_cfg = {"max_depth_mm": 120.0}
+    return rm, model_cfg
 
 
 def load_csv_gt(csv_path):
@@ -112,7 +115,7 @@ def dzt_key(file_num, ch_num):
     return f"WISDOT24_{file_num:03d} P_1_PREP_CH0{ch_num}.DZT"
 
 
-def run_bridge(bridge_name, cfg, rebar_model):
+def run_bridge(bridge_name, cfg, rebar_model, model_cfg):
     try:
         from readgssi import readgssi as rgssi
     except ImportError:
@@ -160,32 +163,17 @@ def run_bridge(bridge_name, cfg, rebar_model):
 
         n_traces = arr.shape[1]
 
-        # ── Path A: training-identical preprocessing (bypass ingest round-trip) ─
-        # arr shape is (n_samples, n_traces); training does DC-remove + max-abs
-        arr_dc  = arr - arr.mean(axis=0, keepdims=True)
-        mx      = np.abs(arr_dc).max(axis=0, keepdims=True)
-        mx      = np.where(mx == 0, 1.0, mx)
-        arr_nm  = arr_dc / mx                                   # (256, n_traces) in [-1,1]
-        env_a   = np.abs(_hilbert(arr_nm, axis=0)).astype(np.float32)
-        X_a     = np.stack([arr_nm, env_a], axis=0).transpose(2, 0, 1)  # (n, 2, 256)
-        X_a_t   = torch.tensor(X_a, dtype=torch.float32)
-        preds_a = []
-        rebar_model.eval()
-        with torch.no_grad():
-            for s in range(0, len(X_a_t), INFER_BATCH):
-                preds_a.append(rebar_model(X_a_t[s:s+INFER_BATCH].to(DEVICE)).cpu().numpy())
-        depth_direct = np.concatenate(preds_a)
-
-        # ── Path B: full server ingest pipeline ───────────────────────────────
+        # Transpose to (n_traces, n_samples), resample to 512.
+        # run_rebar_inference applies per-trace DC-remove + max-abs normalize internally,
+        # matching colab_train_horizon.py preprocessing exactly.
         amps = arr.T.copy()
         if n_samples_raw != 512:
             amps = np.stack([resample_to_512(amps[i], n_samples_raw)
                              for i in range(n_traces)])
-        amps = zscore_normalize(amps)    # (n_traces, 512)
-        depth_pred, _, _ = run_rebar_inference(rebar_model, amps, frequency_mhz=1600)
-
-        # Use direct path as primary (matches training)
-        depth_pred = depth_direct
+        depth_pred, _, _ = run_rebar_inference(
+            rebar_model, amps, frequency_mhz=cfg["freq_mhz"],
+            model_config=model_cfg,
+        )
 
         # ── Match to ground truth ────────────────────────────────────────────
         key_prefix = dzt_key(file_num, ch_num)
@@ -228,14 +216,14 @@ def run_bridge(bridge_name, cfg, rebar_model):
 
 
 if __name__ == "__main__":
-    print("=== Rebar Model Validation ===\n")
+    print("=== HorizonCNN Rebar Depth Validation vs Infrasense Ground Truth ===\n")
 
-    rebar_model = load_rebar_model()
+    rebar_model, model_cfg = load_rebar_model()
 
     results = []
     for bname, bcfg in BRIDGES.items():
         print(f"\n--- {bname} ---")
-        r = run_bridge(bname, bcfg, rebar_model)
+        r = run_bridge(bname, bcfg, rebar_model, model_cfg)
         if r:
             results.append(r)
 

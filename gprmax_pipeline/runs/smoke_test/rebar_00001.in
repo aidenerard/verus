@@ -1,0 +1,13 @@
+#title: rebar depth=122.7mm diam=10.7mm epsr=9.93 freq=900MHz
+#domain: 0.60 0.50 0.002
+#dx_dy_dz: 0.002 0.002 0.002
+#time_window: 8e-9
+
+#material: 9.9253 0.0277 1 0 concrete
+
+#waveform: ricker 1 900000000 src_wave
+#hertzian_dipole: z 0.282 0.450 0 src_wave
+#rx: 0.318 0.450 0
+
+#box: 0 0 0 0.60 0.40 0.002 concrete
+#cylinder: 0.300 0.1220 0 0.300 0.1220 0.002 0.0060 pec
