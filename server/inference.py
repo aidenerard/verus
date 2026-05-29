@@ -13,6 +13,7 @@ from scipy.ndimage import zoom
 from scipy.signal import hilbert as _hilbert
 
 from model import THRESHOLD, INFER_BATCH, DEVICE
+from analysis_bscan import encode_traces_for_frontend
 
 _REBAR_DIELECTRIC = {400: 8.0, 900: 7.0, 1600: 6.0, 2000: 5.5, 2600: 5.0}
 _infer_logged = False
@@ -153,27 +154,13 @@ def run_rebar_inference(
         return _physics(signals)
 
 
-def extract_bscan_b64(
-    signals: np.ndarray,
-    max_traces: int = 256,
-    max_samples: int = 128,
-) -> dict:
+def extract_bscan_b64(signals: np.ndarray) -> dict:
     """
-    Downsample (n_signals, 512) to (max_traces, max_samples) and return
-    as base64 float32 blob for browser B-scan rendering.
+    Extract B-scan data for the frontend canvas viewer.
+
+    Routes the DZT/CSV pipeline through the same 6-step GPR signal processing
+    (dewow → time-zero → gain → bandpass → AGC → contrast) the Proceq path
+    uses, so both viewers render with identical preprocessing. Returns
+    {data, n_traces, n_samples, encoding} where data is int8 + zlib + base64.
     """
-    n      = signals.shape[0]
-    zoom_t = min(1.0, max_traces  / n)
-    zoom_s = min(1.0, max_samples / signals.shape[1])
-
-    if zoom_t < 1.0 or zoom_s < 1.0:
-        arr = zoom(signals.astype(np.float32), [zoom_t, zoom_s], order=1)
-    else:
-        arr = signals.astype(np.float32)
-
-    arr = np.ascontiguousarray(arr)
-    return {
-        'data':      base64.b64encode(arr.tobytes()).decode('ascii'),
-        'n_traces':  arr.shape[0],
-        'n_samples': arr.shape[1],
-    }
+    return encode_traces_for_frontend(signals)
