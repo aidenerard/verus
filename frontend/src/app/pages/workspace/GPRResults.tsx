@@ -235,7 +235,16 @@ function InteractiveTabBody({ result, projectId, onPicksSaved }: InteractiveTabB
     );
   }
   return (
-    <div style={{ padding: 16, background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 8 }}>
+    // Give BScanViewer the full viewport below the top header / tabs so the
+    // B-scan dominates the workspace like professional GPR software. The
+    // ~280px reserve covers the page header + tabs + their margins; the
+    // inner viewer uses flex:1 to consume whatever is left.
+    <div style={{
+      height: 'calc(100vh - 280px)',
+      minHeight: 480,
+      background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 8,
+      padding: 12, display: 'flex', flexDirection: 'column',
+    }}>
       <BScanViewer
         bscanData={result.bscan_data ?? []}
         jobId={projectId}
