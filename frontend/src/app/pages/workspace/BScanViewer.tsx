@@ -319,9 +319,17 @@ export default function BScanViewer({
   const swathPicks = picks.filter(p => p.swath_idx === activeSwath);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, background: '#111', borderRadius: 8, padding: 12 }}>
+    // Fill the available height of the InteractiveTabBody container so the
+    // B-scan dominates the viewport like Proceq OneVision / GSSI RADAN.
+    // Toolbar + hint row stay fixed at the top via flex-shrink:0; the canvas
+    // container is flex:1 so it grows to consume the rest.
+    <div style={{
+      display: 'flex', flexDirection: 'column', gap: 8,
+      background: '#111', borderRadius: 8, padding: 12,
+      height: '100%', minHeight: 0,
+    }}>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', paddingBottom: 8, borderBottom: '1px solid #374151' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', paddingBottom: 8, borderBottom: '1px solid #374151', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <span style={{ color: '#9ca3af', fontSize: 12 }}>Swath:</span>
           <select value={activeSwath} onChange={e => setActiveSwath(Number(e.target.value))} style={selectStyle}>
@@ -377,7 +385,7 @@ export default function BScanViewer({
         )}
       </div>
 
-      <div style={{ fontSize: 11, color: '#6b7280', display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+      <div style={{ fontSize: 11, color: '#6b7280', display: 'flex', gap: 16, flexWrap: 'wrap', flexShrink: 0 }}>
         <span>• Click to add pick</span>
         <span>• Drag to move pick</span>
         <span>• Right-click to remove</span>
@@ -390,7 +398,7 @@ export default function BScanViewer({
         ref={scrollRef}
         style={{
           overflow: 'auto', background: '#000', borderRadius: 4, border: '1px solid #374151',
-          minHeight: 300, maxHeight: '65vh', position: 'relative', touchAction: 'none',
+          flex: 1, minHeight: 0, position: 'relative', touchAction: 'none',
         }}
       >
         {loading && (
@@ -420,7 +428,7 @@ export default function BScanViewer({
         />
       </div>
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#6b7280', padding: '0 4px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#6b7280', padding: '0 4px', flexShrink: 0 }}>
         <span>← Distance along scan (traces) →</span>
         <span>{dims.n_traces} × {dims.n_samples} · Swath {activeSwath + 1}/{bscanData.length}</span>
         <span>↕ Depth (in)</span>
