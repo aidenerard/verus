@@ -62,8 +62,9 @@ def persist_picks_for_job(
 
             rows.append({
                 "job_id":       job_id,
-                "scan_line_id": name,
-                "trace_index":  int(ti),
+                "swath_idx":    fi,
+                "scan_file":    name,
+                "trace_idx":    int(ti),
                 "depth_in":     float(depths[ti]),
                 "amplitude":    float(amps[ti])  if ti < len(amps)  else None,
                 "confidence":   float(confs[ti]) if ti < len(confs) else None,
