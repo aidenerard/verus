@@ -184,12 +184,10 @@ def _persist_proceq_hyperbola_picks(sb, job_id, swath_idx: int, traces, epsr: fl
             return
         rows = [{
             "job_id":       job_id,
-            "scan_line_id": str(swath_idx),
-            "trace_index":  int(p["trace_idx"]),
+            "trace_idx":    int(p["trace_idx"]),
             "sample_idx":   int(p["sample_idx"]),
             "depth_in":     float(p["depth_in"]),
             "confidence":   float(p["confidence"]),
-            "is_edited":    False,
             "is_manual":    False,
             "swath_idx":    int(swath_idx),
         } for p in picks]

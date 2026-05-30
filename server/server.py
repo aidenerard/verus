@@ -506,44 +506,35 @@ async def options_analyze_proceq_zip():
 
 
 # ── Interactive picks API ────────────────────────────────────────────────────
-# Schema notes:
-#   The picks table (migration 008) uses `trace_index` (not `trace_idx`) and
-#   `is_edited` (not `is_manual`). The frontend JSON shape uses `trace_idx` /
-#   `is_manual` per Anthropic's spec, so we translate at the API boundary.
+# Schema: the live picks table uses trace_idx / sample_idx / swath_idx /
+# is_manual / confidence directly — the same field names the frontend JSON
+# uses — so no column-name translation is needed.
 
 def _picks_db_row(p: dict, job_id: str, user_id: Optional[str]) -> dict:
-    """Translate frontend pick JSON → picks-table column shape. Writes the
-    existing-schema columns AND the new ones from the pending migration
-    (sample_idx / swath_idx / is_manual); insert fails gracefully via the
-    surrounding try if the migration hasn't been applied yet."""
-    swath_idx = int(p.get("swath_idx", 0))
-    is_manual = bool(p.get("is_manual") or p.get("is_edited", False))
+    """Frontend pick JSON → picks-table row."""
     return {
         "job_id":       job_id,
-        "scan_line_id": str(swath_idx),
-        "trace_index":  int(p.get("trace_idx") or p.get("trace_index") or 0),
+        "trace_idx":    int(p.get("trace_idx") or 0),
         "sample_idx":   int(p.get("sample_idx", 0)),
         "depth_in":     float(p.get("depth_in", 0.0)),
         "amplitude":    float(p.get("amplitude", 0.0)),
         "confidence":   float(p.get("confidence", 1.0)),
-        "is_edited":    is_manual,
-        "is_manual":    is_manual,
-        "swath_idx":    swath_idx,
+        "is_manual":    bool(p.get("is_manual", False)),
+        "swath_idx":    int(p.get("swath_idx", 0)),
     }
 
 
 def _pick_to_frontend(row: dict) -> dict:
-    """DB row → frontend JSON shape. Frontend uses trace_idx / swath_idx /
-    is_manual; DB schema uses trace_index / scan_line_id / is_edited."""
+    """DB row → frontend JSON shape. Column names already match the frontend
+    contract; this just supplies defaults for any null fields."""
     return {
         "id":         row.get("id"),
-        "trace_idx":  row.get("trace_index", 0),
+        "trace_idx":  row.get("trace_idx", 0),
         "sample_idx": row.get("sample_idx", 0),
         "depth_in":   row.get("depth_in", 0.0),
         "confidence": row.get("confidence", 1.0),
-        "is_manual":  bool(row.get("is_manual", row.get("is_edited", False))),
-        "swath_idx":  int(row.get("swath_idx",
-                                  int(row.get("scan_line_id", "0") or 0))),
+        "is_manual":  bool(row.get("is_manual", False)),
+        "swath_idx":  int(row.get("swath_idx", 0)),
     }
 
 
@@ -554,7 +545,7 @@ def get_picks(job_id: str, user_id: Optional[str] = Depends(verify_token)) -> JS
         raise HTTPException(503, "Database unavailable")
     try:
         res = _supabase.table("picks").select("*").eq("job_id", job_id) \
-            .order("trace_index").execute()
+            .order("trace_idx").execute()
         return JSONResponse({
             "picks": [_pick_to_frontend(r) for r in (res.data or [])],
         })
@@ -589,7 +580,7 @@ def regenerate_depth_map(
 ) -> JSONResponse:
     """
     Regenerate the rebar depth map from current picks. Reconstructs a 2D
-    (swath_idx × trace_index) grid from the picks rows and feeds it into
+    (swath_idx × trace_idx) grid from the picks rows and feeds it into
     build_unified_depth_map — the unified renderer requires either 2D
     input or 1D + GPS coords, never bare 1D depths.
     """
@@ -598,7 +589,7 @@ def regenerate_depth_map(
 
     try:
         picks_res = _supabase.table("picks") \
-            .select("trace_index, depth_in, scan_line_id") \
+            .select("trace_idx, depth_in, swath_idx") \
             .eq("job_id", job_id).execute()
         picks = picks_res.data or []
         if not picks:
@@ -608,20 +599,20 @@ def regenerate_depth_map(
             .select("result, analysis_name").eq("id", job_id).single().execute()
         analysis_name = (job_res.data or {}).get("analysis_name") or "Analysis"
 
-        # Reconstruct sparse 2D grid from picks: rows = swath (scan_line_id),
-        # cols = trace_index. Linear-interpolate within each row to fill
+        # Reconstruct sparse 2D grid from picks: rows = swath_idx,
+        # cols = trace_idx. Linear-interpolate within each row to fill
         # gaps so contourf can run.
         from collections import defaultdict
         import numpy as np
-        by_swath: dict[str, list[dict]] = defaultdict(list)
+        by_swath: dict[int, list[dict]] = defaultdict(list)
         for p in picks:
-            by_swath[str(p.get("scan_line_id", "0"))].append(p)
+            by_swath[int(p.get("swath_idx", 0) or 0)].append(p)
         swath_ids = sorted(by_swath.keys())
-        max_trace = max(int(p["trace_index"]) for p in picks)
+        max_trace = max(int(p["trace_idx"]) for p in picks)
         grid = np.full((len(swath_ids), max_trace + 1), np.nan, dtype=np.float32)
         for r, sid in enumerate(swath_ids):
             for p in by_swath[sid]:
-                grid[r, int(p["trace_index"])] = float(p["depth_in"])
+                grid[r, int(p["trace_idx"])] = float(p["depth_in"])
         for r in range(grid.shape[0]):
             row = grid[r]
             mask = ~np.isnan(row)
@@ -707,12 +698,10 @@ def redetect_picks(
             for p in picks:
                 all_rows.append({
                     "job_id":       job_id,
-                    "scan_line_id": str(swath_idx),
-                    "trace_index":  int(p["trace_idx"]),
+                    "trace_idx":    int(p["trace_idx"]),
                     "sample_idx":   int(p["sample_idx"]),
                     "depth_in":     float(p["depth_in"]),
                     "confidence":   float(p["confidence"]),
-                    "is_edited":    False,
                     "is_manual":    False,
                     "swath_idx":    int(swath_idx),
                 })
