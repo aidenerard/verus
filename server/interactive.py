@@ -80,13 +80,13 @@ def patch_pick(
     user_id: Optional[str] = Depends(verify_token),
 ):
     """Edit depth_in, x_ft, y_ft, or is_deleted on a single pick.
-    Sets is_edited=True and flags the parent job for regrid."""
+    Sets is_manual=True and flags the parent job for regrid."""
     sb = _sb()
     allowed = {"depth_in", "x_ft", "y_ft", "is_deleted"}
     patch = {k: v for k, v in update.items() if k in allowed}
     if not patch:
         raise HTTPException(400, f"No editable fields in body. Allowed: {sorted(allowed)}")
-    patch["is_edited"] = True
+    patch["is_manual"] = True
 
     result = sb.table("picks").update(patch).eq("id", pick_id).execute()
     if not result.data:
@@ -227,13 +227,13 @@ def _upload_grid_png(sb, b64: str, user_id: Optional[str],
 
 # ── Scan line B-scan retrieval ───────────────────────────────────────────────
 
-@router.get("/jobs/{job_id}/scan_line/{scan_line_id}")
+@router.get("/jobs/{job_id}/scan_line/{swath_idx}")
 def get_scan_line(
     job_id: str,
-    scan_line_id: str,
+    swath_idx: int,
     user_id: Optional[str] = Depends(verify_token),
 ):
-    """Return the stored B-scan blob plus picks for one scan line.
+    """Return the stored B-scan blob plus picks for one swath (0-indexed).
 
     TODO (phase 2): re-apply processing_state.filters to the raw trace data
     here, instead of returning the pre-rendered blob from per_file_summary.
@@ -245,17 +245,17 @@ def get_scan_line(
         raise HTTPException(404, f"Job {job_id} not found.")
 
     per_file = row.data.get("per_file_summary") or []
-    match    = next((f for f in per_file if f.get("filename") == scan_line_id), None)
-    if not match:
-        raise HTTPException(404, f"Scan line {scan_line_id!r} not in job {job_id}.")
+    if swath_idx < 0 or swath_idx >= len(per_file):
+        raise HTTPException(404, f"Swath {swath_idx} not in job {job_id}.")
+    match = per_file[swath_idx]
 
     picks = sb.table("picks").select("*") \
-        .eq("job_id", job_id).eq("scan_line_id", scan_line_id) \
+        .eq("job_id", job_id).eq("swath_idx", swath_idx) \
         .eq("is_deleted", False).execute().data or []
 
-    bscan = match.get("bscan") or {}
+    bscan = match.get("bscan_data") or match.get("bscan") or {}
     return JSONResponse({
-        "scan_line_id":      scan_line_id,
+        "swath_idx":         swath_idx,
         "bscan_data_b64":    bscan.get("data"),
         "bscan_n_traces":    bscan.get("n_traces", 0),
         "bscan_n_samples":   bscan.get("n_samples", 0),
