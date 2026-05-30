@@ -656,8 +656,86 @@ def regenerate_depth_map(
         raise HTTPException(500, str(exc))
 
 
+@app.post("/job/{job_id}/redetect-picks")
+def redetect_picks(
+    job_id: str, user_id: Optional[str] = Depends(verify_token),
+) -> JSONResponse:
+    """
+    Re-run hyperbola apex detection on the job's stored bscan_data blobs.
+    Used for jobs that were created before pick detection shipped, or when
+    the analyst wants to wipe manual edits and start from auto-picks.
+    Replaces all existing picks for this job with the freshly detected set.
+    """
+    if not _supabase:
+        raise HTTPException(503, "Database unavailable")
+
+    import base64, zlib
+    import numpy as np
+    from analysis import detect_hyperbola_picks
+
+    try:
+        row = _supabase.table("analysis_jobs") \
+            .select("result").eq("id", job_id).single().execute()
+        result = (row.data or {}).get("result") or {}
+        bscan_data = result.get("bscan_data") or []
+        if not bscan_data:
+            raise HTTPException(400, "Job has no bscan_data to detect against")
+
+        # Wipe previous picks for this job — re-detection is "start over".
+        _supabase.table("picks").delete().eq("job_id", job_id).execute()
+
+        all_rows: list[dict] = []
+        for swath_idx, entry in enumerate(bscan_data):
+            encoding = entry.get("encoding", "")
+            if "int8" not in encoding or "zlib" not in encoding:
+                print(f"[redetect] swath {swath_idx} unknown encoding {encoding!r} — skip", flush=True)
+                continue
+            try:
+                raw = base64.b64decode(entry["data"])
+                decompressed = zlib.decompress(raw)
+                n_t = int(entry["n_traces"]); n_s = int(entry["n_samples"])
+                arr = np.frombuffer(decompressed, dtype=np.int8).reshape(n_t, n_s)
+                # int8 [-127..127] back to float [-1..1] — matches the
+                # quantization in encode_traces_for_frontend.
+                traces = arr.astype(np.float32) / 127.0
+            except Exception as exc:
+                print(f"[redetect] swath {swath_idx} decode failed: {exc}", flush=True)
+                continue
+
+            picks = detect_hyperbola_picks(traces=traces, epsr=9.0, time_range_ns=16.0)
+            for p in picks:
+                all_rows.append({
+                    "job_id":       job_id,
+                    "scan_line_id": str(swath_idx),
+                    "trace_index":  int(p["trace_idx"]),
+                    "sample_idx":   int(p["sample_idx"]),
+                    "depth_in":     float(p["depth_in"]),
+                    "confidence":   float(p["confidence"]),
+                    "is_edited":    False,
+                    "is_manual":    False,
+                    "swath_idx":    int(swath_idx),
+                })
+            print(f"[redetect] swath {swath_idx}: {len(picks)} picks", flush=True)
+
+        if all_rows:
+            _supabase.table("picks").insert(all_rows).execute()
+        return JSONResponse({
+            "detected":          len(all_rows),
+            "swaths_processed":  len(bscan_data),
+        })
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+
 @app.options("/job/{job_id}/picks")
 async def options_picks(job_id: str):
+    return {}
+
+
+@app.options("/job/{job_id}/redetect-picks")
+async def options_redetect(job_id: str):
     return {}
 
 
