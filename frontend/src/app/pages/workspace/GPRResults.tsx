@@ -8,12 +8,17 @@ import ConditionMapPanel from './ConditionMapPanel';
 import DepthMapCanvas from './DepthMapCanvas';
 import { BORDER, BORDER2, PANEL, RAISED, TEXT, TEXT2, TEXT3, ACCENT, ACCENT_SOFT } from './tokens';
 
+import type { BScanViewerHandle } from './BScanViewer';
+
 interface Props {
   result:     AnalysisResult;
   projectId?: string;
+  tab?:       ResultsTab;
+  setTab?:    (t: ResultsTab) => void;
+  bscanRef?:  React.Ref<BScanViewerHandle>;
 }
 
-type ResultsTab = 'overview' | 'interactive';
+export type ResultsTab = 'overview' | 'interactive';
 
 interface PanelSpec { title: string; src: string | undefined }
 
@@ -33,8 +38,12 @@ function meanRebarDepth(result: AnalysisResult): number | undefined {
   return samples.reduce((a, b) => a + b, 0) / samples.length;
 }
 
-export default function GPRResults({ result, projectId }: Props) {
-  const [tab,        setTab]        = useState<ResultsTab>('overview');
+export default function GPRResults({
+  result, projectId, tab: tabProp, setTab: setTabProp, bscanRef,
+}: Props) {
+  const [tabLocal, setTabLocal] = useState<ResultsTab>('overview');
+  const tab    = tabProp    ?? tabLocal;
+  const setTab = setTabProp ?? setTabLocal;
   const [needsRegen, setNeedsRegen] = useState(false);
 
   return (
@@ -57,6 +66,7 @@ export default function GPRResults({ result, projectId }: Props) {
             result={result}
             projectId={projectId}
             onPicksSaved={() => setNeedsRegen(true)}
+            bscanRef={bscanRef}
           />}
     </div>
   );
@@ -223,9 +233,10 @@ interface InteractiveTabBodyProps {
   result:       AnalysisResult;
   projectId?:   string;
   onPicksSaved: () => void;
+  bscanRef?:    React.Ref<BScanViewerHandle>;
 }
 
-function InteractiveTabBody({ result, projectId, onPicksSaved }: InteractiveTabBodyProps) {
+function InteractiveTabBody({ result, projectId, onPicksSaved, bscanRef }: InteractiveTabBodyProps) {
   if (!projectId) {
     return (
       <div style={{ background: PANEL, border: `1px dashed ${BORDER2}`, padding: '40px 24px', textAlign: 'center', color: TEXT2 }}>
@@ -246,6 +257,7 @@ function InteractiveTabBody({ result, projectId, onPicksSaved }: InteractiveTabB
       padding: 12, display: 'flex', flexDirection: 'column',
     }}>
       <BScanViewer
+        ref={bscanRef}
         bscanData={result.bscan_data ?? []}
         jobId={projectId}
         serverUrl={SERVER}

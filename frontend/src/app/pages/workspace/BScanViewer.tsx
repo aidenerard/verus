@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { supabase } from '../../../lib/supabase';
 
-interface Pick {
+export interface Pick {
   id?:         string;
   trace_idx:   number;
   sample_idx:  number;
@@ -9,6 +9,13 @@ interface Pick {
   confidence:  number;
   is_manual:   boolean;
   swath_idx:   number;
+}
+
+export interface BScanViewerHandle {
+  savePicks:   () => Promise<void>;
+  detectPicks: () => Promise<void>;
+  getPicks:    () => Pick[];
+  getSaving:   () => boolean;
 }
 
 interface TraceData {
@@ -63,9 +70,9 @@ function sampleIdxToDepthIn(sample_idx: number, n_samples: number): number {
   return Math.round(depthM * 39.3701 * 1000) / 1000;        // → inches, 3 dp
 }
 
-export default function BScanViewer({
+const BScanViewer = forwardRef<BScanViewerHandle, BScanViewerProps>(function BScanViewer({
   bscanData, jobId, serverUrl, onPicksSaved,
-}: BScanViewerProps) {
+}, ref) {
   const canvasRef     = useRef<HTMLCanvasElement>(null);
   const scrollRef     = useRef<HTMLDivElement>(null);
   const isDragging    = useRef(false);
@@ -305,6 +312,45 @@ export default function BScanViewer({
     }
   }, [picks, jobId, serverUrl, onPicksSaved]);
 
+  // Re-run hyperbola detection server-side on the job's stored bscan_data
+  // and reload picks. Useful for jobs created before detection shipped, or
+  // to wipe manual edits and return to the auto-pick set.
+  const detectPicks = useCallback(async () => {
+    if (!jobId) { setSaveMsg('No job id'); return; }
+    setSaving(true); setSaveMsg('Detecting…');
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      const res = await fetch(`${serverUrl}/job/${jobId}/redetect-picks`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error(`Detect failed: ${res.status}`);
+      const data = await res.json();
+      // Reload picks from server now that they've been inserted.
+      const r = await fetch(`${serverUrl}/job/${jobId}/picks`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (r.ok) {
+        const d = await r.json();
+        setPicks(d.picks ?? []);
+      }
+      setSaveMsg(`✓ Detected ${data.detected ?? 0} picks across ${data.swaths_processed ?? 0} swaths`);
+      onPicksSaved?.(picks);
+    } catch (e) {
+      setSaveMsg(`✗ ${e instanceof Error ? e.message : 'Detect failed'}`);
+    } finally {
+      setSaving(false);
+    }
+  }, [jobId, serverUrl, picks, onPicksSaved]);
+
+  useImperativeHandle(ref, () => ({
+    savePicks,
+    detectPicks,
+    getPicks:  () => picks,
+    getSaving: () => saving,
+  }), [savePicks, detectPicks, picks, saving]);
+
   if (!bscanData || bscanData.length === 0) {
     return (
       <div style={{ padding: 40, textAlign: 'center', color: '#9ca3af', background: '#111', borderRadius: 8 }}>
@@ -368,6 +414,15 @@ export default function BScanViewer({
         <span style={{ color: '#9ca3af', fontSize: 11 }}>
           {swathPicks.length} pick{swathPicks.length === 1 ? '' : 's'} on swath {activeSwath + 1}
         </span>
+
+        <button
+          onClick={detectPicks}
+          disabled={saving || !jobId}
+          style={{ ...btnStyle, background: '#7c3aed', padding: '4px 14px', fontWeight: 600, opacity: !jobId ? 0.5 : 1 }}
+          title={!jobId ? 'Save the project first' : 'Re-run hyperbola detection on the stored B-scan (wipes manual edits)'}
+        >
+          Detect Picks
+        </button>
 
         <button
           onClick={savePicks}
@@ -435,7 +490,9 @@ export default function BScanViewer({
       </div>
     </div>
   );
-}
+});
+
+export default BScanViewer;
 
 const btnStyle: React.CSSProperties = {
   padding: '3px 10px', fontSize: 12,
