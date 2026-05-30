@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
-import { Radio, RotateCcw, AlertCircle } from 'lucide-react';
+import { Radio, RotateCcw, Save, AlertCircle } from 'lucide-react';
 import { useAuth } from '../../../context/AuthContext';
 import { supabase } from '../../../lib/supabase';
 import { useAnalysisJob } from '../inspect/useAnalysisJob';
@@ -9,7 +9,8 @@ import AnalysisProgressOverlay from '../inspect/AnalysisProgressOverlay';
 import type { AnalysisResult, UploadedFile } from '../inspect/types';
 import type { ManufacturerKey } from '../inspect/constants';
 import GPRUploadCard from './GPRUploadCard';
-import GPRResults from './GPRResults';
+import GPRResults, { type ResultsTab } from './GPRResults';
+import type { BScanViewerHandle } from './BScanViewer';
 import { useProcessingOptions } from './ProcessingOptionsContext';
 import { ACCENT, BORDER, PANEL, TEXT, TEXT2, TEXT3, ACCENT_SOFT } from './tokens';
 
@@ -29,6 +30,16 @@ export default function GPRWorkspace() {
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [loadingJob,     setLoadingJob]     = useState(!!viewJobId);
   const [loadError,      setLoadError]      = useState<string | null>(null);
+  const [resultsTab,     setResultsTab]     = useState<ResultsTab>('overview');
+  const [headerSaving,   setHeaderSaving]   = useState(false);
+  const bscanRef = useRef<BScanViewerHandle | null>(null);
+
+  const handleHeaderSavePicks = useCallback(async () => {
+    if (!bscanRef.current) return;
+    setHeaderSaving(true);
+    try { await bscanRef.current.savePicks(); }
+    finally { setHeaderSaving(false); }
+  }, []);
 
   const onComplete = useCallback((result: AnalysisResult) => {
     setAnalysisResult({
@@ -125,7 +136,13 @@ export default function GPRWorkspace() {
 
   return (
     <div style={{ padding: '24px 28px', display: 'flex', flexDirection: 'column', gap: 20 }}>
-      <Header onReset={reset} hasResult={!!analysisResult} />
+      <Header
+        onReset={reset}
+        hasResult={!!analysisResult}
+        showSavePicks={!!analysisResult && resultsTab === 'interactive'}
+        onSavePicks={handleHeaderSavePicks}
+        savingPicks={headerSaving}
+      />
 
       {loadError && (
         <div style={{ background: '#FFF8E6', border: `1px solid rgba(217,119,6,0.3)`, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, color: '#92400e' }}>
@@ -136,7 +153,13 @@ export default function GPRWorkspace() {
       {loadingJob ? (
         <LoadingCard />
       ) : analysisResult ? (
-        <GPRResults result={analysisResult} projectId={currentJobId} />
+        <GPRResults
+          result={analysisResult}
+          projectId={currentJobId}
+          tab={resultsTab}
+          setTab={setResultsTab}
+          bscanRef={bscanRef}
+        />
       ) : (
         <GPRUploadCard
           files={files} setFiles={setFiles}
@@ -171,7 +194,15 @@ export default function GPRWorkspace() {
   );
 }
 
-function Header({ onReset, hasResult }: { onReset: () => void; hasResult: boolean }) {
+function Header({
+  onReset, hasResult, showSavePicks, onSavePicks, savingPicks,
+}: {
+  onReset: () => void;
+  hasResult: boolean;
+  showSavePicks: boolean;
+  onSavePicks: () => void | Promise<void>;
+  savingPicks: boolean;
+}) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
       <div style={{ width: 38, height: 38, borderRadius: '50%', background: ACCENT_SOFT, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -181,6 +212,22 @@ function Header({ onReset, hasResult }: { onReset: () => void; hasResult: boolea
         <div style={{ fontSize: 18, fontWeight: 800, color: TEXT, letterSpacing: '-0.01em' }}>Ground-Penetrating Radar</div>
         <div style={{ fontSize: 11, color: TEXT3, fontWeight: 600, letterSpacing: '0.04em', marginTop: 2 }}>ASTM D6087 · Subsurface delamination + rebar depth</div>
       </div>
+      {showSavePicks && (
+        <button
+          onClick={onSavePicks}
+          disabled={savingPicks}
+          style={{
+            background: '#16a34a', border: '1px solid #15803d', color: '#fff',
+            padding: '8px 16px', fontSize: 12, fontWeight: 700,
+            letterSpacing: '0.06em', textTransform: 'uppercase',
+            cursor: savingPicks ? 'wait' : 'pointer',
+            display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'inherit',
+            opacity: savingPicks ? 0.7 : 1,
+          }}
+        >
+          <Save size={12} /> {savingPicks ? 'Saving Picks…' : 'Save Picks'}
+        </button>
+      )}
       {hasResult && (
         <button
           onClick={onReset}
