@@ -15,6 +15,15 @@ from scipy.interpolate import griddata
 from scipy.ndimage import median_filter
 from scipy.signal import hilbert
 
+# Physics primitives live in physics.py (co-located sub-module per the
+# 300-line cap); re-exported here so callers keep `from analysis import …`.
+from physics import (  # noqa: F401
+    find_time_zero,
+    calculate_dielectric_fresnel,
+    calculate_rebar_depth,
+    calculate_astm_corrosion_index,
+)
+
 
 def extract_amplitude_and_depth(
     traces: np.ndarray,
@@ -297,111 +306,129 @@ def _epsr_for_frequency(frequency_mhz: int) -> float:
 
 def detect_hyperbola_picks(
     traces,
-    epsr: float = 9.0,
-    time_range_ns: float = 16.0,
-    min_distance_traces: int = 8,    # rebar at 6" spacing needs a small window
-    min_depth_in: float = 0.5,
-    max_depth_in: float = 10.0,
+    epsr:                float = 9.0,
+    time_range_ns:       float = 16.0,
+    min_depth_in:        float = 0.5,
+    max_depth_in:        float = 10.0,
+    min_distance_traces: int   = 15,
+    model_mean_depth_in: float = None,
+    amp_plate:           float = None,
 ) -> list[dict]:
     """
-    Detect hyperbola apex positions in a GPR B-scan. One pick per rebar event.
+    Detect hyperbola apexes in a GPR B-scan (FHWA / Infrasense / GSSI RADAN).
 
-    Algorithm:
-      1. Hilbert envelope per trace
-      2. Argmax per trace within [min_depth_in, max_depth_in] window
-      3. Smooth the per-trace apex-sample curve, then find_peaks on its
-         negative (apex = local minimum travel time = shallowest point of
-         each hyperbola). distance=min_distance_traces separates adjacent
-         rebar; prominence rejects noise. Falls back to amplitude peaks.
+    The apex is the point of minimum travel time, where the antenna is
+    directly above the rebar — the ONLY valid depth-measurement point.
+    Non-apex picks overestimate depth.
 
-    Returns list[{trace_idx, sample_idx, depth_in, confidence}].
+    Steps:
+      1. Find time zero per trace (surface reflection), median for robustness
+      2. Hilbert envelope; per-trace dominant peak in the search window
+      3. Find LOCAL MINIMA in the depth profile = hyperbola apexes
+      4. Symmetry check: depth increases on both sides of each apex
+      5. Physically-correct depth (time-zero corrected + per-trace dielectric)
+
+    Returns list[{trace_idx, sample_idx, depth_in, confidence, epsr, time_zero}].
     """
-    from scipy.signal import hilbert as _hilbert
-
-    n_traces, n_samples = traces.shape
-    velocity = 0.15 / np.sqrt(epsr)            # m/ns in concrete
-    ns_per_sample = time_range_ns / n_samples
-
-    def depth_to_sample(depth_in: float, round_up: bool = False) -> int:
-        depth_m = depth_in / 39.3701
-        t_ns = depth_m / velocity * 2.0
-        raw = t_ns / ns_per_sample
-        return int(np.ceil(raw)) if round_up else int(raw)
-
-    # Ceil the min bound so the post-hoc `depth_in >= min_depth_in` filter
-    # doesn't reject picks at the boundary sample (int truncation puts them
-    # ~half a sample short).
-    sample_min = max(0, depth_to_sample(min_depth_in, round_up=True))
-    sample_max = min(depth_to_sample(max_depth_in), n_samples - 1)
-    if sample_max - sample_min < 2:
-        return []
-
-    envelope = np.abs(_hilbert(traces, axis=1))
-
-    raw_picks: list[dict] = []
-    for t in range(n_traces):
-        window = envelope[t, sample_min:sample_max]
-        if window.max() < 1e-6:
-            continue
-        peak_sample = int(np.argmax(window)) + sample_min
-        raw_picks.append({
-            'trace_idx':  t,
-            'sample_idx': peak_sample,
-            'amplitude':  float(envelope[t, peak_sample]),
-        })
-
-    if not raw_picks:
-        return []
-
-    # Find every hyperbola apex (not one giant cluster). The per-trace apex
-    # samples form a depth curve; each rebar shows up as a local minimum
-    # (shallowest travel time). find_peaks on the negated, smoothed curve
-    # picks them out, with distance keeping adjacent rebar separate.
-    from scipy.signal import find_peaks
+    from scipy.signal import hilbert, find_peaks
     from scipy.ndimage import uniform_filter1d
 
-    trace_indices  = np.array([p['trace_idx']  for p in raw_picks])
-    sample_indices = np.array([p['sample_idx'] for p in raw_picks])
-    amplitudes     = np.array([p['amplitude']  for p in raw_picks])
+    n_traces, n_samples = traces.shape
+    ns_per_sample = time_range_ns / n_samples
 
-    smoothed_samples = uniform_filter1d(
-        sample_indices.astype(float),
-        size=min(15, len(sample_indices) // 10 + 1),
-    )
+    # Time zero from the first few traces (median = robust to a noisy trace).
+    t0_samples = [find_time_zero(traces[t]) for t in range(min(20, n_traces))]
+    time_zero  = int(np.median(t0_samples))
+    print(f"[PICKS] time_zero={time_zero} samples "
+          f"({time_zero * ns_per_sample:.2f} ns)", flush=True)
 
-    neg_smoothed = -smoothed_samples
-    peaks, _ = find_peaks(
-        neg_smoothed,
-        distance=min_distance_traces,
-        prominence=2,
-        height=(-sample_max, -sample_min),
-    )
-    print(f"[PICKS] found {len(peaks)} hyperbola apexes from {len(raw_picks)} candidate traces", flush=True)
+    # Per-trace dielectric via Fresnel when a plate amplitude is available.
+    def get_epsr(trace_idx: int) -> float:
+        if amp_plate is not None:
+            env = np.abs(hilbert(traces[trace_idx, :60].astype(np.float32)))
+            amp_surf = float(env[time_zero]) if time_zero < 60 else float(env.max())
+            return calculate_dielectric_fresnel(amp_surf, amp_plate)
+        return epsr
 
-    if len(peaks) == 0:
-        # Fallback: amplitude peaks when the depth curve has no clear minima.
-        amp_peaks, _ = find_peaks(
-            amplitudes,
-            distance=min_distance_traces,
-            prominence=float(amplitudes.std()) * 0.5,
-        )
-        peaks = amp_peaks
+    # Constrain the search window with the model estimate if we have one.
+    if model_mean_depth_in is not None:
+        search_min = max(min_depth_in, model_mean_depth_in - 2.5)
+        search_max = min(max_depth_in, model_mean_depth_in + 3.5)
+    else:
+        search_min, search_max = min_depth_in, max_depth_in
 
-    max_amp = float(amplitudes.max()) or 1.0
+    def depth_to_sample_offset(d_in: float, epsr_val: float) -> int:
+        velocity = 0.3 / np.sqrt(epsr_val)
+        twtt_ns  = (d_in / 39.3701) / velocity * 2
+        return int(twtt_ns / ns_per_sample)
+
+    epsr_median = float(np.median(
+        [get_epsr(t) for t in range(0, n_traces, max(1, n_traces // 20))]
+    ))
+    s_min = max(time_zero + 1, time_zero + depth_to_sample_offset(search_min, epsr_median))
+    s_max = min(n_samples - 1, time_zero + depth_to_sample_offset(search_max, epsr_median))
+    if s_max - s_min < 2:
+        return []
+    print(f"[PICKS] search window: {search_min:.1f}\"-{search_max:.1f}\" "
+          f"(samples {s_min}-{s_max}) epsr_median={epsr_median:.1f}", flush=True)
+
+    envelope = np.abs(hilbert(traces, axis=1)).astype(np.float32)
+
+    # Per-trace dominant peak sample inside the search window → depth profile.
+    depth_profile = np.zeros(n_traces, dtype=np.float32)
+    amp_profile   = np.zeros(n_traces, dtype=np.float32)
+    for t in range(n_traces):
+        seg = envelope[t, s_min:s_max]
+        if seg.max() < 1e-6:
+            depth_profile[t] = float(s_min + s_max) / 2
+            continue
+        pk = int(np.argmax(seg)) + s_min
+        depth_profile[t] = float(pk)
+        amp_profile[t]   = float(envelope[t, pk])
+
+    smoothed = uniform_filter1d(depth_profile, size=max(5, min_distance_traces // 2))
+
+    # Local minima in travel time = hyperbola apexes.
+    candidates, _ = find_peaks(-smoothed, distance=min_distance_traces, prominence=1.5)
+    print(f"[PICKS] {len(candidates)} candidates before symmetry check", flush=True)
+
+    max_amp = float(amp_profile.max()) or 1.0
     result: list[dict] = []
-    for peak_idx in peaks:
-        t_idx = int(trace_indices[peak_idx])
-        s_idx = int(sample_indices[peak_idx])
-        amp   = float(amplitudes[peak_idx])
-        depth_m = (s_idx * ns_per_sample * velocity) / 2.0
-        depth_in = depth_m * 39.3701
-        if min_depth_in <= depth_in <= max_depth_in:
-            result.append({
-                'trace_idx':  t_idx,
-                'sample_idx': s_idx,
-                'depth_in':   round(float(depth_in), 3),
-                'confidence': round(float(amp / max_amp), 3),
-            })
+    for idx in candidates:
+        t      = int(idx)
+        apex_s = int(depth_profile[t])
+        # Reach out to ~2x the separation so the comparison lands on the
+        # genuinely-risen hyperbola tail, not the near-flat plateau around
+        # the apex. Compare the DEEPEST flank sample on each side so an
+        # off-centre candidate (find_peaks on a flat plateau) still verifies.
+        flank = min(2 * min_distance_traces, t, n_traces - t - 1)
+        if flank < 3:
+            continue
+        left_seg  = depth_profile[max(0, t - flank):t]
+        right_seg = depth_profile[t + 1:t + 1 + flank]
+        left_deeper  = left_seg.size  > 0 and float(np.max(left_seg))  > apex_s + 0.5
+        right_deeper = right_seg.size > 0 and float(np.max(right_seg)) > apex_s + 0.5
+        if not (left_deeper and right_deeper):
+            continue
+
+        trace_epsr = get_epsr(t)
+        depth_in = calculate_rebar_depth(
+            apex_sample=apex_s, time_zero=time_zero, epsr=trace_epsr,
+            time_range_ns=time_range_ns, n_samples=n_samples,
+        )
+        if not (search_min <= depth_in <= search_max):
+            continue
+
+        result.append({
+            'trace_idx':  t,
+            'sample_idx': apex_s,
+            'depth_in':   depth_in,
+            'confidence': round(float(amp_profile[t] / max_amp), 3),
+            'epsr':       round(float(trace_epsr), 2),
+            'time_zero':  time_zero,
+        })
+
+    print(f"[PICKS] {len(result)} verified apex picks", flush=True)
     return result
 
 
@@ -573,6 +600,10 @@ __all__ = [
     "build_unified_depth_map",
     "safe_filename",
     "detect_hyperbola_picks",
+    "find_time_zero",
+    "calculate_dielectric_fresnel",
+    "calculate_rebar_depth",
+    "calculate_astm_corrosion_index",
     "build_bscan_image",
     "load_cscan_amplitudes",
     "build_cscan_maps",

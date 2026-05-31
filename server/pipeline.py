@@ -23,7 +23,8 @@ from render import (
 
 
 def _persist_hyperbola_picks(sb, job_id: str, swath_idx: int,
-                              traces, frequency_mhz: int) -> None:
+                              traces, frequency_mhz: int,
+                              model_mean_depth_in: float = None) -> None:
     """Run hyperbola apex detection on this swath's traces and insert one
     row per pick into the picks table. Best-effort — fails silently if
     Supabase is unconfigured or the migration adding sample_idx/swath_idx
@@ -34,7 +35,7 @@ def _persist_hyperbola_picks(sb, job_id: str, swath_idx: int,
         from analysis import detect_hyperbola_picks, _epsr_for_frequency
         picks = detect_hyperbola_picks(
             traces=traces, epsr=_epsr_for_frequency(frequency_mhz),
-            time_range_ns=16.0,
+            time_range_ns=16.0, model_mean_depth_in=model_mean_depth_in,
         )
         if not picks:
             return
@@ -143,11 +144,6 @@ def process_files(
             f"Preprocessing file {files_done + 1}/{max(n_data_files,1)}",
         )
 
-        _persist_hyperbola_picks(
-            supabase_client, job_id, swath_idx=files_done, traces=signals,
-            frequency_mhz=frequency_mhz,
-        )
-
         bscan_info         = extract_bscan_b64(signals)
         peak_idx, peak_amp = extract_peak_info(signals)
 
@@ -170,6 +166,19 @@ def process_files(
         surface_amp = np.abs(signals[:, :20]).max(axis=1).astype(np.float32)
         surface_amp = np.where(surface_amp == 0, 1.0, surface_amp)
         atten_arr   = np.clip(peak_amp / surface_amp, 0.0, 2.0)
+
+        # Hyperbola apex picks, constrained by the model's median depth so the
+        # search window tracks the data. Run before signals is freed.
+        model_mean_depth = None
+        if depth_arr is not None and len(depth_arr) > 0:
+            valid = depth_arr[(depth_arr > 0.5) & (depth_arr < 12.0)]
+            if valid.size:
+                model_mean_depth = float(np.median(valid))
+                print(f"[PICKS] model median depth: {model_mean_depth:.2f}\"", flush=True)
+        _persist_hyperbola_picks(
+            supabase_client, job_id, swath_idx=files_done, traces=signals,
+            frequency_mhz=frequency_mhz, model_mean_depth_in=model_mean_depth,
+        )
 
         del signals
         if csv_path != dest:
