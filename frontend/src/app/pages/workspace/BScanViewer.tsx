@@ -81,10 +81,11 @@ const BScanViewer = forwardRef<BScanViewerHandle, BScanViewerProps>(function BSc
   const panStart      = useRef({ x: 0, scrollLeft: 0 });
   const didMoveOrPan  = useRef(false);
 
-  const [activeSwath, setActiveSwath] = useState(0);
-  const [zoom,        setZoom]        = useState(1.0);
-  const [contrast,    setContrast]    = useState(1.5);
-  const [colormap,    setColormap]    = useState<'gray' | 'seismic'>('gray');
+  const [activeSwath,    setActiveSwath]    = useState(0);
+  const [zoom,           setZoom]           = useState(1.0);
+  const [containerWidth, setContainerWidth] = useState(800);
+  const [contrast,       setContrast]       = useState(1.5);
+  const [colormap,       setColormap]       = useState<'gray' | 'seismic'>('gray');
   const [picks,       setPicks]       = useState<Pick[]>([]);
   const [loading,     setLoading]     = useState(false);
   const [saving,      setSaving]      = useState(false);
@@ -204,6 +205,31 @@ const BScanViewer = forwardRef<BScanViewerHandle, BScanViewerProps>(function BSc
     return nearest;
   }, [picks, activeSwath, zoom]);
 
+  // Measure the scroll container so zoom can be floored at "fills the width".
+  useEffect(() => {
+    const measure = () => {
+      if (scrollRef.current) setContainerWidth(scrollRef.current.clientWidth);
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, []);
+
+  // Minimum zoom that still fills the container width. Below this the scan
+  // would leave black gutters, so we never let the user (or wheel) go under it.
+  const minZoom = dims.n_traces > 0
+    ? Math.max(0.1, containerWidth / dims.n_traces)
+    : 0.1;
+  const minZoomRef = useRef(minZoom);
+  useEffect(() => { minZoomRef.current = minZoom; }, [minZoom]);
+
+  const setZoomClamped = useCallback((next: number | ((z: number) => number)) => {
+    setZoom(prev => {
+      const v = typeof next === 'function' ? next(prev) : next;
+      return Math.max(minZoomRef.current, Math.min(8, v));
+    });
+  }, []);
+
   // Native non-passive wheel listener — React's onWheel is passive, which
   // logs "Unable to preventDefault inside passive event listener" any time
   // we swallow the page scroll for Ctrl-wheel zoom or horizontal panning.
@@ -213,7 +239,7 @@ const BScanViewer = forwardRef<BScanViewerHandle, BScanViewerProps>(function BSc
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       if (e.ctrlKey || e.metaKey) {
-        setZoom(z => Math.min(8, Math.max(0.25, z + (e.deltaY < 0 ? 0.15 : -0.15))));
+        setZoom(z => Math.max(minZoomRef.current, Math.min(8, z + (e.deltaY < 0 ? 0.15 : -0.15))));
       } else {
         el.scrollLeft += e.deltaY;
       }
@@ -221,6 +247,12 @@ const BScanViewer = forwardRef<BScanViewerHandle, BScanViewerProps>(function BSc
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
   }, []);
+
+  // On load / resize / swath change, snap zoom to fit the container width.
+  useEffect(() => {
+    if (dims.n_traces > 0 && containerWidth > 0) setZoomClamped(minZoom);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dims.n_traces, containerWidth]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     didMoveOrPan.current = false;
@@ -386,10 +418,11 @@ const BScanViewer = forwardRef<BScanViewerHandle, BScanViewerProps>(function BSc
         <div style={divider} />
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <button onClick={() => setZoom(z => Math.max(0.25, z - 0.25))} style={btnStyle}>−</button>
+          <button onClick={() => setZoomClamped(z => z - 0.25)} style={btnStyle}>−</button>
           <span style={{ color: '#f9fafb', fontSize: 12, minWidth: 40, textAlign: 'center' }}>{Math.round(zoom * 100)}%</span>
-          <button onClick={() => setZoom(z => Math.min(8, z + 0.25))} style={btnStyle}>+</button>
-          <button onClick={() => setZoom(1)} style={btnStyle}>1:1</button>
+          <button onClick={() => setZoomClamped(z => z + 0.25)} style={btnStyle}>+</button>
+          <button onClick={() => setZoomClamped(1)} style={btnStyle}>1:1</button>
+          <button onClick={() => setZoomClamped(minZoom)} style={btnStyle}>Fit</button>
         </div>
 
         <div style={divider} />
@@ -452,7 +485,7 @@ const BScanViewer = forwardRef<BScanViewerHandle, BScanViewerProps>(function BSc
       <div
         ref={scrollRef}
         style={{
-          overflow: 'auto', background: '#000', borderRadius: 4, border: '1px solid #374151',
+          overflow: 'auto', width: '100%', background: '#000', borderRadius: 4, border: '1px solid #374151',
           flex: 1, minHeight: 0, position: 'relative', touchAction: 'none',
         }}
       >
@@ -475,8 +508,11 @@ const BScanViewer = forwardRef<BScanViewerHandle, BScanViewerProps>(function BSc
           style={{
             display: 'block',
             imageRendering: zoom > 2 ? 'pixelated' : 'auto',
-            width:  dims.n_traces  > 0 ? `${dims.n_traces  * zoom}px` : '100%',
-            height: dims.n_samples > 0 ? `${dims.n_samples * zoom}px` : 'auto',
+            width:  dims.n_traces > 0
+              ? `${Math.max(containerWidth, dims.n_traces * zoom)}px`
+              : '100%',
+            height: dims.n_samples > 0 ? `${dims.n_samples * zoom}px` : '300px',
+            minWidth: '100%',
             cursor: 'crosshair',
             userSelect: 'none',
           }}
