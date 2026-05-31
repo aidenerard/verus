@@ -174,12 +174,21 @@ from analysis_proceq_utils import group_files_by_swath  # noqa: E402
 def _persist_proceq_hyperbola_picks(sb, job_id, swath_idx: int, traces, epsr: float) -> None:
     """Detect hyperbola apex picks for this swath's first-channel traces and
     insert them into the picks table. Best-effort — silent failure if the
-    pending migration adding sample_idx/swath_idx columns hasn't run yet."""
+    pending migration adding sample_idx/swath_idx columns hasn't run yet.
+
+    Proceq has no true plate calibration, so approximate the plate amplitude
+    from the strongest early-trace reflections (90th pct) — enough for the
+    Fresnel per-trace dielectric to track moisture variation."""
     if not sb or not job_id:
         return
     try:
+        import numpy as _np
         from analysis import detect_hyperbola_picks
-        picks = detect_hyperbola_picks(traces=traces, epsr=epsr, time_range_ns=16.0)
+        amp_plate = float(_np.percentile(_np.abs(traces[:10]).max(axis=1), 90)) \
+            if len(traces) else None
+        picks = detect_hyperbola_picks(
+            traces=traces, epsr=epsr, time_range_ns=16.0, amp_plate=amp_plate,
+        )
         if not picks:
             return
         rows = [{
