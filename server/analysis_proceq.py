@@ -201,6 +201,14 @@ def _persist_proceq_hyperbola_picks(sb, job_id, swath_idx: int, traces, epsr: fl
         )
         if not picks:
             return
+        # Keep only confident apexes — noise-driven minima come back with
+        # low confidence and would pollute the depth map + analyst review.
+        kept = [p for p in picks if p["confidence"] >= 0.3]
+        print(f"[PICKS] confidence>=0.3 kept {len(kept)} of {len(picks)} "
+              f"(filtered {len(picks) - len(kept)})", flush=True)
+        if not kept:
+            return
+        picks = kept
         rows = [{
             "job_id":       job_id,
             "trace_idx":    int(p["trace_idx"]),
