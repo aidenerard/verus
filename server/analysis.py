@@ -299,7 +299,7 @@ def detect_hyperbola_picks(
     traces,
     epsr: float = 9.0,
     time_range_ns: float = 16.0,
-    min_distance_traces: int = 20,
+    min_distance_traces: int = 8,    # rebar at 6" spacing needs a small window
     min_depth_in: float = 0.5,
     max_depth_in: float = 10.0,
 ) -> list[dict]:
@@ -309,9 +309,10 @@ def detect_hyperbola_picks(
     Algorithm:
       1. Hilbert envelope per trace
       2. Argmax per trace within [min_depth_in, max_depth_in] window
-      3. Cluster picks that are within `min_distance_traces` columns of
-         each other (single rebar = one hyperbola = one cluster)
-      4. Pick the shallowest sample in each cluster (the apex)
+      3. Smooth the per-trace apex-sample curve, then find_peaks on its
+         negative (apex = local minimum travel time = shallowest point of
+         each hyperbola). distance=min_distance_traces separates adjacent
+         rebar; prominence rejects noise. Falls back to amplitude peaks.
 
     Returns list[{trace_idx, sample_idx, depth_in, confidence}].
     """
@@ -352,35 +353,54 @@ def detect_hyperbola_picks(
     if not raw_picks:
         return []
 
-    # Pre-filter: keep only the top ~30% of picks by amplitude. Real rebar
-    # reflections sit well above the noise floor; without this filter every
-    # trace contributes a raw pick (noise included) and clustering collapses
-    # to one giant cluster spanning the whole scan.
-    amp_threshold = float(np.percentile([p['amplitude'] for p in raw_picks], 70))
-    raw_picks = [p for p in raw_picks if p['amplitude'] >= amp_threshold]
-    if not raw_picks:
-        return []
+    # Find every hyperbola apex (not one giant cluster). The per-trace apex
+    # samples form a depth curve; each rebar shows up as a local minimum
+    # (shallowest travel time). find_peaks on the negated, smoothed curve
+    # picks them out, with distance keeping adjacent rebar separate.
+    from scipy.signal import find_peaks
+    from scipy.ndimage import uniform_filter1d
 
-    # Cluster sequential picks within min_distance_traces.
-    clusters: list[list[dict]] = [[raw_picks[0]]]
-    for pick in raw_picks[1:]:
-        if pick['trace_idx'] - clusters[-1][-1]['trace_idx'] <= min_distance_traces:
-            clusters[-1].append(pick)
-        else:
-            clusters.append([pick])
+    trace_indices  = np.array([p['trace_idx']  for p in raw_picks])
+    sample_indices = np.array([p['sample_idx'] for p in raw_picks])
+    amplitudes     = np.array([p['amplitude']  for p in raw_picks])
 
-    max_amp = max(p['amplitude'] for p in raw_picks) or 1.0
+    smoothed_samples = uniform_filter1d(
+        sample_indices.astype(float),
+        size=min(15, len(sample_indices) // 10 + 1),
+    )
+
+    neg_smoothed = -smoothed_samples
+    peaks, _ = find_peaks(
+        neg_smoothed,
+        distance=min_distance_traces,
+        prominence=2,
+        height=(-sample_max, -sample_min),
+    )
+    print(f"[PICKS] found {len(peaks)} hyperbola apexes from {len(raw_picks)} candidate traces", flush=True)
+
+    if len(peaks) == 0:
+        # Fallback: amplitude peaks when the depth curve has no clear minima.
+        amp_peaks, _ = find_peaks(
+            amplitudes,
+            distance=min_distance_traces,
+            prominence=float(amplitudes.std()) * 0.5,
+        )
+        peaks = amp_peaks
+
+    max_amp = float(amplitudes.max()) or 1.0
     result: list[dict] = []
-    for cluster in clusters:
-        apex = min(cluster, key=lambda p: p['sample_idx'])
-        depth_m = (apex['sample_idx'] * ns_per_sample * velocity) / 2.0
+    for peak_idx in peaks:
+        t_idx = int(trace_indices[peak_idx])
+        s_idx = int(sample_indices[peak_idx])
+        amp   = float(amplitudes[peak_idx])
+        depth_m = (s_idx * ns_per_sample * velocity) / 2.0
         depth_in = depth_m * 39.3701
         if min_depth_in <= depth_in <= max_depth_in:
             result.append({
-                'trace_idx':  int(apex['trace_idx']),
-                'sample_idx': int(apex['sample_idx']),
+                'trace_idx':  t_idx,
+                'sample_idx': s_idx,
                 'depth_in':   round(float(depth_in), 3),
-                'confidence': round(float(apex['amplitude'] / max_amp), 3),
+                'confidence': round(float(amp / max_amp), 3),
             })
     return result
 
