@@ -27,6 +27,7 @@ interface TraceData {
 
 interface BScanViewerProps {
   bscanData:     TraceData[];
+  bscanUrl?:     string;        // job-results storage URL (plain JSON) when offloaded
   jobId:         string;
   serverUrl:     string;
   onPicksSaved?: (picks: Pick[]) => void;
@@ -71,7 +72,7 @@ function sampleIdxToDepthIn(sample_idx: number, n_samples: number): number {
 }
 
 const BScanViewer = forwardRef<BScanViewerHandle, BScanViewerProps>(function BScanViewer({
-  bscanData, jobId, serverUrl, onPicksSaved,
+  bscanData, bscanUrl, jobId, serverUrl, onPicksSaved,
 }, ref) {
   const canvasRef     = useRef<HTMLCanvasElement>(null);
   const scrollRef     = useRef<HTMLDivElement>(null);
@@ -92,6 +93,22 @@ const BScanViewer = forwardRef<BScanViewerHandle, BScanViewerProps>(function BSc
   const [traces,      setTraces]      = useState<Int8Array | null>(null);
   const [dims,        setDims]        = useState({ n_traces: 0, n_samples: 0 });
   const [saveMsg,     setSaveMsg]     = useState('');
+  const [urlBscan,    setUrlBscan]    = useState<TraceData[]>([]);
+
+  // bscan_data may be offloaded to storage (bscan_data_url) to keep the job
+  // row small. Fetch the plain-JSON blob when no inline bscanData was passed.
+  useEffect(() => {
+    if (bscanData.length > 0 || !bscanUrl) return;
+    let cancelled = false;
+    fetch(bscanUrl)
+      .then(r => r.json())
+      .then((data: TraceData[]) => { if (!cancelled) setUrlBscan(data ?? []); })
+      .catch(e => console.error('[BScanViewer] bscan_data_url fetch failed:', e));
+    return () => { cancelled = true; };
+  }, [bscanUrl, bscanData.length]);
+
+  // Effective swaths: inline prop if present, else the storage-fetched blob.
+  const swaths: TraceData[] = bscanData.length > 0 ? bscanData : urlBscan;
 
   // Load picks from backend
   useEffect(() => {
@@ -116,8 +133,8 @@ const BScanViewer = forwardRef<BScanViewerHandle, BScanViewerProps>(function BSc
 
   // Decode the active swath's trace blob
   useEffect(() => {
-    if (!bscanData || bscanData.length === 0) return;
-    const swath = bscanData[activeSwath];
+    if (swaths.length === 0) return;
+    const swath = swaths[activeSwath];
     if (!swath) return;
     setLoading(true);
     decodeTraces(swath).then(decoded => {
@@ -127,7 +144,7 @@ const BScanViewer = forwardRef<BScanViewerHandle, BScanViewerProps>(function BSc
       }
       setLoading(false);
     });
-  }, [activeSwath, bscanData]);
+  }, [activeSwath, swaths]);
 
   // Render B-scan + pick overlay to the canvas
   useEffect(() => {
@@ -383,10 +400,12 @@ const BScanViewer = forwardRef<BScanViewerHandle, BScanViewerProps>(function BSc
     getSaving: () => saving,
   }), [savePicks, detectPicks, picks, saving]);
 
-  if (!bscanData || bscanData.length === 0) {
+  if (swaths.length === 0) {
     return (
       <div style={{ padding: 40, textAlign: 'center', color: '#9ca3af', background: '#111', borderRadius: 8 }}>
-        <p style={{ margin: 0 }}>No B-scan data available.</p>
+        <p style={{ margin: 0 }}>
+          {bscanUrl ? 'Loading B-scan data…' : 'No B-scan data available.'}
+        </p>
         <p style={{ fontSize: 12, marginTop: 8 }}>
           Upload Proceq .scan or GSSI .dzt files to enable the interactive B-scan viewer.
         </p>
@@ -411,7 +430,7 @@ const BScanViewer = forwardRef<BScanViewerHandle, BScanViewerProps>(function BSc
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <span style={{ color: '#9ca3af', fontSize: 12 }}>Swath:</span>
           <select value={activeSwath} onChange={e => setActiveSwath(Number(e.target.value))} style={selectStyle}>
-            {bscanData.map((_, i) => <option key={i} value={i}>Swath {i + 1}</option>)}
+            {swaths.map((_, i) => <option key={i} value={i}>Swath {i + 1}</option>)}
           </select>
         </div>
 
@@ -521,7 +540,7 @@ const BScanViewer = forwardRef<BScanViewerHandle, BScanViewerProps>(function BSc
 
       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#6b7280', padding: '0 4px', flexShrink: 0 }}>
         <span>← Distance along scan (traces) →</span>
-        <span>{dims.n_traces} × {dims.n_samples} · Swath {activeSwath + 1}/{bscanData.length}</span>
+        <span>{dims.n_traces} × {dims.n_samples} · Swath {activeSwath + 1}/{swaths.length}</span>
         <span>↕ Depth (in)</span>
       </div>
     </div>
