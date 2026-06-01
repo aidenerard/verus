@@ -32,6 +32,7 @@ async function pollFromSupabase(jobId: string): Promise<PollSnapshot | null> {
     .eq('id', jobId)
     .single();
   if (error || !data) return null;
+  console.log('[POLL] Supabase row:', { status: data.status, hasResult: !!data.result });
   return {
     status:   data.status,
     progress: data.progress ?? 0,
