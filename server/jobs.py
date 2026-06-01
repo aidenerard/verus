@@ -97,6 +97,84 @@ def _upload_png(sb, b64: str, company: str, project: str, job_id: str, suffix: s
         return None
 
 
+# Result fields that the frontend never reads — dropped from the JSONB blob
+# entirely (DZT also keeps prob_grid/twt_grid as their own top-level columns).
+_RESULT_DROP_FIELDS = {
+    "prob_grid", "prob_grid_data", "twt_grid", "twt_grid_data",
+    "amplitude_grid_data", "rebar_depth_grid", "rebar_twt_grid", "rebar_peak_grid",
+}
+# Base64 PNG fields offloaded to Storage → <field>_url.
+_RESULT_PNG_FIELDS = {
+    "rebar_depth_map":   "rebar_depth_map.png",
+    "corrosion_map":     "corrosion_map.png",
+    "horizon_picks":     "horizon_picks.png",
+    "rebar_depth_image": "rebar_depth_image.png",
+    "amplitude_image":   "amplitude_image.png",
+}
+
+
+def _upload_result_to_storage(supabase_client, job_id: str, result: dict) -> dict:
+    """
+    Move large blobs out of the result dict into the public 'job-results'
+    bucket, returning a lean dict with storage URLs. Keeps the JSONB row
+    small enough for Supabase to round-trip on read (the "job not loading"
+    cause). Runs synchronously — these workers are plain threads.
+
+    Offloads: the base64 PNGs (→ <field>_url) and bscan_data (→ bscan_data_url,
+    stored as plain JSON so the browser can fetch().then(r => r.json())).
+    Drops: grid fields the frontend never reads. Keeps per_file_summary (GPS
+    map + mean-depth stat read it) but strips its heavy per-file trace blob.
+    """
+    if not supabase_client:
+        return result
+
+    import json as _json
+    lean = {k: v for k, v in result.items()
+            if k not in _RESULT_DROP_FIELDS and k not in _RESULT_PNG_FIELDS
+            and k != "bscan_data"}
+    bucket = supabase_client.storage.from_("job-results")
+
+    def _put(path: str, data: bytes, content_type: str) -> str:
+        bucket.upload(path, data, {"content-type": content_type, "upsert": "true"})
+        return bucket.get_public_url(path)
+
+    for field, fname in _RESULT_PNG_FIELDS.items():
+        b64 = result.get(field)
+        if not b64:
+            continue
+        try:
+            raw = b64.split(",", 1)[1] if b64.startswith("data:") else b64
+            png = _b64.b64decode(raw)
+            lean[f"{field}_url"] = _put(f"{job_id}/{fname}", png, "image/png")
+            print(f"[JOBS] offloaded {field} → storage ({len(png)//1024}KB)", flush=True)
+        except Exception as exc:
+            print(f"[JOBS] storage upload failed for {field}: {exc}", flush=True)
+            lean[field] = result[field]  # keep base64 fallback so it still renders
+
+    bscan = result.get("bscan_data")
+    if bscan:
+        try:
+            blob = _json.dumps(bscan).encode()
+            lean["bscan_data_url"] = _put(f"{job_id}/bscan_data.json", blob, "application/json")
+            lean["bscan_count"]    = result.get("bscan_count", len(bscan))
+            print(f"[JOBS] offloaded bscan_data → storage ({len(blob)//1024}KB)", flush=True)
+        except Exception as exc:
+            print(f"[JOBS] bscan storage upload failed: {exc}", flush=True)
+            lean["bscan_data"] = bscan
+
+    # Drop the heavy per-file trace blob from per_file_summary — the frontend
+    # reads gps/delam_pct/rebar_depth_mean from it, never the per-file bscan.
+    pfs = lean.get("per_file_summary")
+    if isinstance(pfs, list):
+        lean["per_file_summary"] = [
+            {k: v for k, v in e.items() if k not in ("bscan", "bscan_data")}
+            if isinstance(e, dict) else e
+            for e in pfs
+        ]
+
+    return lean
+
+
 # ── Worker ────────────────────────────────────────────────────────────────────
 
 def run_analysis_job(
@@ -208,6 +286,7 @@ def run_analysis_job(
 
         if supabase_client:
             try:
+                lean_result = _upload_result_to_storage(supabase_client, job_id, result)
                 supabase_client.table("analysis_jobs").upsert({
                     "id": job_id, "user_id": user_id, "status": "complete", "completed_at": "now()",
                     "signals_analyzed": total_sigs,
@@ -233,11 +312,12 @@ def run_analysis_job(
                     "company": company.strip(),
                     "project": project.strip(),
                     "processing_state": DEFAULT_PROCESSING_STATE,
-                    "result": result,
+                    "result": lean_result,
                 }).execute()
                 print(f"[JOBS] result written to Supabase, job_id={job_id}", flush=True)
-                print(f"[JOBS] result keys: {list(result.keys())}", flush=True)
-                print(f"[JOBS] result size: ~{len(str(result))//1000}KB", flush=True)
+                print(f"[JOBS] lean result keys: {list(lean_result.keys())}", flush=True)
+                print(f"[JOBS] lean result size: ~{len(str(lean_result))//1000}KB "
+                      f"(was ~{len(str(result))//1000}KB)", flush=True)
             except Exception as exc:
                 print(f"[job:{job_id}] DB write failed: {exc}", flush=True)
 
@@ -419,6 +499,7 @@ def run_proceq_job(
         # polling to return the result instead of 404.
         if supabase_client:
             try:
+                lean_result = _upload_result_to_storage(supabase_client, job_id, proceq_result)
                 supabase_client.table("analysis_jobs").upsert({
                     "id":                job_id,
                     "user_id":           user_id,
@@ -429,11 +510,12 @@ def run_proceq_job(
                     "analysis_time_sec": elapsed,
                     "company":           company.strip(),
                     "project":           project.strip(),
-                    "result":            proceq_result,
+                    "result":            lean_result,
                 }).execute()
                 print(f"[JOBS] result written to Supabase, job_id={job_id}", flush=True)
-                print(f"[JOBS] result keys: {list(proceq_result.keys())}", flush=True)
-                print(f"[JOBS] result size: ~{len(str(proceq_result))//1000}KB", flush=True)
+                print(f"[JOBS] lean result keys: {list(lean_result.keys())}", flush=True)
+                print(f"[JOBS] lean result size: ~{len(str(lean_result))//1000}KB "
+                      f"(was ~{len(str(proceq_result))//1000}KB)", flush=True)
             except Exception as exc:
                 print(f"[job:{job_id}] Proceq DB write failed (non-fatal): {exc}", flush=True)
 
