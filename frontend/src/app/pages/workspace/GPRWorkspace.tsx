@@ -108,6 +108,13 @@ export default function GPRWorkspace() {
     setLoadingJob(true);
     supabase.from('analysis_jobs').select('*').eq('id', viewJobId).single()
       .then(({ data, error }) => {
+        console.log('[LOAD] saved-job row:', {
+          jobId: viewJobId,
+          error: error?.message ?? null,
+          status: data?.status,
+          hasResult: !!data?.result,
+          resultKeys: data?.result ? Object.keys(data.result) : null,
+        });
         if (error || !data?.result) {
           setLoadError('Could not load that job.');
         } else {
