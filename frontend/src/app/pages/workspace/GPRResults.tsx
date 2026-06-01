@@ -22,12 +22,16 @@ export type ResultsTab = 'overview' | 'interactive';
 
 interface PanelSpec { title: string; src: string | undefined }
 
-function resolveImageSrc(value: string | undefined | null): string | undefined {
-  if (!value) return undefined;
-  if (value.startsWith('http') || value.startsWith('data:')) return value;
-  // DZT/Proceq pipelines return raw base64 PNG when Supabase upload skipped —
-  // wrap with the data URI prefix so <img src=...> renders it.
-  return `data:image/png;base64,${value}`;
+function resolveImageSrc(
+  urlField?: string | null,
+  b64Field?: string | null,
+): string | undefined {
+  // Prefer a storage URL (large blobs are offloaded to the job-results
+  // bucket); fall back to an inline base64 PNG for older/local results.
+  if (urlField) return urlField;
+  if (!b64Field) return undefined;
+  if (b64Field.startsWith('http') || b64Field.startsWith('data:')) return b64Field;
+  return `data:image/png;base64,${b64Field}`;
 }
 
 function meanRebarDepth(result: AnalysisResult): number | undefined {
@@ -158,10 +162,14 @@ interface OverviewTabProps {
 
 function OverviewTab({ result, projectId, needsRegen, onRegenerated }: OverviewTabProps) {
   const amplitudeSrc = useMemo(
-    () => resolveImageSrc(result.corrosion_map ?? result.amplitude_image),
+    () => resolveImageSrc(
+      result.corrosion_map_url ?? result.amplitude_image_url,
+      result.corrosion_map ?? result.amplitude_image,
+    ),
     [result],
   );
-  const staticDepthB64 = result.rebar_depth_map ?? result.rebar_depth_image;
+  const staticDepthB64 = result.rebar_depth_map_url
+    ?? result.rebar_depth_map ?? result.rebar_depth_image;
 
   const stats = useMemo(() => {
     const mean  = result.mean_depth_inches     ?? meanRebarDepth(result);
@@ -179,7 +187,7 @@ function OverviewTab({ result, projectId, needsRegen, onRegenerated }: OverviewT
   // per_file_summary is DZT-only; Proceq results don't carry it.
   const hasGps = (result.per_file_summary ?? []).some(f => f.gps);
 
-  const conditionSrc = resolveImageSrc(result.cscan_url ?? result.cscan_image);
+  const conditionSrc = resolveImageSrc(result.cscan_url, result.cscan_image);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -259,6 +267,7 @@ function InteractiveTabBody({ result, projectId, onPicksSaved, bscanRef }: Inter
       <BScanViewer
         ref={bscanRef}
         bscanData={result.bscan_data ?? []}
+        bscanUrl={result.bscan_data_url}
         jobId={projectId}
         serverUrl={SERVER}
         onPicksSaved={onPicksSaved}

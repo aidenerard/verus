@@ -65,6 +65,12 @@ export interface AnalysisResult {
     encoding:  string;
   }>;
   bscan_count?:             number;
+  // v6+ large blobs offloaded to the job-results storage bucket (URLs)
+  rebar_depth_map_url?:     string;
+  corrosion_map_url?:       string;
+  horizon_picks_url?:       string;
+  rebar_depth_image_url?:   string;
+  bscan_data_url?:          string;
   mean_depth_inches?:       number;
   deck_thickness_inches?:   number;
   high_risk_pct?:           number;
