@@ -235,7 +235,9 @@ def run_analysis_job(
                     "processing_state": DEFAULT_PROCESSING_STATE,
                     "result": result,
                 }).execute()
-                print(f"[job:{job_id}] DB row written", flush=True)
+                print(f"[JOBS] result written to Supabase, job_id={job_id}", flush=True)
+                print(f"[JOBS] result keys: {list(result.keys())}", flush=True)
+                print(f"[JOBS] result size: ~{len(str(result))//1000}KB", flush=True)
             except Exception as exc:
                 print(f"[job:{job_id}] DB write failed: {exc}", flush=True)
 
@@ -429,7 +431,9 @@ def run_proceq_job(
                     "project":           project.strip(),
                     "result":            proceq_result,
                 }).execute()
-                print(f"[job:{job_id}] Proceq DB row + result written", flush=True)
+                print(f"[JOBS] result written to Supabase, job_id={job_id}", flush=True)
+                print(f"[JOBS] result keys: {list(proceq_result.keys())}", flush=True)
+                print(f"[JOBS] result size: ~{len(str(proceq_result))//1000}KB", flush=True)
             except Exception as exc:
                 print(f"[job:{job_id}] Proceq DB write failed (non-fatal): {exc}", flush=True)
 
