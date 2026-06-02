@@ -31,7 +31,6 @@ export interface AnalysisResult {
   per_file_summary:    FileResult[];
   // optional — present only from server v2+
   rebar_depth_image?:  string;
-  amplitude_image?:    string;
   prob_grid?:          string;
   prob_grid_rows?:     number;
   prob_grid_cols?:     number;
@@ -47,13 +46,11 @@ export interface AnalysisResult {
   rebar_model_used?:        boolean;
   rebar_cscan_image?:       string;
   rebar_cscan_image_url?:   string;
-  amplitude_image_url?:     string;
   rebar_depth_grid?:        (number | null)[][];
   rebar_twt_grid?:          (number | null)[][];
   rebar_peak_grid?:         (number | null)[][];
   // v4+ canvas grid data (JSON arrays, pre-downsampled)
   prob_grid_data?:          (number | null)[][];
-  amplitude_grid_data?:     (number | null)[][];
   // v5+ simplified 3-panel result keys
   horizon_picks?:           string;
   rebar_depth_map?:         string;
@@ -74,6 +71,12 @@ export interface AnalysisResult {
   mean_depth_inches?:       number;
   deck_thickness_inches?:   number;
   high_risk_pct?:           number;
+  // Proceq pipeline stats sub-object
+  stats?: {
+    n_traces?:      number;
+    mean_depth_in?: number;
+    high_risk_pct?: number;
+  };
   condition_class_pcts?: {
     sound:                number;
     monitor:              number;

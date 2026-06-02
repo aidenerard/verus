@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react';
-import { ImageOff, LayoutGrid, Activity } from 'lucide-react';
+import { ImageOff, LayoutGrid, Activity, Download } from 'lucide-react';
 import type { AnalysisResult } from '../inspect/types';
 import { useMapbox } from '../inspect/useMapbox';
 import { SERVER } from '../inspect/constants';
 import BScanViewer from './BScanViewer';
-import ConditionMapPanel from './ConditionMapPanel';
 import DepthMapCanvas from './DepthMapCanvas';
+import ResultsExportTab from './ResultsExportTab';
 import { BORDER, BORDER2, PANEL, RAISED, TEXT, TEXT2, TEXT3, ACCENT, ACCENT_SOFT } from './tokens';
 
 import type { BScanViewerHandle } from './BScanViewer';
@@ -18,7 +18,7 @@ interface Props {
   bscanRef?:  React.Ref<BScanViewerHandle>;
 }
 
-export type ResultsTab = 'overview' | 'interactive';
+export type ResultsTab = 'overview' | 'interactive' | 'export';
 
 interface PanelSpec { title: string; src: string | undefined }
 
@@ -59,19 +59,25 @@ export default function GPRResults({
         project={result.project}
       />
       <ResultsTabs tab={tab} setTab={setTab} />
-      {tab === 'overview'
-        ? <OverviewTab
-            result={result}
-            projectId={projectId}
-            needsRegen={needsRegen}
-            onRegenerated={() => setNeedsRegen(false)}
-          />
-        : <InteractiveTabBody
-            result={result}
-            projectId={projectId}
-            onPicksSaved={() => setNeedsRegen(true)}
-            bscanRef={bscanRef}
-          />}
+      {tab === 'overview' && (
+        <OverviewTab
+          result={result}
+          projectId={projectId}
+          needsRegen={needsRegen}
+          onRegenerated={() => setNeedsRegen(false)}
+        />
+      )}
+      {tab === 'interactive' && (
+        <InteractiveTabBody
+          result={result}
+          projectId={projectId}
+          onPicksSaved={() => setNeedsRegen(true)}
+          bscanRef={bscanRef}
+        />
+      )}
+      {tab === 'export' && (
+        <ResultsExportTab result={result} projectId={projectId} />
+      )}
     </div>
   );
 }
@@ -126,10 +132,11 @@ function ResultsTabs({ tab, setTab }:
   const items: { id: ResultsTab; label: string; Icon: typeof LayoutGrid }[] = [
     { id: 'overview',    label: 'Overview',    Icon: LayoutGrid },
     { id: 'interactive', label: 'Interactive', Icon: Activity },
+    { id: 'export',      label: 'Export',      Icon: Download },
   ];
   return (
     <div role="tablist" style={{ display: 'flex', gap: 0, background: PANEL, border: `1px solid ${BORDER}`, alignSelf: 'flex-start' }}>
-      {items.map(({ id, label, Icon }) => {
+      {items.map(({ id, label, Icon }, i) => {
         const active = tab === id;
         return (
           <button
@@ -140,7 +147,7 @@ function ResultsTabs({ tab, setTab }:
               padding: '10px 16px', border: 'none', cursor: 'pointer',
               background: active ? ACCENT_SOFT : 'transparent',
               color: active ? ACCENT : TEXT2,
-              borderRight: id === 'overview' ? `1px solid ${BORDER}` : 'none',
+              borderRight: i < items.length - 1 ? `1px solid ${BORDER}` : 'none',
               fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase',
               fontFamily: 'inherit',
             }}
@@ -160,22 +167,26 @@ interface OverviewTabProps {
   onRegenerated: () => void;
 }
 
+function astmStatus(risk?: number): string {
+  if (risk === undefined) return '—';
+  if (risk < 10) return 'Sound';
+  if (risk < 30) return 'Monitor';
+  return 'Action';
+}
+
 function OverviewTab({ result, projectId, needsRegen, onRegenerated }: OverviewTabProps) {
-  const amplitudeSrc = useMemo(
-    () => resolveImageSrc(
-      result.corrosion_map_url ?? result.amplitude_image_url,
-      result.corrosion_map ?? result.amplitude_image,
-    ),
+  const corrosionSrc = useMemo(
+    () => resolveImageSrc(result.corrosion_map_url, result.corrosion_map),
     [result],
   );
   const staticDepthB64 = result.rebar_depth_map_url
     ?? result.rebar_depth_map ?? result.rebar_depth_image;
 
   const stats = useMemo(() => {
-    const mean  = result.mean_depth_inches     ?? meanRebarDepth(result);
-    const thick = result.deck_thickness_inches;
-    const risk  = result.high_risk_pct         ?? result.delamination_pct;
-    return { mean, thick, risk };
+    const mean     = result.mean_depth_inches ?? meanRebarDepth(result);
+    const risk     = result.high_risk_pct     ?? result.delamination_pct;
+    const coverage = result.signals_analyzed  ?? result.stats?.n_traces;
+    return { mean, risk, coverage };
   }, [result]);
 
   const { mapContainerRef } = useMapbox({
@@ -187,13 +198,8 @@ function OverviewTab({ result, projectId, needsRegen, onRegenerated }: OverviewT
   // per_file_summary is DZT-only; Proceq results don't carry it.
   const hasGps = (result.per_file_summary ?? []).some(f => f.gps);
 
-  const conditionSrc = resolveImageSrc(result.cscan_url, result.cscan_image);
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      {conditionSrc && (
-        <ConditionMapPanel result={result} src={conditionSrc} />
-      )}
       <div className="gpr-panel-grid">
         <DepthMapCanvas
           jobId={projectId ?? ''}
@@ -203,13 +209,14 @@ function OverviewTab({ result, projectId, needsRegen, onRegenerated }: OverviewT
           needsRegen={needsRegen}
           onRegenerated={onRegenerated}
         />
-        <ResultPanel title="Rebar Reflection Amplitude" src={amplitudeSrc} />
+        <ResultPanel title="Corrosion Risk Map" src={corrosionSrc} />
       </div>
 
       <div style={{ background: PANEL, border: `1px solid ${BORDER}`, padding: '14px 20px', display: 'flex', flexWrap: 'wrap', gap: 24, alignItems: 'center' }}>
-        <Stat label="Mean Depth"      value={stats.mean !== undefined ? `${stats.mean.toFixed(2)}"` : '—'} />
-        <Stat label="Deck Thickness"  value={stats.thick !== undefined ? `${stats.thick.toFixed(2)}"` : '—'} />
-        <Stat label="Risk"            value={stats.risk !== undefined ? `${stats.risk.toFixed(0)}%` : '—'} accent={typeof stats.risk === 'number' && stats.risk >= 30} />
+        <Stat label="Mean Depth"  value={stats.mean !== undefined ? `${stats.mean.toFixed(2)}"` : '—'} />
+        <Stat label="High Risk"   value={stats.risk !== undefined ? `${stats.risk.toFixed(0)}%` : '—'} accent={typeof stats.risk === 'number' && stats.risk >= 30} />
+        <Stat label="ASTM D6087"  value={astmStatus(stats.risk)} accent={typeof stats.risk === 'number' && stats.risk >= 30} />
+        <Stat label="Coverage"    value={stats.coverage !== undefined ? `${stats.coverage.toLocaleString()} traces` : '—'} />
       </div>
 
       {hasGps && (
