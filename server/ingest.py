@@ -75,6 +75,38 @@ _EXT_MAP: dict[str, any] = {
 }
 
 
+# ── Time-window helpers ───────────────────────────────────────────────────────
+
+def _estimate_time_window_ns(freq_mhz: float) -> float:
+    """
+    Estimate the GPR record time window (ns) from antenna frequency when the
+    file header does not carry it. Higher frequency → shorter window.
+    Used as the fallback for _read_time_range_ns().
+    """
+    if freq_mhz >= 3500: return 8.0    # 4 GHz GSSI SIR
+    if freq_mhz >= 1500: return 16.0   # 2 GHz Proceq RIS
+    if freq_mhz >= 800:  return 25.0   # 1 GHz
+    if freq_mhz >= 400:  return 50.0   # 400 MHz
+    return 80.0                         # 200 MHz
+
+
+def _read_time_range_ns(header: dict, frequency_mhz: float) -> float:
+    """
+    Read the time window from a parsed GPR file header, falling back to a
+    frequency-based estimate. NOTE: wiring this into convert_dzt + threading
+    the value through the depth calculation is a separate, tested follow-up;
+    today only the estimate is used.
+    """
+    for key in ("rhf_range", "time_range", "range_ns", "rh_range"):
+        val = (header or {}).get(key)
+        if isinstance(val, (int, float)) and val > 0:
+            print(f"[INGEST] time_range_ns from header field {key}: {float(val):.1f}ns")
+            return float(val)
+    est = _estimate_time_window_ns(frequency_mhz)
+    print(f"[INGEST] time_range_ns estimated from freq {frequency_mhz}MHz: {est:.1f}ns")
+    return est
+
+
 # ── Main dispatcher ───────────────────────────────────────────────────────────
 
 def detect_and_convert(

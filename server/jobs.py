@@ -107,6 +107,7 @@ _RESULT_DROP_FIELDS = {
 _RESULT_PNG_FIELDS = {
     "rebar_depth_map":   "rebar_depth_map.png",
     "corrosion_map":     "corrosion_map.png",
+    "dielectric_map":    "dielectric_map.png",
     "horizon_picks":     "horizon_picks.png",
     "rebar_depth_image": "rebar_depth_image.png",
 }
@@ -469,17 +470,25 @@ def run_proceq_job(
         bscan_data = (stats or {}).get('bscan_data', []) if stats else []
 
         depth_png = f"{safe_filename(analysis_name)}_rebar_depth.png"
+        _stats = stats or {}
         proceq_result = {
             "horizon_picks":         _enc("horizon_picks.png"),
             "rebar_depth_map":       _enc(depth_png),
             "corrosion_map":         _enc("corrosion_map.png"),
+            # Proceq has no metal-plate calibration → no real per-trace dielectric.
+            "dielectric_map":        None,
+            "dielectric_map_unavailable_reason": "Requires metal plate calibration scan at data collection",
+            "quantities":            _stats.get("quantities"),
             "bscan_data":            bscan_data,
             "bscan_count":           len(bscan_data),
-            "stats":                 stats or {},
+            "stats":                 _stats,
             "analysis_time_sec":     elapsed,
-            "mean_depth_inches":     model_stats.get("mean_depth_inches"),
+            "mean_depth_inches":     model_stats.get("mean_depth_inches") or _stats.get("mean_depth_in"),
             "mean_thickness_inches": model_stats.get("mean_thickness_inches"),
-            "high_risk_pct":         model_stats.get("high_risk_pct"),
+            "high_risk_pct":         model_stats.get("high_risk_pct") if model_stats.get("high_risk_pct") is not None else _stats.get("high_risk_pct"),
+            "high_moisture_pct":     None,
+            "astm_method":           "ASTM D6087-22",
+            "astm_status":           "Method applied",
             "model_version":         model_stats.get("model_version"),
             "error_detail":          proceq_error_detail,
         }

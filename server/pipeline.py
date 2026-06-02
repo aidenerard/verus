@@ -355,6 +355,7 @@ def build_result_payload(
     high_risk_pct = 0.0; mean_depth_inches = None
     twt_rows = twt_cols = 0
     conf_pct = depth_acc_in = 0.0; sig_quality = "Fair"
+    quantities = None
     try:
         depth_grid, amp_grid, twt_grid = build_extra_grids(
             file_peak_idxs,
@@ -367,6 +368,10 @@ def build_result_payload(
         corrosion_b64, high_risk_pct = _render_corrosion_b64_via_shared(amp_grid)
         if depth_grid.size and not np.all(np.isnan(depth_grid)):
             mean_depth_inches = round(float(np.nanmean(depth_grid)), 2)
+            from analysis import calculate_deck_quantities
+            quantities = calculate_deck_quantities(
+                depth_grid[np.isfinite(depth_grid)], high_risk_pct,
+            )
         twt_b64               = _b64.b64encode(twt_grid.tobytes()).decode()
         twt_rows, twt_cols = twt_grid.shape
 
@@ -378,6 +383,11 @@ def build_result_payload(
         print(f"[job:{job_id}] Extra grids rendered. Confidence={conf_pct:.1f}%", flush=True)
     except Exception as exc:
         print(f"[job:{job_id}] Extra grids failed: {exc}", flush=True)
+
+    # DZT has no metal-plate calibration scan, so per-trace dielectric is a
+    # constant — a moisture map would be fabricated. Gate it off honestly.
+    dielectric_map = None
+    dielectric_reason = "Requires metal plate calibration scan at data collection"
 
     # Aggregate per-file B-scan blobs into a top-level array so the frontend
     # BScanViewer (which reads result.bscan_data) finds them at the same path
@@ -398,8 +408,14 @@ def build_result_payload(
         "rebar_peak_grid":     rebar_peak_grid_j,
         "rebar_depth_image":   rebar_b64,
         "corrosion_map":       corrosion_b64,
+        "dielectric_map":      dielectric_map,
+        "dielectric_map_unavailable_reason": dielectric_reason,
+        "quantities":          quantities,
         "high_risk_pct":       high_risk_pct,
+        "high_moisture_pct":   None,
         "mean_depth_inches":   mean_depth_inches,
+        "astm_method":         "ASTM D6087-22",
+        "astm_status":         "Method applied",
         "prob_grid":           prob_b64,
         "prob_grid_rows":      pg_rows,
         "prob_grid_cols":      pg_cols,

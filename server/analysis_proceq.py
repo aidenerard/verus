@@ -395,9 +395,14 @@ def process_proceq_dataset(
 
     print("[ANALYSIS] all outputs written to", output_dir)
     all_rebar_in = np.concatenate(ts_data['rebar_in']) if ts_data['rebar_in'] else np.array([])
+    quantities = None
+    if len(all_rebar_in) > 0:
+        from analysis import calculate_deck_quantities
+        quantities = calculate_deck_quantities(all_rebar_in, high_risk_pct)
     return {
         'n_traces':      total_traces,
         'mean_depth_in': float(all_rebar_in.mean()) if len(all_rebar_in) > 0 else 0.0,
         'high_risk_pct': high_risk_pct,
+        'quantities':    quantities,
         'bscan_data':    ts_data['bscan_data'],
     }

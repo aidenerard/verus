@@ -17,18 +17,23 @@ import matplotlib.ticker as ticker
 import numpy as np
 
 
-def preprocess_for_display(traces, frequency_mhz: float = 2000):
+def preprocess_for_display(traces, frequency_mhz: float = 2000, time_range_ns: float = 16.0):
     """
-    Apply standard GPR signal processing for B-scan display, matching the
-    output quality of Geolitix / GSSI RADAN / Proceq OneVision.
+    Apply standard GPR signal processing for B-scan DISPLAY, matching the
+    processing order used by Geolitix / GSSI RADAN / RGPR. Display-only — does
+    not affect depth or map computations.
 
     Steps:
       1. DC removal (dewow) via running-mean subtraction per trace
       2. Time-zero correction via Hilbert-envelope surface pick + shift
-      3. Linear gain with depth (1× → 4×)
-      4. Bandpass filter (4th-order Butterworth, 0.02–0.8 of Nyquist)
-      5. AGC — per-trace RMS normalization
-      6. Global contrast stretch — 1st/99th percentile clip → [-1, 1]
+      3. Background removal — subtract the mean trace to kill horizontal
+         banding (direct-wave coupling / ringing) [Geolitix, RGPR]
+      4. Frequency-dependent bandpass — center = antenna freq, bandwidth ±50%
+         (0.5×–1.5× of frequency_mhz) [Geolitix rule of thumb]
+      5. SEC gain — geometric-spreading (linear in time) × exponential
+         attenuation compensation, capped at 20× [RGPR power+exp gain]
+      6. AGC — per-trace RMS normalization
+      7. Global contrast stretch — 1st/99th percentile clip → [-1, 1]
     """
     from scipy import signal as sp_signal
     from scipy.signal import hilbert
@@ -98,29 +103,43 @@ def preprocess_for_display(traces, frequency_mhz: float = 2000):
             corrected[i] = processed[i]
     processed = corrected
 
-    # Step 3 — Linear gain with depth: compensate signal attenuation, boosting
-    # deeper samples up to 4× to keep late reflectors visible.
-    gain = np.linspace(1.0, 4.0, n_samples).astype(np.float32)
-    processed *= gain[np.newaxis, :]
+    # Step 3 — Background removal: subtract the mean trace across all traces to
+    # remove horizontal banding (direct-wave coupling, antenna ringing) that
+    # otherwise masks subsurface reflectors. [Geolitix, RGPR backgroundSub]
+    processed = processed - processed.mean(axis=0, keepdims=True)
 
-    # Step 4 — Bandpass: drop DC residual and high-frequency noise outside the
-    # GPR signal band. Best-effort — short / pathological traces may fail
-    # filtfilt's padding requirement; pass-through on error.
+    # Step 4 — Frequency-dependent bandpass: center on the antenna frequency
+    # with ±50% bandwidth (Geolitix: "bandwidth ≈ the center frequency").
+    # sample_rate = n_samples / time_range; Nyquist = half that.
     try:
-        b, a = sp_signal.butter(4, [0.02, 0.8], btype="band")
-        for i in range(n_traces):
-            processed[i] = sp_signal.filtfilt(b, a, processed[i])
+        sample_rate_mhz = (n_samples / max(time_range_ns, 1e-6)) * 1000.0
+        nyquist_mhz     = sample_rate_mhz / 2.0
+        low  = np.clip((frequency_mhz * 0.5) / nyquist_mhz, 0.01, 0.99)
+        high = np.clip((frequency_mhz * 1.5) / nyquist_mhz, 0.01, 0.99)
+        if low < high:
+            b, a = sp_signal.butter(4, [low, high], btype="band")
+            for i in range(n_traces):
+                processed[i] = sp_signal.filtfilt(b, a, processed[i])
     except Exception:
         pass
 
-    # Step 5 — AGC: divide each trace by its RMS so weak reflectors come up to
+    # Step 5 — SEC gain: compensate geometric spreading (linear in time) and
+    # absorption (exponential), normalized to 1× at t0 and capped at 20× so
+    # late-time noise isn't blown up. [RGPR: power gain α=1 × exp gain — NOT t²]
+    t = np.linspace(0.0, 1.0, n_samples, dtype=np.float32)
+    sec = (1.0 + 6.0 * t) * np.exp(1.5 * t)
+    sec = (sec / float(sec[0])).astype(np.float32)
+    sec = np.clip(sec, 1.0, 20.0)
+    processed *= sec[np.newaxis, :]
+
+    # Step 6 — AGC: divide each trace by its RMS so weak reflectors come up to
     # parity with strong ones (independent per A-scan).
     for i in range(n_traces):
         rms = float(np.sqrt(np.mean(processed[i] ** 2)))
         if rms > 1e-10:
             processed[i] /= rms
 
-    # Step 6 — Global contrast stretch: 1st/99th percentile clip mapped to
+    # Step 7 — Global contrast stretch: 1st/99th percentile clip mapped to
     # [-1, 1] for matplotlib's vmin/vmax range.
     p1, p99 = np.percentile(processed, 1), np.percentile(processed, 99)
     processed = np.clip(processed, p1, p99)
@@ -158,7 +177,7 @@ def build_bscan_image(
     # Full 6-step GPR preprocessing — dewow, time-zero alignment, depth gain,
     # bandpass, per-trace AGC, then a global percentile contrast stretch into
     # [-1, 1]. See preprocess_for_display() for details.
-    display = preprocess_for_display(traces)
+    display = preprocess_for_display(traces, time_range_ns=time_range_ns)
 
     fig, ax = plt.subplots(figsize=(20, 6))
     fig.patch.set_facecolor("white")

@@ -593,6 +593,10 @@ from analysis_proceq import (  # noqa: E402
     process_proceq_dataset,
 )
 from analysis_bscan import build_bscan_image  # noqa: E402
+from analysis_quantities import (  # noqa: E402
+    build_dielectric_map,
+    calculate_deck_quantities,
+)
 
 __all__ = [
     "extract_amplitude_and_depth",
@@ -613,4 +617,6 @@ __all__ = [
     "build_cscan_maps",
     "render_corrosion_db_map",
     "process_proceq_dataset",
+    "build_dielectric_map",
+    "calculate_deck_quantities",
 ]
