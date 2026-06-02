@@ -33,3 +33,6 @@ test_cscan.py
 verify_pipeline.py
 verify_terracon.py
 view_cscan.py
+
+# Local env files — may hold Supabase keys / API tokens (bare name → any depth)
+.env.local
