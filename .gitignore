@@ -22,3 +22,14 @@ __pycache__/
 
 # Model weights — downloaded separately, not committed
 *.pth
+
+# Local diagnostic and helper scripts (bare names → ignored at any depth,
+# e.g. scripts/ in this worktree or repo root in the merge worktree)
+allscanlines.py
+calibration.py
+diagnostics.py
+explore_proceq.py
+test_cscan.py
+verify_pipeline.py
+verify_terracon.py
+view_cscan.py
