@@ -448,15 +448,16 @@ def build_unified_depth_map(
     analysis_name: str,
     x_coords=None,
     y_coords=None,
-    vmin: float = 3.0,
-    vmax: float = 8.5,
+    vmin: float = 2.0,
+    vmax: float = 9.0,
 ) -> str | None:
     """
     Unified rebar cover-depth map renderer used by both Proceq and DZT
     pipelines. Output matches the Infrasense / ASTM presentation:
       - Title = analysis_name (verbatim)
-      - Fixed 0.5" YlOrRd_r colour bands across the reference 3.0–8.5"
-        range so every dataset uses the same palette mapping
+      - Fixed 0.5" YlOrRd_r colour bands across the reference 2.0–9.0"
+        range so every dataset uses the same palette mapping (color = depth
+        is identical across instruments)
       - Depths snapped to nearest whole inch — cleaner integer transitions,
         less label clutter
       - Black isolines on integer inches only; **each** integer-level path
@@ -586,6 +587,7 @@ def build_unified_depth_map(
 from analysis_proceq import (  # noqa: E402
     load_cscan_amplitudes,
     build_cscan_maps,
+    render_corrosion_db_map,
     process_proceq_dataset,
 )
 from analysis_bscan import build_bscan_image  # noqa: E402
@@ -607,5 +609,6 @@ __all__ = [
     "build_bscan_image",
     "load_cscan_amplitudes",
     "build_cscan_maps",
+    "render_corrosion_db_map",
     "process_proceq_dataset",
 ]

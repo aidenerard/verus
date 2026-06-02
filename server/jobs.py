@@ -101,7 +101,7 @@ def _upload_png(sb, b64: str, company: str, project: str, job_id: str, suffix: s
 # entirely (DZT also keeps prob_grid/twt_grid as their own top-level columns).
 _RESULT_DROP_FIELDS = {
     "prob_grid", "prob_grid_data", "twt_grid", "twt_grid_data",
-    "amplitude_grid_data", "rebar_depth_grid", "rebar_twt_grid", "rebar_peak_grid",
+    "rebar_depth_grid", "rebar_twt_grid", "rebar_peak_grid",
 }
 # Base64 PNG fields offloaded to Storage → <field>_url.
 _RESULT_PNG_FIELDS = {
@@ -109,7 +109,6 @@ _RESULT_PNG_FIELDS = {
     "corrosion_map":     "corrosion_map.png",
     "horizon_picks":     "horizon_picks.png",
     "rebar_depth_image": "rebar_depth_image.png",
-    "amplitude_image":   "amplitude_image.png",
 }
 
 
@@ -249,7 +248,7 @@ def run_analysis_job(
 
         _set_progress(job_id, 80, "Building grids", supabase_client)
 
-        result, cscan_b64, rebar_cscan_b64, amp_b64 = build_result_payload(
+        result, cscan_b64, rebar_cscan_b64 = build_result_payload(
             job_id,
             file_preds, file_confs, file_names,
             file_peak_idxs, file_peak_amps, file_atten_arrs,
@@ -282,7 +281,6 @@ def run_analysis_job(
         _set_progress(job_id, 95, "Finalizing", supabase_client)
         cscan_url       = _upload_png(supabase_client, cscan_b64,       company, project, job_id, "")
         rebar_cscan_url = _upload_png(supabase_client, rebar_cscan_b64, company, project, job_id, "_rebar")
-        amplitude_url   = _upload_png(supabase_client, amp_b64,         company, project, job_id, "_amplitude")
 
         if supabase_client:
             try:
@@ -295,7 +293,6 @@ def run_analysis_job(
                     "analysis_time_sec": elapsed,
                     "file_names": file_names, "per_file_summary": per_file_summary,
                     "cscan_url": cscan_url, "rebar_cscan_image_url": rebar_cscan_url,
-                    "amplitude_image_url": amplitude_url,
                     "manufacturer": manufacturer, "frequency_mhz": frequency_mhz,
                     "rebar_model_used": rebar_model is not None,
                     "prob_grid": result["prob_grid"],

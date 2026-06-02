@@ -109,6 +109,63 @@ def build_ts_depth_map(ts_data, output_dir):
     return out
 
 
+def render_corrosion_db_map(
+    amp_2d,
+    output_path: str,
+    *,
+    extent=None,
+    xlabel: str = 'Along-track distance (m)',
+    ylabel: str = 'Cross-track (m)',
+    title_prefix: str = '',
+) -> float:
+    """
+    Render the ASTM D6087 depth-corrected dB corrosion map for a 2D rebar
+    reflection amplitude raster, and return the high-risk percentage.
+
+    Shared by the Proceq C-scan path (build_cscan_maps) and the DZT amplitude
+    grid path (pipeline.build_result_payload) so both instruments produce an
+    identical-looking risk map: RdYlGn, fixed -20→0 dB, -8 dB at-risk line.
+    The ASTM index is amplitude-in-dB relative to the peak, so absolute
+    amplitude scale cancels and the two instruments are directly comparable.
+
+    NaN cells (padding / gaps) are masked from the render and excluded from
+    the high-risk statistic.
+    """
+    from physics import calculate_astm_corrosion_index
+    THRESHOLD_DB = -8.0
+
+    amp = np.abs(np.asarray(amp_2d, dtype=np.float32))
+    nan_mask = np.isnan(amp)
+    filled = np.where(nan_mask, 0.0, amp)
+    # Uniform depth → identity geometric-spreading correction; this raster has
+    # no co-registered per-cell depth, so it reduces to the ASTM dB method.
+    astm = calculate_astm_corrosion_index(
+        filled.ravel(), np.ones(filled.size, dtype=np.float32),
+        threshold_db=THRESHOLD_DB,
+    )
+    db_map = np.array(astm['corrected_db'], dtype=np.float32).reshape(amp.shape)
+    det    = np.array(astm['deteriorated']).reshape(amp.shape)
+    n_valid = int((~nan_mask).sum())
+    high_risk_pct = round(float(det[~nan_mask].sum() / n_valid * 100), 1) if n_valid else 0.0
+
+    db_disp = np.ma.array(db_map, mask=nan_mask)
+    fig, ax = plt.subplots(1, 1, figsize=(24, 3))
+    im = ax.imshow(db_disp, aspect='auto', cmap='RdYlGn',
+                   origin='upper', extent=extent, vmin=-20, vmax=0)
+    cbar = plt.colorbar(im, ax=ax, label='Depth-corrected amplitude (dB)')
+    cbar.ax.axhline((THRESHOLD_DB - (-20)) / (0 - (-20)), color='black', linewidth=1.2)
+    ax.set_title(f'{title_prefix}ASTM D6087 Corrosion Map  '
+                 f'(< {THRESHOLD_DB:.0f} dB = at-risk, {high_risk_pct:.1f}% flagged)')
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.close(fig); plt.close('all'); gc.collect()
+    print(f"[ANALYSIS] corrosion map saved → {output_path} ({high_risk_pct:.1f}% high risk)")
+    return high_risk_pct
+
+
 def build_cscan_maps(cscan_slices, output_dir, title_prefix=''):
     """
     Build corrosion risk map directly from CScan raster data.
@@ -136,43 +193,14 @@ def build_cscan_maps(cscan_slices, output_dir, title_prefix=''):
     print(f"[ANALYSIS] Amplitude range: {full_map.min():.1f} – {full_map.max():.1f}")
     extent = [0, total_length_m, total_width_m, 0]
 
-    # ASTM D6087 deterioration index: depth-corrected rebar reflection
-    # amplitude in dB relative to the peak, thresholded at -8 dB. This raster
-    # carries no co-registered per-cell depth, so the geometric-spreading
-    # term is uniform (it cancels in the ratio-to-max) and this reduces to
-    # the ASTM amplitude-in-dB method — low dB = signal attenuation =
-    # corrosive environment / chloride / delamination.
-    from physics import calculate_astm_corrosion_index
-    THRESHOLD_DB = -8.0
-    amps_flat  = np.abs(full_map).ravel().astype(np.float32)
-    depth_flat = np.full(amps_flat.shape, 1.0, dtype=np.float32)  # uniform → identity correction
-    astm = calculate_astm_corrosion_index(amps_flat, depth_flat, threshold_db=THRESHOLD_DB)
-    db_map        = np.array(astm['corrected_db'], dtype=np.float32).reshape(full_map.shape)
-    high_risk_pct = astm['high_risk_pct']
-    print(f"[ANALYSIS] ASTM D6087 corrosion: threshold={THRESHOLD_DB:.0f} dB, "
-          f"high risk: {high_risk_pct:.1f}%")
-
-    # Render the depth-corrected dB amplitude. vmax=0 dB (peak reflector);
-    # clamp the floor to -20 dB so the -8 dB at-risk band reads clearly.
-    fig, ax = plt.subplots(1, 1, figsize=(24, 3))
-    im = ax.imshow(db_map, aspect='auto', cmap='RdYlGn',
-                   origin='upper', extent=extent, vmin=-20, vmax=0)
-    cbar = plt.colorbar(im, ax=ax, label='Depth-corrected amplitude (dB)')
-    cbar.ax.axhline((THRESHOLD_DB - (-20)) / (0 - (-20)), color='black', linewidth=1.2)
-    ax.set_title(f'{title_prefix}ASTM D6087 Corrosion Map  '
-                 f'(< {THRESHOLD_DB:.0f} dB = at-risk, {high_risk_pct:.1f}% flagged)')
-    ax.set_xlabel('Along-track distance (m)')
-    ax.set_ylabel('Cross-track (m)')
-    plt.tight_layout()
     cor_path = os.path.join(output_dir, 'corrosion_map.png')
-    plt.savefig(cor_path, dpi=150, bbox_inches='tight')
-    plt.close()
-    print(f"[ANALYSIS] corrosion map saved → {cor_path}")
-
+    high_risk_pct = render_corrosion_db_map(
+        full_map, cor_path, extent=extent, title_prefix=title_prefix,
+    )
     return {
         'corrosion_map_path': cor_path,
         'high_risk_pct':      high_risk_pct,
-        'threshold_db':       THRESHOLD_DB,
+        'threshold_db':       -8.0,
         'shape':              full_map.shape,
     }
 

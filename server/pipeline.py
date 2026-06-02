@@ -17,7 +17,6 @@ from grids import (
 )
 from render_cscan import render_cscan_b64
 from render import (
-    render_amplitude_b64,
     render_rebar_cscan_b64, compute_confidence_metrics,
 )
 
@@ -81,6 +80,28 @@ def _render_depth_b64_via_unified(depth_grid, analysis_name: str) -> str:
             return ""
         with open(tf.name, 'rb') as f:
             return _b64.b64encode(f.read()).decode()
+    finally:
+        try: os.unlink(tf.name)
+        except OSError: pass
+
+
+def _render_corrosion_b64_via_shared(amp_grid) -> tuple[str, float]:
+    """
+    Bridge from the in-memory rebar-reflection amplitude grid → (base64 PNG,
+    high_risk_pct), via the same ASTM D6087 corrosion renderer the Proceq
+    pipeline uses. Keeps the DZT and Proceq corrosion maps visually identical.
+    """
+    import os, tempfile
+    from analysis import render_corrosion_db_map
+    tf = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+    tf.close()
+    try:
+        high_risk_pct = render_corrosion_db_map(
+            amp_grid, tf.name,
+            xlabel='Scan line (longitudinal →)', ylabel='Swath',
+        )
+        with open(tf.name, 'rb') as f:
+            return _b64.b64encode(f.read()).decode(), high_risk_pct
     finally:
         try: os.unlink(tf.name)
         except OSError: pass
@@ -253,9 +274,9 @@ def build_result_payload(
     swath_spacing_ft: float,
     structure_name: str,
     analysis_name: str = "Untitled Analysis",
-) -> tuple[dict, str, str, str]:
+) -> tuple[dict, str, str]:
     """Build grids, render images, assemble result dict.
-    Returns (result_dict, cscan_b64, rebar_cscan_b64, amp_b64). result_dict excludes analysis_time_sec."""
+    Returns (result_dict, cscan_b64, rebar_cscan_b64). result_dict excludes analysis_time_sec."""
     all_preds       = np.concatenate(file_preds)
     n_del_total     = int((all_preds == 0).sum())
     del all_preds
@@ -330,8 +351,9 @@ def build_result_payload(
     except Exception as exc:
         print(f"[job:{job_id}] Rebar grid render failed: {exc}", flush=True)
 
-    rebar_b64 = amp_b64 = twt_b64 = ""
-    amplitude_grid_data_j: list = []; twt_rows = twt_cols = 0
+    rebar_b64 = corrosion_b64 = twt_b64 = ""
+    high_risk_pct = 0.0; mean_depth_inches = None
+    twt_rows = twt_cols = 0
     conf_pct = depth_acc_in = 0.0; sig_quality = "Fair"
     try:
         depth_grid, amp_grid, twt_grid = build_extra_grids(
@@ -340,8 +362,11 @@ def build_result_payload(
             frequency_mhz,
         )
         rebar_b64 = _render_depth_b64_via_unified(depth_grid, analysis_name)
-        amp_b64               = render_amplitude_b64(amp_grid)
-        amplitude_grid_data_j = grid_to_list(amp_grid)
+        # ASTM D6087 corrosion map from rebar reflection amplitude — same
+        # renderer as the Proceq pipeline so both instruments look identical.
+        corrosion_b64, high_risk_pct = _render_corrosion_b64_via_shared(amp_grid)
+        if depth_grid.size and not np.all(np.isnan(depth_grid)):
+            mean_depth_inches = round(float(np.nanmean(depth_grid)), 2)
         twt_b64               = _b64.b64encode(twt_grid.tobytes()).decode()
         twt_rows, twt_cols = twt_grid.shape
 
@@ -368,12 +393,13 @@ def build_result_payload(
         "bscan_count":         len(bscan_list),
         "rebar_model_used":    rebar_model is not None,
         "prob_grid_data":      prob_grid_data_j,
-        "amplitude_grid_data": amplitude_grid_data_j,
         "rebar_depth_grid":    rebar_depth_grid_j,
         "rebar_twt_grid":      rebar_twt_grid_j,
         "rebar_peak_grid":     rebar_peak_grid_j,
         "rebar_depth_image":   rebar_b64,
-        "amplitude_image":     amp_b64,
+        "corrosion_map":       corrosion_b64,
+        "high_risk_pct":       high_risk_pct,
+        "mean_depth_inches":   mean_depth_inches,
         "prob_grid":           prob_b64,
         "prob_grid_rows":      pg_rows,
         "prob_grid_cols":      pg_cols,
@@ -389,4 +415,4 @@ def build_result_payload(
         "condition_class_pcts": class_area_pcts,
     }
 
-    return result, cscan_b64, rebar_cscan_b64, amp_b64
+    return result, cscan_b64, rebar_cscan_b64
