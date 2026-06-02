@@ -24,6 +24,7 @@ export default function Footer() {
       <span>© {new Date().getFullYear()} Verus Technologies, Inc. All rights reserved.</span>
       <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'center' }}>
         <FooterLink to="/">Home</FooterLink>
+        <FooterLink to="/experience">Experience</FooterLink>
         <FooterLink to="/team">Team</FooterLink>
         <FooterLink to="/login">Log In</FooterLink>
         <FooterLink to="/signup">Sign Up</FooterLink>

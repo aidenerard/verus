@@ -6,6 +6,8 @@ import LoginPage from './pages/LoginPage';
 import SignupPage from './pages/SignupPage';
 import DashboardPage from './pages/DashboardPage';
 import TeamPage from './pages/TeamPage';
+import ExperiencePage from './pages/ExperiencePage';
+import AccountPage from './pages/AccountPage';
 import ModuleSelectPage from './pages/workspace/ModuleSelectPage';
 import MethodSelectPage from './pages/workspace/MethodSelectPage';
 import WorkspaceLayout from './pages/workspace/WorkspaceLayout';
@@ -37,11 +39,15 @@ export default function Router() {
         <Route path="/login"    element={<LoginPage />} />
         <Route path="/signup"   element={<SignupPage />} />
         <Route path="/team"     element={<TeamPage />} />
+        <Route path="/experience" element={<ExperiencePage />} />
         <Route path="/privacy"  element={<PrivacyPage />} />
         <Route path="/terms"    element={<TermsPage />} />
 
         <Route path="/dashboard" element={
           <ProtectedRoute><DashboardPage /></ProtectedRoute>
+        } />
+        <Route path="/account" element={
+          <ProtectedRoute><AccountPage /></ProtectedRoute>
         } />
 
         {/* Pre-workspace selection flow (no sidebar) */}

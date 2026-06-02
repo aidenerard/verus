@@ -13,11 +13,12 @@ interface AuthContextType {
   login:  (email: string, password: string) => Promise<{ error: string | null }>;
   signup: (email: string, password: string, name: string, company?: string) => Promise<{ error: string | null }>;
   logout: () => Promise<void>;
+  updateAccount: (fields: { name?: string; company?: string; email?: string; password?: string }) => Promise<{ error: string | null }>;
 
   // Compatibility shim: components that read auth.user.name / auth.user.email
   auth: {
     isAuthenticated: boolean;
-    user: { name: string; email: string } | null;
+    user: { name: string; email: string; company: string } | null;
   };
 }
 
@@ -91,6 +92,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await supabase.auth.signOut();
   };
 
+  const updateAccount = async (
+    fields: { name?: string; company?: string; email?: string; password?: string },
+  ): Promise<{ error: string | null }> => {
+    const { name, company, email, password } = fields;
+
+    const payload: Parameters<typeof supabase.auth.updateUser>[0] = {};
+    if (email) payload.email = email;
+    if (password) payload.password = password;
+    const metadata: Record<string, string> = {};
+    if (name !== undefined) metadata.full_name = name;
+    if (company !== undefined) metadata.company = company;
+    if (Object.keys(metadata).length) payload.data = metadata;
+
+    if (Object.keys(payload).length) {
+      const { error } = await supabase.auth.updateUser(payload);
+      if (error) return { error: error.message };
+    }
+
+    if (user && (name !== undefined || company !== undefined)) {
+      const profile: Record<string, string> = {};
+      if (name !== undefined) profile.full_name = name;
+      if (company !== undefined) profile.company = company;
+      const { error } = await supabase.from('profiles').update(profile).eq('id', user.id);
+      if (error) return { error: error.message };
+    }
+
+    return { error: null };
+  };
+
   // ── Compatibility shim (DashboardPage reads auth.user.name / auth.user.email) ─
 
   const isAuthenticated = !!user;
@@ -103,13 +133,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                    ?? user?.email?.split('@')[0]
                    ?? 'User',
           email: user?.email ?? '',
+          company: (user?.user_metadata?.company as string | undefined) ?? '',
         },
       }
     : { isAuthenticated: false, user: null };
 
   return (
     <AuthContext.Provider
-      value={{ user, session, isAuthenticated, isLoading, login, signup, logout, auth }}
+      value={{ user, session, isAuthenticated, isLoading, login, signup, logout, updateAccount, auth }}
     >
       {children}
     </AuthContext.Provider>
