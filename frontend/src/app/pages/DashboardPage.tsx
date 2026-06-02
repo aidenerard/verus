@@ -1,14 +1,15 @@
 import { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router';
+import { useNavigate } from 'react-router';
 import { Plus } from 'lucide-react';
-import VerusLogo from '../components/VerusLogo';
+import Navbar, { NAVBAR_HEIGHT } from '../components/Navbar';
+import Footer from '../components/Footer';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabase';
 import type { AnalysisJob } from './dashboard/types';
 import JobCards from './dashboard/JobCards';
 
 export default function DashboardPage() {
-  const { auth, logout, user } = useAuth();
+  const { user } = useAuth();
   const navigate = useNavigate();
   const [jobs,        setJobs]        = useState<AnalysisJob[]>([]);
   const [jobsLoading, setJobsLoading] = useState(true);
@@ -74,35 +75,12 @@ export default function DashboardPage() {
   };
 
   const startNew = () => navigate('/workspace');
-  const initials = auth.user?.name
-    ? auth.user.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
-    : 'U';
 
   return (
-    <div style={{ minHeight: '100vh', background: '#F5F3EF', fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, sans-serif' }}>
-      <header style={{ background: '#FFFFFF', borderBottom: '2px solid #E2DED9', padding: '0 40px', height: 64, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Link to="/" style={{ textDecoration: 'none' }}>
-          <VerusLogo size={36} wordmarkColor="#0A0A0A" />
-        </Link>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div style={{ width: 34, height: 34, background: '#E8601C', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: '#FFFFFF', letterSpacing: '0.04em' }}>
-              {initials}
-            </div>
-            <div>
-              <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: '#0A0A0A' }}>{auth.user?.name || 'User'}</p>
-              <p style={{ margin: 0, fontSize: 11, color: '#7A7470' }}>{auth.user?.email}</p>
-            </div>
-          </div>
-          <div style={{ width: 1, height: 32, background: '#E2DED9' }} />
-          <button onClick={() => { logout(); navigate('/', { replace: true }); }}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600, color: '#7A7470', letterSpacing: '0.04em', padding: '6px 0', fontFamily: 'Inter, sans-serif' }}>
-            Log Out
-          </button>
-        </div>
-      </header>
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: '#F5F3EF', fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, sans-serif' }}>
+      <Navbar />
 
-      <main style={{ maxWidth: 1280, margin: '0 auto', padding: '40px 40px 64px' }}>
+      <main style={{ flex: 1, width: '100%', maxWidth: 1280, margin: '0 auto', padding: `${NAVBAR_HEIGHT + 40}px 40px 64px` }}>
         <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 24, marginBottom: 32, flexWrap: 'wrap' }}>
           <div>
             <h1 style={{ fontSize: 28, fontWeight: 800, color: '#0A0A0A', margin: '0 0 6px', letterSpacing: '-0.02em' }}>
@@ -140,6 +118,8 @@ export default function DashboardPage() {
           {deleteError}
         </div>
       )}
+
+      <Footer />
     </div>
   );
 }
