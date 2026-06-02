@@ -4,7 +4,6 @@ import type { AnalysisResult } from '../inspect/types';
 import { useMapbox } from '../inspect/useMapbox';
 import { SERVER } from '../inspect/constants';
 import BScanViewer from './BScanViewer';
-import DepthMapCanvas from './DepthMapCanvas';
 import ResultsExportTab from './ResultsExportTab';
 import { BORDER, BORDER2, PANEL, RAISED, TEXT, TEXT2, TEXT3, ACCENT, ACCENT_SOFT } from './tokens';
 
@@ -48,7 +47,6 @@ export default function GPRResults({
   const [tabLocal, setTabLocal] = useState<ResultsTab>('overview');
   const tab    = tabProp    ?? tabLocal;
   const setTab = setTabProp ?? setTabLocal;
-  const [needsRegen, setNeedsRegen] = useState(false);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -60,18 +58,12 @@ export default function GPRResults({
       />
       <ResultsTabs tab={tab} setTab={setTab} />
       {tab === 'overview' && (
-        <OverviewTab
-          result={result}
-          projectId={projectId}
-          needsRegen={needsRegen}
-          onRegenerated={() => setNeedsRegen(false)}
-        />
+        <OverviewTab result={result} />
       )}
       {tab === 'interactive' && (
         <InteractiveTabBody
           result={result}
           projectId={projectId}
-          onPicksSaved={() => setNeedsRegen(true)}
           bscanRef={bscanRef}
         />
       )}
@@ -161,10 +153,7 @@ function ResultsTabs({ tab, setTab }:
 }
 
 interface OverviewTabProps {
-  result:        AnalysisResult;
-  projectId?:    string;
-  needsRegen:    boolean;
-  onRegenerated: () => void;
+  result: AnalysisResult;
 }
 
 function astmStatus(risk?: number): string {
@@ -174,13 +163,22 @@ function astmStatus(risk?: number): string {
   return 'Action';
 }
 
-function OverviewTab({ result, projectId, needsRegen, onRegenerated }: OverviewTabProps) {
+function OverviewTab({ result }: OverviewTabProps) {
+  // Both maps come from the SAME canonical backend renderers so the output is
+  // fixed and identical across datasets (depth: build_unified_depth_map,
+  // YlOrRd_r 3.0–8.5"; corrosion: render_corrosion_db_map). No client-side
+  // auto-scaling — see docs/DEPTH_MAP_SPEC.md.
+  const depthSrc = useMemo(
+    () => resolveImageSrc(
+      result.rebar_depth_map_url ?? result.rebar_depth_image_url,
+      result.rebar_depth_map ?? result.rebar_depth_image,
+    ),
+    [result],
+  );
   const corrosionSrc = useMemo(
     () => resolveImageSrc(result.corrosion_map_url, result.corrosion_map),
     [result],
   );
-  const staticDepthB64 = result.rebar_depth_map_url
-    ?? result.rebar_depth_map ?? result.rebar_depth_image;
 
   const stats = useMemo(() => {
     const mean     = result.mean_depth_inches ?? meanRebarDepth(result);
@@ -201,14 +199,7 @@ function OverviewTab({ result, projectId, needsRegen, onRegenerated }: OverviewT
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <div className="gpr-panel-grid">
-        <DepthMapCanvas
-          jobId={projectId ?? ''}
-          serverUrl={SERVER}
-          analysisName={result.analysis_name ?? 'Analysis'}
-          staticImageB64={staticDepthB64}
-          needsRegen={needsRegen}
-          onRegenerated={onRegenerated}
-        />
+        <ResultPanel title="Rebar Depth Map" src={depthSrc} />
         <ResultPanel title="Corrosion Risk Map" src={corrosionSrc} />
       </div>
 
@@ -245,13 +236,12 @@ function OverviewTab({ result, projectId, needsRegen, onRegenerated }: OverviewT
 }
 
 interface InteractiveTabBodyProps {
-  result:       AnalysisResult;
-  projectId?:   string;
-  onPicksSaved: () => void;
-  bscanRef?:    React.Ref<BScanViewerHandle>;
+  result:     AnalysisResult;
+  projectId?: string;
+  bscanRef?:  React.Ref<BScanViewerHandle>;
 }
 
-function InteractiveTabBody({ result, projectId, onPicksSaved, bscanRef }: InteractiveTabBodyProps) {
+function InteractiveTabBody({ result, projectId, bscanRef }: InteractiveTabBodyProps) {
   if (!projectId) {
     return (
       <div style={{ background: PANEL, border: `1px dashed ${BORDER2}`, padding: '40px 24px', textAlign: 'center', color: TEXT2 }}>
@@ -277,7 +267,6 @@ function InteractiveTabBody({ result, projectId, onPicksSaved, bscanRef }: Inter
         bscanUrl={result.bscan_data_url}
         jobId={projectId}
         serverUrl={SERVER}
-        onPicksSaved={onPicksSaved}
       />
     </div>
   );

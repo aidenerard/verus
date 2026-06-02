@@ -448,16 +448,18 @@ def build_unified_depth_map(
     analysis_name: str,
     x_coords=None,
     y_coords=None,
-    vmin: float = 2.0,
-    vmax: float = 9.0,
+    vmin: float = 3.0,
+    vmax: float = 8.5,
 ) -> str | None:
     """
     Unified rebar cover-depth map renderer used by both Proceq and DZT
-    pipelines. Output matches the Infrasense / ASTM presentation:
+    pipelines. This is the SINGLE canonical depth-map renderer — its output is
+    the locked reference (see docs/depth_map_reference.png / DEPTH_MAP_SPEC.md).
+    Do not change the palette, range, or banding without updating that fixture.
       - Title = analysis_name (verbatim)
-      - Fixed 0.5" YlOrRd_r colour bands across the reference 2.0–9.0"
+      - Fixed 0.5" YlOrRd_r colour bands across the locked 3.0–8.5"
         range so every dataset uses the same palette mapping (color = depth
-        is identical across instruments)
+        is identical across instruments and never auto-rescales)
       - Depths snapped to nearest whole inch — cleaner integer transitions,
         less label clutter
       - Black isolines on integer inches only; **each** integer-level path
