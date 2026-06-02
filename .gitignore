@@ -36,3 +36,7 @@ view_cscan.py
 
 # Local env files — may hold Supabase keys / API tokens (bare name → any depth)
 .env.local
+
+# Local output directories
+output/
+kaggle_push/output/
