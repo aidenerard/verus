@@ -262,6 +262,8 @@ def process_proceq_dataset(
     analysis_name: str = "Untitled Analysis",
     supabase_client=None,
     job_id: str | None = None,
+    bridge_length_ft: float = 0.0,
+    bridge_width_ft: float = 0.0,
 ) -> dict | None:
     import sys
     sys.path.insert(0, os.path.dirname(__file__))
@@ -381,6 +383,8 @@ def process_proceq_dataset(
             analysis_name = analysis_name,
             x_coords      = east_valid,
             y_coords      = north_valid,
+            bridge_length_ft = bridge_length_ft or None,
+            bridge_width_ft  = bridge_width_ft  or None,
         )
         print(f"[DEPTH MAP] built from {len(east_valid):,} GPS-valid traces")
     else:

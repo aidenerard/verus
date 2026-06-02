@@ -450,6 +450,8 @@ def build_unified_depth_map(
     y_coords=None,
     vmin: float = 3.0,
     vmax: float = 8.5,
+    bridge_length_ft: float | None = None,
+    bridge_width_ft: float | None = None,
 ) -> str | None:
     """
     Unified rebar cover-depth map renderer used by both Proceq and DZT
@@ -529,6 +531,18 @@ def build_unified_depth_map(
         X, Y = np.meshgrid(np.arange(n_cols), np.linspace(0, n_rows - 1, target_rows))
         x_lim, y_lim = (0, max(1, n_cols - 1)), (n_rows - 1, 0)
 
+    # ── Real bridge dimensions (user-input feet) ─────────────────────────
+    # When the inspector enters deck length × width, linearly rescale the
+    # meshgrid to those feet so the axes read true distance-along-bridge ×
+    # width instead of UTM metres / grid indices. Plan-view shape is
+    # preserved (linear remap); the locked palette/banding is untouched.
+    feet_axes = bool(bridge_length_ft and bridge_width_ft
+                     and bridge_length_ft > 0 and bridge_width_ft > 0)
+    if feet_axes:
+        X = (X - X.min()) / (np.ptp(X) or 1.0) * float(bridge_length_ft)
+        Y = (Y - Y.min()) / (np.ptp(Y) or 1.0) * float(bridge_width_ft)
+        x_lim, y_lim = (0.0, float(bridge_length_ft)), (0.0, float(bridge_width_ft))
+
     # ── Fixed reference palette: 0.5" bands across the full vmin→vmax range ──
     levels = np.arange(vmin, vmax + 0.5, 0.5)
     integer_levels = [float(l) for l in levels if abs(l - round(l)) < 1e-6]
@@ -564,7 +578,20 @@ def build_unified_depth_map(
             placed.append((float(mid[0]), float(mid[1])))
 
     ax.set_xlim(*x_lim); ax.set_ylim(*y_lim)
-    ax.set_title(analysis_name, fontsize=13, pad=10)
+    if feet_axes:
+        import matplotlib.ticker as _mticker
+        def _nice_step(span: float) -> float:
+            for s in (5, 10, 20, 25, 50, 100, 200, 500):
+                if span / s <= 14: return s
+            return 1000
+        ax.set_xlabel('Distance Along Bridge (ft)', fontsize=10, color='black')
+        ax.set_ylabel('Bridge Width (ft)', fontsize=10, color='black')
+        ax.xaxis.set_major_locator(_mticker.MultipleLocator(_nice_step(float(bridge_length_ft))))
+        ax.yaxis.set_major_locator(_mticker.MultipleLocator(_nice_step(float(bridge_width_ft))))
+        ax.set_title(f'{analysis_name}  —  {bridge_length_ft:.0f} ft × {bridge_width_ft:.0f} ft',
+                     fontsize=13, pad=10)
+    else:
+        ax.set_title(analysis_name, fontsize=13, pad=10)
     ax.tick_params(colors='black', length=4, width=0.7, labelsize=10)
     for sp in ax.spines.values():
         sp.set_linewidth(0.9); sp.set_color('black')

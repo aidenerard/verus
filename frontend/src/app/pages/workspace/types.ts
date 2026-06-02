@@ -17,6 +17,9 @@ export interface ProcessingOptions {
   searchRadius:  number;
   edgeClipping:  boolean;
   filters:       ProcessingFilters;
+  // Real deck dimensions (feet) — used to scale the depth-map axes. 0 = unknown.
+  bridgeLengthFt: number;
+  bridgeWidthFt:  number;
 }
 
 export interface MethodMeta {
@@ -50,4 +53,6 @@ export const DEFAULT_PROCESSING_OPTIONS: ProcessingOptions = {
     gain:              false,
     bandpass:          false,
   },
+  bridgeLengthFt: 0,
+  bridgeWidthFt:  0,
 };

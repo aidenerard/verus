@@ -61,7 +61,9 @@ def _persist_hyperbola_picks(sb, job_id: str, swath_idx: int,
         print(f"[PICKS] persist failed (non-fatal): {exc}", flush=True)
 
 
-def _render_depth_b64_via_unified(depth_grid, analysis_name: str) -> str:
+def _render_depth_b64_via_unified(depth_grid, analysis_name: str,
+                                  bridge_length_ft: float = 0.0,
+                                  bridge_width_ft: float = 0.0) -> str:
     """
     Bridge from in-memory 2D depth_grid → base64 PNG, via the unified
     file-based renderer in analysis.py. Writes to a tempfile, reads back,
@@ -75,6 +77,8 @@ def _render_depth_b64_via_unified(depth_grid, analysis_name: str) -> str:
     try:
         ok = build_unified_depth_map(
             depths_in=depth_grid, output_path=tf.name, analysis_name=analysis_name,
+            bridge_length_ft=bridge_length_ft or None,
+            bridge_width_ft=bridge_width_ft or None,
         )
         if not ok:
             return ""
@@ -274,6 +278,8 @@ def build_result_payload(
     swath_spacing_ft: float,
     structure_name: str,
     analysis_name: str = "Untitled Analysis",
+    bridge_length_ft: float = 0.0,
+    bridge_width_ft: float = 0.0,
 ) -> tuple[dict, str, str]:
     """Build grids, render images, assemble result dict.
     Returns (result_dict, cscan_b64, rebar_cscan_b64). result_dict excludes analysis_time_sec."""
@@ -375,7 +381,8 @@ def build_result_payload(
             depth_src = model_depth_grid
             print(f"[job:{job_id}] Depth map from rebar model "
                   f"(mean {float(np.nanmean(depth_src)):.2f}\")", flush=True)
-        rebar_b64 = _render_depth_b64_via_unified(depth_src, analysis_name)
+        rebar_b64 = _render_depth_b64_via_unified(
+            depth_src, analysis_name, bridge_length_ft, bridge_width_ft)
         # ASTM D6087 corrosion map from rebar reflection amplitude — same
         # renderer as the Proceq pipeline so both instruments look identical.
         corrosion_b64, high_risk_pct = _render_corrosion_b64_via_shared(amp_grid)

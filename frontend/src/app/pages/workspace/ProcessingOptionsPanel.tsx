@@ -16,7 +16,8 @@ const FILTER_LABELS: { key: keyof ProcessingFilters; label: string }[] = [
 ];
 
 export default function ProcessingOptionsPanel() {
-  const { options, setGridding, setSearchRadius, setEdgeClipping, toggleFilter } = useProcessingOptions();
+  const { options, setGridding, setSearchRadius, setEdgeClipping, setBridgeDims, toggleFilter } = useProcessingOptions();
+  const numInput = { width: '100%', padding: '6px 8px', background: RAISED, border: `1px solid ${BORDER}`, fontSize: 12, color: TEXT, fontFamily: 'inherit', outline: 'none' } as const;
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 18 }}>
@@ -57,6 +58,26 @@ export default function ProcessingOptionsPanel() {
           <Toggle checked={options.edgeClipping} onChange={setEdgeClipping} />
         </Field>
       </div>
+
+      <Field label="Bridge Dimensions (ft)">
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input
+            type="number" min={0} step={1} placeholder="Length"
+            value={options.bridgeLengthFt || ''}
+            onChange={e => setBridgeDims(parseFloat(e.target.value) || 0, options.bridgeWidthFt)}
+            style={numInput}
+          />
+          <input
+            type="number" min={0} step={1} placeholder="Width"
+            value={options.bridgeWidthFt || ''}
+            onChange={e => setBridgeDims(options.bridgeLengthFt, parseFloat(e.target.value) || 0)}
+            style={numInput}
+          />
+        </div>
+        <div style={{ fontSize: 10, color: TEXT3, marginTop: 4 }}>
+          Optional — scales the depth-map axes to real feet.
+        </div>
+      </Field>
 
       <Field label="Filters">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

@@ -194,6 +194,8 @@ def run_analysis_job(
     company: str = "",
     project: str = "",
     analysis_name: str = "Untitled Analysis",
+    bridge_length_ft: float = 0.0,
+    bridge_width_ft: float = 0.0,
 ) -> None:
     """
     Runs in a ThreadPoolExecutor worker thread.
@@ -258,6 +260,8 @@ def run_analysis_job(
             frequency_mhz, manufacturer, rebar_model,
             swath_spacing_ft, structure_name,
             analysis_name=analysis_name,
+            bridge_length_ft=bridge_length_ft,
+            bridge_width_ft=bridge_width_ft,
         )
 
         elapsed = round(time.perf_counter() - t0, 3)
@@ -396,6 +400,8 @@ def run_proceq_job(
     company: str = "",
     project: str = "",
     analysis_name: str = "Untitled Analysis",
+    bridge_length_ft: float = 0.0,
+    bridge_width_ft: float = 0.0,
 ) -> None:
     """When file_data is None the files are assumed to already exist in tmpdir."""
     import base64
@@ -437,6 +443,7 @@ def run_proceq_job(
                 data_dir=str(tmpdir), output_dir=str(tmpdir), epsr=epsr,
                 analysis_name=analysis_name,
                 supabase_client=supabase_client, job_id=job_id,
+                bridge_length_ft=bridge_length_ft, bridge_width_ft=bridge_width_ft,
             )
         except Exception as exc:
             proceq_error_detail = str(exc)
@@ -547,6 +554,8 @@ def run_proceq_zip_job(
     company: str = "",
     project: str = "",
     analysis_name: str = "Untitled Analysis",
+    bridge_length_ft: float = 0.0,
+    bridge_width_ft: float = 0.0,
 ) -> None:
     """
     Stream a zipped Proceq dataset out of the 'uploads' bucket into a tmpdir,
@@ -621,6 +630,7 @@ def run_proceq_zip_job(
             job_id=job_id, file_data=None, tmpdir=tmpdir, epsr=epsr,
             user_id=user_id, supabase_client=supabase_client,
             company=company, project=project, analysis_name=analysis_name,
+            bridge_length_ft=bridge_length_ft, bridge_width_ft=bridge_width_ft,
         )
 
     except Exception as exc:

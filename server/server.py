@@ -235,6 +235,8 @@ async def analyze(
     analysis_notes: str              = Form(""),
     company:        str              = Form(""),
     project:        str              = Form(""),
+    bridge_length_ft: float          = Form(0.0),
+    bridge_width_ft:  float          = Form(0.0),
     user_id:        Optional[str]    = Depends(verify_token),
 ) -> JSONResponse:
     """Accept uploads, queue a background job, return {job_id} immediately."""
@@ -299,6 +301,7 @@ async def analyze(
         job_id, file_data, user_id, tmpdir,
         manufacturer, frequency_mhz, project_id, _model, _rebar_model, _model_config, _supabase,
         "Bridge Deck", 1.0, company_clean, project_clean, name_clean,
+        bridge_length_ft, bridge_width_ft,
     )
     print(f"[analyze] Queued job {job_id}", flush=True)
 
@@ -382,6 +385,8 @@ async def analyze_proceq(
     analysis_notes: str              = Form(""),
     company:        str              = Form(""),
     project:        str              = Form(""),
+    bridge_length_ft: float          = Form(0.0),
+    bridge_width_ft:  float          = Form(0.0),
     user_id:        Optional[str]   = Depends(verify_token),
 ) -> JSONResponse:
     """Accept Proceq .scan/.pos/.CScan uploads, queue background job, return {job_id}."""
@@ -437,7 +442,7 @@ async def analyze_proceq(
 
     _executor.submit(
         run_proceq_job, job_id, file_data, tmpdir, epsr, user_id, _supabase,
-        company_clean, project_clean, name_clean,
+        company_clean, project_clean, name_clean, bridge_length_ft, bridge_width_ft,
     )
     print(f"[analyze-proceq] Queued job {job_id} ({len(file_data)} files, zip={is_zip})", flush=True)
 
@@ -457,6 +462,8 @@ async def analyze_proceq_zip(
     analysis_notes: str   = Form(""),
     company:        str   = Form(""),
     project:        str   = Form(""),
+    bridge_length_ft: float = Form(0.0),
+    bridge_width_ft:  float = Form(0.0),
     user_id:        Optional[str] = Depends(verify_token),
 ) -> JSONResponse:
     """Process a Proceq zip already uploaded to the 'uploads' Supabase bucket.
@@ -495,7 +502,7 @@ async def analyze_proceq_zip(
 
     _executor.submit(
         run_proceq_zip_job, job_id, storage_path, epsr, user_id, _supabase,
-        company_clean, project_clean, name_clean,
+        company_clean, project_clean, name_clean, bridge_length_ft, bridge_width_ft,
     )
     return JSONResponse({"job_id": job_id, "status": "pending"})
 

@@ -23,7 +23,8 @@ Both pipelines call it (Proceq directly with GPS coords; DZT via
 | Depth grouping | values snapped to the nearest whole inch (`np.round`) |
 | Isolines | black, on **integer inches only**, each labelled with its inch value |
 | Colorbar | horizontal, bottom, ticks at every 0.5″ level, `extend='neither'` |
-| Background | white; title = `analysis_name` verbatim; bare integer axis ticks |
+| Background | white; title = `analysis_name` verbatim |
+| Axes | bare integer ticks when no dimensions given. When the inspector enters **bridge length × width (ft)** (`bridge_length_ft`/`bridge_width_ft`), the plan-view is linearly rescaled to real feet: labelled "Distance Along Bridge (ft)" × "Bridge Width (ft)", adaptive ~10–14 ticks, and the title appends " — L ft × W ft". Palette/range/banding are unchanged. |
 
 ## Rules
 
