@@ -31,8 +31,20 @@ export default function ResultsExportTab({ result, projectId }: Props) {
   const [csvState, setCsvState] = useState<'idle' | 'loading' | 'empty' | 'error'>('idle');
 
   const baseName = (result.analysis_name ?? 'analysis').trim().replace(/[^\w-]+/g, '_') || 'analysis';
-  const depthSrc     = toSrc(result.rebar_depth_map_url, result.rebar_depth_map ?? result.rebar_depth_image);
-  const corrosionSrc = toSrc(result.corrosion_map_url, result.corrosion_map);
+  const depthSrc      = toSrc(result.rebar_depth_map_url, result.rebar_depth_map ?? result.rebar_depth_image);
+  const corrosionSrc  = toSrc(result.corrosion_map_url, result.corrosion_map);
+  const dielectricSrc = toSrc(result.dielectric_map_url, result.dielectric_map);
+  const quantities    = result.quantities ?? result.stats?.quantities ?? null;
+
+  const downloadQuantitiesCsv = () => {
+    if (!quantities) return;
+    const rows = Object.entries(quantities)
+      .map(([k, v]) => `${k},${typeof v === 'string' ? `"${v}"` : v}`);
+    const csv = ['field,value', ...rows].join('\n');
+    const href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+    triggerDownload(href, `${baseName}_quantities.csv`);
+    URL.revokeObjectURL(href);
+  };
 
   const downloadPicksCsv = async () => {
     if (!projectId) return;
@@ -75,6 +87,20 @@ export default function ResultsExportTab({ result, projectId }: Props) {
         subtitle="ASTM D6087 depth-corrected dB map"
         action={corrosionSrc ? () => triggerDownload(corrosionSrc, `${baseName}_corrosion.png`) : undefined}
         disabledNote={corrosionSrc ? undefined : 'Not available for this analysis'}
+      />
+      <ExportRow
+        Icon={FileImage}
+        title="Dielectric / Moisture Map (PNG)"
+        subtitle="Per-trace dielectric (εr) — moisture proxy"
+        action={dielectricSrc ? () => triggerDownload(dielectricSrc, `${baseName}_dielectric.png`) : undefined}
+        disabledNote={dielectricSrc ? undefined : 'Requires metal plate calibration scan'}
+      />
+      <ExportRow
+        Icon={FileSpreadsheet}
+        title="Quantities (CSV)"
+        subtitle="ASTM D6087 deck condition statistics"
+        action={quantities ? downloadQuantitiesCsv : undefined}
+        disabledNote={quantities ? undefined : 'Not available for this analysis'}
       />
       <ExportRow
         Icon={FileSpreadsheet}

@@ -20,6 +20,25 @@ export interface FileResult {
   peak_sample_array?:  number[];
 }
 
+export interface DeckQuantities {
+  n_picks:               number;
+  scan_spacing_ft?:      number;
+  mean_cover_in:         number;
+  std_cover_in?:         number;
+  min_cover_in:          number;
+  max_cover_in:          number;
+  cover_below_2in_pct?:  number;
+  deteriorated_pct:      number;
+  sound_pct:             number;
+  astm_method:           string;
+  astm_status:           string;
+  deterioration_method?: string;
+  threshold_db?:         number;
+  threshold_note?:       string;
+  mean_dielectric?:      number;
+  high_moisture_pct?:    number;
+}
+
 export interface AnalysisResult {
   signals_analyzed:    number;
   delamination_pct:    number;
@@ -71,11 +90,22 @@ export interface AnalysisResult {
   mean_depth_inches?:       number;
   deck_thickness_inches?:   number;
   high_risk_pct?:           number;
+  high_moisture_pct?:       number | null;
+  // Dielectric / moisture map — null until a metal-plate calibration scan
+  // provides real per-trace dielectric (see dielectric_map_unavailable_reason).
+  dielectric_map?:          string | null;
+  dielectric_map_url?:      string | null;
+  dielectric_map_unavailable_reason?: string;
+  // ASTM — method label only, never a pass/fail compliance boolean.
+  astm_method?:             string;
+  astm_status?:             string;
+  quantities?:              DeckQuantities | null;
   // Proceq pipeline stats sub-object
   stats?: {
     n_traces?:      number;
     mean_depth_in?: number;
     high_risk_pct?: number;
+    quantities?:    DeckQuantities | null;
   };
   condition_class_pcts?: {
     sound:                number;
