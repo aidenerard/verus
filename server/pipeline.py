@@ -305,6 +305,7 @@ def build_result_payload(
 
     rebar_cscan_b64 = ""
     rebar_depth_grid_j: list = []; rebar_twt_grid_j: list = []; rebar_peak_grid_j: list = []
+    model_depth_grid = None   # trained-model rebar depths — preferred source for the depth map
     try:
         rebar_dg, rebar_tg = build_rebar_grids(rebar_depth_arrs, rebar_twt_arrs)
         peak_g             = build_peak_grid(rebar_peak_arrs)
@@ -346,7 +347,8 @@ def build_result_payload(
         )
         rebar_depth_grid_j = grid_to_list(rebar_dg)
         rebar_twt_grid_j   = grid_to_list(rebar_tg)
-        del rebar_dg, rebar_tg
+        model_depth_grid   = rebar_dg   # keep for the depth map (do not del)
+        del rebar_tg
 
     except Exception as exc:
         print(f"[job:{job_id}] Rebar grid render failed: {exc}", flush=True)
@@ -362,15 +364,26 @@ def build_result_payload(
             file_atten_arrs,
             frequency_mhz,
         )
-        rebar_b64 = _render_depth_b64_via_unified(depth_grid, analysis_name)
+        # Depth map source: prefer the trained rebar model's depths. The raw
+        # peak-max grid (depth_grid) locks onto a consistent system-ringing
+        # artifact (~sample 161 on GSSI DZT), not the variable rebar horizon,
+        # so it renders a near-constant, ~2× too-deep map. Fall back to peaks
+        # only when the model is unavailable.
+        depth_src = depth_grid
+        if (model_depth_grid is not None and model_depth_grid.size
+                and not np.all(np.isnan(model_depth_grid))):
+            depth_src = model_depth_grid
+            print(f"[job:{job_id}] Depth map from rebar model "
+                  f"(mean {float(np.nanmean(depth_src)):.2f}\")", flush=True)
+        rebar_b64 = _render_depth_b64_via_unified(depth_src, analysis_name)
         # ASTM D6087 corrosion map from rebar reflection amplitude — same
         # renderer as the Proceq pipeline so both instruments look identical.
         corrosion_b64, high_risk_pct = _render_corrosion_b64_via_shared(amp_grid)
-        if depth_grid.size and not np.all(np.isnan(depth_grid)):
-            mean_depth_inches = round(float(np.nanmean(depth_grid)), 2)
+        if depth_src.size and not np.all(np.isnan(depth_src)):
+            mean_depth_inches = round(float(np.nanmean(depth_src)), 2)
             from analysis import calculate_deck_quantities
             quantities = calculate_deck_quantities(
-                depth_grid[np.isfinite(depth_grid)], high_risk_pct,
+                depth_src[np.isfinite(depth_src)], high_risk_pct,
             )
         twt_b64               = _b64.b64encode(twt_grid.tobytes()).decode()
         twt_rows, twt_cols = twt_grid.shape
@@ -379,7 +392,7 @@ def build_result_payload(
         conf_pct, depth_acc_in, sig_quality = compute_confidence_metrics(
             all_confs_flat, amp_grid, frequency_mhz
         )
-        del depth_grid, amp_grid, twt_grid, all_confs_flat
+        del depth_grid, amp_grid, twt_grid, all_confs_flat, model_depth_grid
         print(f"[job:{job_id}] Extra grids rendered. Confidence={conf_pct:.1f}%", flush=True)
     except Exception as exc:
         print(f"[job:{job_id}] Extra grids failed: {exc}", flush=True)
